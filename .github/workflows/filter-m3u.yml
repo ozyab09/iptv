@@ -79,6 +79,5 @@ jobs:
 
     - name: Run M3U filter script
       run: |
-        cat $GITHUB_ENV | base64
         cd src
         python run_filter.py
