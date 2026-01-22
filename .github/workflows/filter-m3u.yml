@@ -65,6 +65,7 @@ jobs:
     - name: Run unit tests
       if: github.event_name == 'pull_request'
       run: |
+        echo $S3_ENDPOINT_URL
         python -m pytest tests/ -v
 
     - name: Run code coverage
