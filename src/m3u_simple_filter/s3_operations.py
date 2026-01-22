@@ -35,11 +35,16 @@ def upload_to_s3(content: str, bucket_name: str, object_key: str, config: Any, c
     """
     logger.info(f"Uploading to S3-compatible storage: s3://{bucket_name}/{object_key}")
 
+    # Validate S3 endpoint URL before initializing client
+    endpoint_url = config.S3_COMPATIBLE_CONFIG['endpoint_url']
+    if not endpoint_url or not isinstance(endpoint_url, str) or not endpoint_url.startswith(('http://', 'https://')):
+        raise ValueError(f"Invalid S3 endpoint URL: {endpoint_url}. Must be a valid HTTP/HTTPS URL.")
+
     # Initialize S3 client with endpoint from config
     # Use environment variables for credentials
     s3_client = boto3.client(
         's3',
-        endpoint_url=config.S3_COMPATIBLE_CONFIG['endpoint_url'],  # S3-compatible storage endpoint from config
+        endpoint_url=endpoint_url,  # S3-compatible storage endpoint from config
         aws_access_key_id=os.environ.get('AWS_ACCESS_KEY_ID'),
         aws_secret_access_key=os.environ.get('AWS_SECRET_ACCESS_KEY'),
         region_name=config.S3_COMPATIBLE_CONFIG['region']  # S3-compatible storage region from config
@@ -78,13 +83,28 @@ def upload_file_to_s3(file_path: str, bucket_name: str, object_key: str, config:
         config: Configuration object with S3 settings
         content_type (str): Content type for the uploaded object (default: 'application/x-mpegurl')
     """
-    logger.info(f"Uploading file to S3-compatible storage: s3://{bucket_name}/{object_key} from {file_path}")
+    import os
+    from .config import Config as ConfigClass
+
+    # If config is available and file doesn't exist at the given path, try looking in output directory
+    full_file_path = file_path
+    if config and hasattr(config, 'OUTPUT_DIR'):
+        output_file_path = os.path.join(config.OUTPUT_DIR, os.path.basename(file_path))
+        if os.path.exists(output_file_path):
+            full_file_path = output_file_path
+
+    logger.info(f"Uploading file to S3-compatible storage: s3://{bucket_name}/{object_key} from {full_file_path}")
+
+    # Validate S3 endpoint URL before initializing client
+    endpoint_url = config.S3_COMPATIBLE_CONFIG['endpoint_url']
+    if not endpoint_url or not isinstance(endpoint_url, str) or not endpoint_url.startswith(('http://', 'https://')):
+        raise ValueError(f"Invalid S3 endpoint URL: {endpoint_url}. Must be a valid HTTP/HTTPS URL.")
 
     # Initialize S3 client with endpoint from config
     # Use environment variables for credentials
     s3_client = boto3.client(
         's3',
-        endpoint_url=config.S3_COMPATIBLE_CONFIG['endpoint_url'],  # S3-compatible storage endpoint from config
+        endpoint_url=endpoint_url,  # S3-compatible storage endpoint from config
         aws_access_key_id=os.environ.get('AWS_ACCESS_KEY_ID'),
         aws_secret_access_key=os.environ.get('AWS_SECRET_ACCESS_KEY'),
         region_name=config.S3_COMPATIBLE_CONFIG['region']  # S3-compatible storage region from config
@@ -92,7 +112,7 @@ def upload_file_to_s3(file_path: str, bucket_name: str, object_key: str, config:
 
     try:
         # Read the file content
-        with open(file_path, 'rb') as f:
+        with open(full_file_path, 'rb') as f:
             file_content = f.read()
 
         # Upload the file content
@@ -105,7 +125,7 @@ def upload_file_to_s3(file_path: str, bucket_name: str, object_key: str, config:
             Metadata={
                 'uploaded-by': 'm3u-simple-filter-script',
                 'upload-timestamp': str(int(time.time())),
-                'source-file': file_path
+                'source-file': full_file_path
             }
         )
         logger.info("File upload to S3-compatible storage completed successfully")

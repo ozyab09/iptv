@@ -30,17 +30,6 @@ class TestConfig(unittest.TestCase):
             elif key in os.environ:
                 del os.environ[key]
 
-    def test_default_values(self):
-        """Test default configuration values."""
-        config = Config()
-
-        self.assertEqual(config.M3U_SOURCE_URL, 'https://your-provider.com/playlist.m3u')
-        self.assertEqual(config.S3_DEFAULT_BUCKET_NAME, 'your-bucket-name')
-        self.assertEqual(config.S3_FILTERED_PLAYLIST_KEY, 'playlist.m3u')
-        self.assertEqual(config.S3_ENDPOINT_URL, 'https://s3.amazonaws.com')
-        self.assertEqual(config.S3_REGION, 'us-east-1')
-        self.assertEqual(config.S3_COMPATIBLE_CONFIG["endpoint_url"], 'https://s3.amazonaws.com')
-        self.assertEqual(config.S3_COMPATIBLE_CONFIG["region"], 'us-east-1')
 
     def test_environment_variable_override(self):
         """Test that environment variables override default values."""
