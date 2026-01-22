@@ -20,14 +20,24 @@ def sanitize_log_message(message: str) -> str:
     Returns:
         str: Sanitized log message with sensitive data masked
     """
-    # Get sensitive values from environment variables (only if they are actually set)
+    # Define default values that should not be considered sensitive
+    default_values = {
+        'M3U_SOURCE_URL': 'https://your-provider.com/playlist.m3u',
+        'EPG_SOURCE_URL': 'https://your-epg-provider.com/epg.xml.gz',
+        'S3_ENDPOINT_URL': 'https://s3.amazonaws.com',
+        'S3_REGION': 'us-east-1',
+        'S3_OBJECT_KEY': 'playlist.m3u',
+        'S3_EPG_KEY': 'epg.xml.gz',
+        'S3_BUCKET_NAME': 'your-bucket-name'
+    }
+
+    # Get sensitive values from environment variables (only if they differ from defaults)
     sensitive_values = []
 
-    # Only add values that are actually present in environment variables
-    for var_name in ['M3U_SOURCE_URL', 'EPG_SOURCE_URL', 'S3_BUCKET_NAME', 'S3_ENDPOINT_URL',
-                     'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'S3_OBJECT_KEY', 'S3_EPG_KEY']:
+    for var_name, default_val in default_values.items():
         env_val = os.getenv(var_name)
-        if env_val:  # Only add if the environment variable is actually set
+        # Only add to sensitive values if the environment variable is set AND differs from default
+        if env_val and env_val != default_val:
             sensitive_values.append(env_val)
 
     # Sort by length (descending) to replace longer strings first
