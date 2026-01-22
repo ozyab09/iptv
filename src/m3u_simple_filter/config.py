@@ -124,6 +124,11 @@ class Config:
         "Sports"
     ]
 
+    @property
+    def OUTPUT_DIR(self) -> str:
+        """Output directory for saving processed files"""
+        return os.getenv('OUTPUT_DIR', 'output')
+
     @classmethod
     def get_categories_to_keep(cls) -> List[str]:
         """Return the list of categories to keep"""
@@ -168,6 +173,13 @@ class Config:
         # Validate S3 endpoint URL
         if not config_instance.S3_ENDPOINT_URL or not config_instance.S3_ENDPOINT_URL.startswith(('http://', 'https://')):
             errors.append("S3_ENDPOINT_URL must be a valid HTTP/HTTPS URL")
+
+        # Additional validation to check for common malformed endpoint patterns
+        endpoint_url = config_instance.S3_ENDPOINT_URL
+        if endpoint_url and len(endpoint_url) > 10:  # Basic length check
+            # Check if the URL looks like it has credentials embedded or is malformed
+            if '@' in endpoint_url.split('/')[2] if len(endpoint_url.split('/')) > 2 else False:
+                errors.append("S3_ENDPOINT_URL should not contain credentials in the URL")
 
         # Validate S3 region
         if not config_instance.S3_REGION:
