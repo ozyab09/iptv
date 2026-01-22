@@ -38,4 +38,6 @@ Thumbs.db
 .gitlab-ci-local/
 epg2.xml-filtered.gz
 epg2.xml-filtered
-.env.example
+.env
+output/
+run_with_env.sh

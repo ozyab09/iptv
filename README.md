@@ -41,7 +41,9 @@ CATEGORIES_TO_KEEP: List[str] = [
 - **Smart Filtering**: Excludes channels matching specific regex patterns (e.g., `+1` channels)
 - **Cloud Storage**: Uploads filtered playlists to S3-compatible storage
 - **Dry-Run Mode**: Test functionality without uploading to S3
-- **Comprehensive Logging**: Detailed logs with before/after statistics
+- **Comprehensive Logging**: Detailed logs with before/after statistics and file sizes in KB
+- **Optimized File Sizes**: Efficient compression to keep EPG files within typical S3 size limits (3-5 MB range)
+- **Organized File Management**: All downloaded and processed files saved in a dedicated output directory
 - **Full Test Coverage**: Unit tests for all core functionality
 - **CI/CD Pipeline**: Automated testing and deployment via GitHub Actions
 - **Public & Customizable**: Easy to fork and customize for your own needs
@@ -65,6 +67,7 @@ iptv/
 │   ├── test_m3u_processor.py       # M3U processing tests
 │   ├── test_s3_operations.py       # S3 operations tests
 │   └── test_main.py                # Main application tests
+├── output/                         # Directory for saving processed files (created at runtime)
 ├── .github/
 │   └── workflows/
 │       └── filter-m3u.yml          # GitHub Actions workflow
@@ -76,7 +79,7 @@ iptv/
 ## 📋 Prerequisites
 
 - Python 3.14+
-- S3-compatible storage account (any provider)
+- S3-compatible storage account (any provider) with appropriate size limits configured
 - AWS CLI credentials (for S3 access)
 
 ## 🛠️ Installation
@@ -114,6 +117,7 @@ The application uses environment variables for configuration. Create a `.env` fi
 | `S3_EPG_KEY` | S3 object key for EPG file | `epg.xml.gz` |
 | `EPG_SOURCE_URL` | Source URL for the EPG XML file | `https://your-epg-provider.com/epg.xml.gz` |
 | `LOCAL_EPG_PATH` | Local path for downloaded EPG file | `epg.xml.gz` |
+| `OUTPUT_DIR` | Directory for saving processed files | `output` |
 | `DRY_RUN` | Run in dry-run mode | (unset) |
 | `AWS_ACCESS_KEY_ID` | S3-compatible storage access key | (required) |
 | `AWS_SECRET_ACCESS_KEY` | S3-compatible storage secret key | (required) |
@@ -134,9 +138,16 @@ The application uses environment variables for configuration. Create a `.env` fi
    - `M3U_SOURCE_URL`: Your M3U playlist source URL
    - `S3_BUCKET_NAME`: Your S3 bucket name
    - `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`: Your S3-compatible storage credentials
+   - `S3_ENDPOINT_URL`: Your S3-compatible storage endpoint (e.g., for Yandex Cloud: `https://storage.yandexcloud.net`)
+   - `S3_REGION`: Your S3 region
+   - `S3_EPG_KEY`: S3 object key for EPG file (default: `epg.xml.gz`)
+   - `S3_OBJECT_KEY`: S3 object key for playlist (default: `playlist.m3u`)
+   - `OUTPUT_DIR`: Directory for saving processed files (default: `output`)
    - Optionally update other values as needed
 
-4. Load the environment variables:
+4. **Important**: Ensure your S3-compatible storage has appropriate size limits configured to accommodate the processed EPG file (typically 3-5 MB after filtering and compression)
+
+5. Load the environment variables:
    ```bash
    export $(grep -v '^#' .env | xargs)
    ```
@@ -184,6 +195,13 @@ For dry-run mode (saves filtered playlist locally without uploading to S3):
 
 ```bash
 DRY_RUN=true python run_filter.py
+```
+
+To run with S3 upload (ensure your S3 storage has appropriate size limits configured):
+
+```bash
+# Make sure DRY_RUN is not set or commented out in your .env file
+python run_filter.py
 ```
 
 ### GitHub Actions

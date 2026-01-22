@@ -55,12 +55,13 @@ def copy_element_with_children(element):
     return new_element
 
 
-def download_epg(url: str) -> str:
+def download_epg(url: str, config=None) -> str:
     """
     Download EPG file from the provided URL with security checks
 
     Args:
         url (str): URL to download the EPG file from
+        config: Configuration object with output directory setting
 
     Returns:
         str: Content of the EPG file as a string
@@ -93,13 +94,52 @@ def download_epg(url: str) -> str:
             content_chunks.append(chunk)
 
         raw_content = b''.join(content_chunks)
-        
+
+        # Use config if provided, otherwise create a new instance
+        if config is None:
+            config = Config()
+
+        # Create output directory if it doesn't exist
+        output_dir = config.OUTPUT_DIR
+        import os
+        os.makedirs(output_dir, exist_ok=True)
+
+        # Save the original downloaded content to a file in the output directory
+        import tempfile
+        from urllib.parse import urlparse
+        parsed_url = urlparse(url)
+        filename = os.path.basename(parsed_url.path)
+        if not filename:
+            filename = "downloaded_epg.xml"
+
+        original_file_path = os.path.join(output_dir, f"original_{filename}")
+
         # Check if content is compressed (gzip or zip)
         if url.endswith('.gz') or is_gzipped(raw_content):
             logger.info("Detected gzipped EPG file, decompressing...")
+            # Save the compressed file first
+            with open(original_file_path, 'wb') as f:
+                f.write(raw_content)
+
+            # Get file size
+            original_file_size = os.path.getsize(original_file_path)
+            original_file_size_kb = original_file_size / 1024
+
+            logger.info(f"Original compressed EPG file saved as: {original_file_path} (size: {original_file_size_kb:.2f} KB)")
+
             raw_content = gzip.decompress(raw_content)
         elif url.endswith('.zip'):
             logger.info("Detected zipped EPG file, extracting...")
+            # Save the compressed file first
+            with open(original_file_path, 'wb') as f:
+                f.write(raw_content)
+
+            # Get file size
+            original_file_size = os.path.getsize(original_file_path)
+            original_file_size_kb = original_file_size / 1024
+
+            logger.info(f"Original zipped EPG file saved as: {original_file_path} (size: {original_file_size_kb:.2f} KB)")
+
             with zipfile.ZipFile(BytesIO(raw_content), 'r') as zip_file:
                 # Get the first file in the zip archive
                 file_list = zip_file.namelist()
@@ -108,9 +148,20 @@ def download_epg(url: str) -> str:
                     raw_content = zip_file.read(first_file)
                 else:
                     raise ValueError("ZIP archive is empty")
+        else:
+            # Save the plain content
+            with open(original_file_path, 'wb') as f:
+                f.write(raw_content)
+
+            # Get file size
+            original_file_size = os.path.getsize(original_file_path)
+            original_file_size_kb = original_file_size / 1024
+
+            logger.info(f"Original EPG file saved as: {original_file_path} (size: {original_file_size_kb:.2f} KB)")
 
         content = raw_content.decode('utf-8')
-        logger.info(f"EPG file downloaded successfully, size: {len(content)} characters")
+        content_size_kb = len(content) / 1024
+        logger.info(f"EPG file downloaded successfully, size: {content_size_kb:.2f} KB ({len(content)} characters)")
         return content
     except URLError as e:
         logger.error(f"Error downloading EPG file: {e}")
@@ -343,22 +394,51 @@ def filter_epg_content(epg_content: str, channel_ids: Set[str]) -> str:
         raise
 
 
-def save_filtered_epg_locally(content: str, filename: str) -> None:
+def save_filtered_epg_locally(content: str, filename: str, config=None) -> None:
     """
-    Save the EPG content to a local file, compressing to gz if filename ends with .gz
+    Save the EPG content to a local file in the output directory, compressing to gz if filename ends with .gz
 
     Args:
         content (str): EPG content
         filename (str): Filename to save to
+        config: Configuration object with output directory setting
     """
+    import os
+    from .config import Config
+
+    # Use config if provided, otherwise create a new instance
+    if config is None:
+        config = Config()
+
+    # Create output directory if it doesn't exist
+    output_dir = config.OUTPUT_DIR
+    os.makedirs(output_dir, exist_ok=True)
+
+    # Create full file path
+    filepath = os.path.join(output_dir, filename)
+
     if filename.endswith('.gz'):
         import gzip
         # Compress content and save to .gz file
-        with gzip.open(filename, 'wt', encoding='utf-8') as f:
-            f.write(content)
-        logger.info(f"EPG saved locally as compressed file: {filename}")
+        # Encode the string content to bytes before compressing
+        content_bytes = content.encode('utf-8')
+        original_size_kb = len(content_bytes) / 1024
+
+        with gzip.open(filepath, 'wb') as f:
+            f.write(content_bytes)
+
+        # Get compressed file size
+        compressed_size = os.path.getsize(filepath)
+        compressed_size_kb = compressed_size / 1024
+
+        logger.info(f"EPG saved locally as compressed file: {filepath} (compressed: {compressed_size_kb:.2f} KB, original: {original_size_kb:.2f} KB)")
     else:
         # Save as plain text
-        with open(filename, 'w', encoding='utf-8') as f:
+        with open(filepath, 'w', encoding='utf-8') as f:
             f.write(content)
-        logger.info(f"EPG saved locally as {filename}")
+
+        # Get file size
+        file_size = os.path.getsize(filepath)
+        file_size_kb = file_size / 1024
+
+        logger.info(f"EPG saved locally as {filepath} (size: {file_size_kb:.2f} KB)")

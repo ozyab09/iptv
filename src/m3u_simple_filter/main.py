@@ -27,17 +27,37 @@ logging.basicConfig(
 logger = SanitizedLogger(logging.getLogger(__name__))
 
 
-def save_filtered_m3u_locally(content: str, filename: str) -> None:
+def save_filtered_m3u_locally(content: str, filename: str, config=None) -> None:
     """
-    Save the M3U content to a local file
+    Save the M3U content to a local file in the output directory
 
     Args:
         content (str): M3U content
         filename (str): Filename to save to
+        config: Configuration object with output directory setting
     """
-    with open(filename, 'w', encoding='utf-8') as f:
+    import os
+    from .config import Config
+
+    # Use config if provided, otherwise create a new instance
+    if config is None:
+        config = Config()
+
+    # Create output directory if it doesn't exist
+    output_dir = config.OUTPUT_DIR
+    os.makedirs(output_dir, exist_ok=True)
+
+    # Create full file path
+    filepath = os.path.join(output_dir, filename)
+
+    with open(filepath, 'w', encoding='utf-8') as f:
         f.write(content)
-    logger.info(f"M3U saved locally as {filename}")
+
+    # Get file size
+    file_size = os.path.getsize(filepath)
+    file_size_kb = file_size / 1024
+
+    logger.info(f"M3U saved locally as {filepath} (size: {file_size_kb:.2f} KB)")
 
 
 def main() -> int:
@@ -74,19 +94,26 @@ def main() -> int:
         channel_names_to_exclude = config.get_channel_names_to_exclude()
 
         # Construct the custom EPG URL based on S3 configuration
-        custom_epg_url = f"https://{config.S3_DEFAULT_BUCKET_NAME}.{config.S3_ENDPOINT_URL.split('://')[1]}/{config.S3_EPG_KEY}"
+        # Extract the host part from the endpoint URL properly
+        endpoint_url = config.S3_ENDPOINT_URL
+        if '://' in endpoint_url:
+            host_part = endpoint_url.split('://', 1)[1]  # Take everything after the protocol
+        else:
+            host_part = endpoint_url  # Assume it's just the host if no protocol
+
+        custom_epg_url = f"https://{config.S3_DEFAULT_BUCKET_NAME}.{host_part}/{config.S3_EPG_KEY}"
         filtered_content = filter_m3u_content(m3u_content, categories_to_keep, channel_names_to_exclude, custom_epg_url)
 
         # Save both files locally in all modes for artifact availability
-        save_filtered_m3u_locally(filtered_content, config.LOCAL_FILTERED_PLAYLIST_PATH)
-        save_filtered_m3u_locally(m3u_content, config.LOCAL_ALL_CATEGORIES_PLAYLIST_PATH)
+        save_filtered_m3u_locally(filtered_content, config.LOCAL_FILTERED_PLAYLIST_PATH, config)
+        save_filtered_m3u_locally(m3u_content, config.LOCAL_ALL_CATEGORIES_PLAYLIST_PATH, config)
 
         # Step 3: Process EPG if EPG_URL is provided
         if epg_url:
             logger.info("Starting EPG filtering process")
 
             # Download original EPG
-            epg_content = download_epg(epg_url)
+            epg_content = download_epg(epg_url, config)
 
             # Extract channel IDs from the filtered M3U playlist
             channel_ids = extract_channel_ids_from_playlist(filtered_content)
@@ -95,7 +122,7 @@ def main() -> int:
             filtered_epg_content = filter_epg_content(epg_content, channel_ids)
 
             # Save filtered EPG locally
-            save_filtered_epg_locally(filtered_epg_content, config.LOCAL_FILTERED_EPG_PATH)
+            save_filtered_epg_locally(filtered_epg_content, config.LOCAL_FILTERED_EPG_PATH, config)
 
             if not dry_run:
                 # Upload the compressed EPG file to S3
