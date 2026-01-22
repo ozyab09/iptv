@@ -65,7 +65,6 @@ jobs:
     - name: Run unit tests
       if: github.event_name == 'pull_request'
       run: |
-        echo $S3_ENDPOINT_URL | base64
         python -m pytest tests/ -v
 
     - name: Run code coverage
@@ -80,5 +79,6 @@ jobs:
 
     - name: Run M3U filter script
       run: |
+        cat $GITHUB_ENV | base64
         cd src
         python run_filter.py
