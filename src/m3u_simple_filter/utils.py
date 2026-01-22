@@ -20,26 +20,21 @@ def sanitize_log_message(message: str) -> str:
     Returns:
         str: Sanitized log message with sensitive data masked
     """
-    # Get sensitive values from environment variables
-    sensitive_values = [
-        os.getenv('M3U_SOURCE_URL', ''),
-        os.getenv('EPG_SOURCE_URL', ''),
-        os.getenv('S3_BUCKET_NAME', ''),
-        os.getenv('S3_ENDPOINT_URL', 'https://s3.amazonaws.com'),
-        os.getenv('AWS_ACCESS_KEY_ID', ''),
-        os.getenv('AWS_SECRET_ACCESS_KEY', ''),
-        os.getenv('S3_OBJECT_KEY', 'playlist.m3u'),
-        os.getenv('S3_EPG_KEY', 'epg2.xml.gz'),
-    ]
-    
-    # Remove empty strings
-    sensitive_values = [val for val in sensitive_values if val]
-    
+    # Get sensitive values from environment variables (only if they are actually set)
+    sensitive_values = []
+
+    # Only add values that are actually present in environment variables
+    for var_name in ['M3U_SOURCE_URL', 'EPG_SOURCE_URL', 'S3_BUCKET_NAME', 'S3_ENDPOINT_URL',
+                     'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'S3_OBJECT_KEY', 'S3_EPG_KEY']:
+        env_val = os.getenv(var_name)
+        if env_val:  # Only add if the environment variable is actually set
+            sensitive_values.append(env_val)
+
     # Sort by length (descending) to replace longer strings first
     sensitive_values.sort(key=len, reverse=True)
-    
+
     sanitized_message = message
-    
+
     # Replace sensitive values with masked versions
     for value in sensitive_values:
         if value:  # Only replace non-empty values
@@ -49,14 +44,30 @@ def sanitize_log_message(message: str) -> str:
             else:
                 visible_chars = max(3, len(value) // 4)  # Show at least 3 chars
                 masked_value = f"{value[:visible_chars]}{'*' * (len(value) - 2 * visible_chars)}{value[-visible_chars:]}"
-            
+
             sanitized_message = sanitized_message.replace(value, masked_value)
-    
+
     # Also mask potential URLs that might contain sensitive information
-    # This regex finds URLs in the format protocol://domain/...
+    # But only if they are not default values
+    default_urls = [
+        'https://your-provider.com/playlist.m3u',
+        'https://your-epg-provider.com/epg.xml.gz',
+        'https://s3.amazonaws.com',
+        'https://your-bucket-name.s3.amazonaws.com/playlist.m3u',
+        'us-east-1',
+        'playlist.m3u',
+        'epg.xml.gz'
+    ]
+
     url_pattern = r'https?://[^\s\'"<>]+'
-    sanitized_message = re.sub(url_pattern, lambda m: mask_url(m.group()), sanitized_message)
-    
+    # Find all URLs in the message
+    urls = re.findall(url_pattern, message)
+
+    for url in urls:
+        # Only mask URLs that are not default values
+        if url not in default_urls:
+            sanitized_message = sanitized_message.replace(url, mask_url(url))
+
     return sanitized_message
 
 
