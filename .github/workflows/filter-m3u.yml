@@ -1,0 +1,83 @@
+name: M3U Playlist Filter
+
+on:
+  # Scheduled execution (equivalent to GitLab scheduled pipelines)
+  schedule:
+    # Run daily at 00:00 UTC - adjust as needed
+    - cron: '0 0 * * *'
+
+  # Pull request events (equivalent to GitLab merge requests)
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches: [main]
+
+  # Push events to main branch (equivalent to GitLab main branch pushes)
+  push:
+    branches: [main]
+
+env:
+  M3U_SOURCE_URL: ${{ secrets.M3U_SOURCE_URL }}
+  S3_BUCKET_NAME: ${{ secrets.S3_BUCKET_NAME  }}
+  S3_OBJECT_KEY: ${{ secrets.S3_OBJECT_KEY }}
+  S3_ENDPOINT_URL: ${{ secrets.S3_ENDPOINT_URL }}
+  S3_REGION: ${{ secrets.S3_REGION }}
+  S3_EPG_KEY: ${{ secrets.S3_EPG_KEY }}
+  EPG_SOURCE_URL: ${{ secrets.EPG_SOURCE_URL }}
+  LOCAL_EPG_PATH: ${{ secrets.LOCAL_EPG_PATH  }}
+  AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
+jobs:
+  filter-m3u:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Security: Run in restricted environment
+    permissions:
+      contents: read
+      actions: read
+      security-events: write
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # Fetch all history for proper versioning
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.14'
+
+    # Cache Python dependencies
+    - name: Cache Python dependencies
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('**/pyproject.toml') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -e ".[dev]"
+
+    - name: Run unit tests
+      if: github.event_name == 'pull_request'
+      run: |
+        python -m pytest tests/ -v
+
+    - name: Run code coverage
+      if: github.event_name == 'pull_request'
+      run: |
+        python -m coverage run -m pytest tests/
+        python -m coverage report
+
+    - name: Set dry-run mode for pull requests
+      if: github.event_name == 'pull_request'
+      run: echo "DRY_RUN=true" >> $GITHUB_ENV
+
+    - name: Run M3U filter script
+      run: |
+        cd src
+        python run_filter.py

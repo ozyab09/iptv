@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*$pyc
+*$pyo
+.Python
+env/
+venv/
+.venv/
+pip-log.txt
+pip-delete-this-directory.txt
+.tox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.log
+
+# Local config files
+playlist.m3u
+playlist-all.m3u
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Gitlab
+.gitlab-ci-local.yml
+.gitlab-ci-local/
+epg2.xml-filtered.gz
+epg2.xml-filtered
+.env.example
