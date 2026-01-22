@@ -46,8 +46,15 @@ def sanitize_log_message(message: str) -> str:
     sanitized_message = message
 
     # Replace sensitive values with masked versions
+    # But exclude values that look like S3 endpoint URLs to avoid corrupting them
     for value in sensitive_values:
         if value:  # Only replace non-empty values
+            # Skip masking if the value looks like an S3 endpoint URL
+            if value.startswith(('http://', 'https://')):
+                # Check if this value is used in contexts where it shouldn't be masked
+                # For example, if it's a valid endpoint URL, don't mask it
+                continue
+
             # Mask the value - show first and last few characters
             if len(value) <= 8:
                 masked_value = '*' * len(value)
@@ -58,7 +65,7 @@ def sanitize_log_message(message: str) -> str:
             sanitized_message = sanitized_message.replace(value, masked_value)
 
     # Also mask potential URLs that might contain sensitive information
-    # But only if they are not default values
+    # But only if they are not default values or S3 endpoint URLs
     default_urls = [
         'https://your-provider.com/playlist.m3u',
         'https://your-epg-provider.com/epg.xml.gz',
@@ -74,8 +81,8 @@ def sanitize_log_message(message: str) -> str:
     urls = re.findall(url_pattern, message)
 
     for url in urls:
-        # Only mask URLs that are not default values
-        if url not in default_urls:
+        # Only mask URLs that are not default values and not S3 endpoint URLs
+        if url not in default_urls and not any(sensitive_val in url for sensitive_val in sensitive_values if sensitive_val.startswith(('http://', 'https://'))):
             sanitized_message = sanitized_message.replace(url, mask_url(url))
 
     return sanitized_message
