@@ -161,7 +161,7 @@ def download_epg(url: str, config=None) -> str:
 
         content = raw_content.decode('utf-8')
         content_size_kb = len(content) / 1024
-        logger.info(f"EPG file downloaded successfully, size: {content_size_kb:.2f} KB ({len(content)} characters)")
+        logger.info(f"EPG file downloaded successfully, size: {content_size_kb:.2f} KB")
         return content
     except URLError as e:
         logger.error(f"Error downloading EPG file: {e}")
