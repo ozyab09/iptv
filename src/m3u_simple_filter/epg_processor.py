@@ -294,7 +294,12 @@ def filter_epg_content(epg_content: str, channel_ids: Set[str]) -> str:
         # Calculate time thresholds
         current_time = datetime.now()
         one_hour_ago = current_time - timedelta(hours=1)
-        two_days_later = current_time + timedelta(days=2)
+
+        # Use retention days from config
+        from .config import Config
+        config_obj = Config()
+        retention_days = config_obj.EPG_RETENTION_DAYS
+        retention_period_later = current_time + timedelta(days=retention_days)
 
         for program_elem in root.findall('programme'):
             channel_ref = program_elem.get('channel', '')
@@ -323,8 +328,8 @@ def filter_epg_content(epg_content: str, channel_ids: Set[str]) -> str:
                         # Apply time-based filtering:
                         # Include programs that either:
                         # 1. Haven't ended yet (stop time >= current time), OR
-                        # 2. Will start within the next 2 days (start time <= 2 days from now)
-                        if stop_datetime >= current_time or start_datetime <= two_days_later:
+                        # 2. Will start within the configured retention period (start time <= retention days from now)
+                        if stop_datetime >= current_time or start_datetime <= retention_period_later:
                             # Create a new program element with only essential elements
                             new_program_elem = ET.Element("programme")
                             # Copy attributes

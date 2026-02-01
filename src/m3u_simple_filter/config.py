@@ -56,6 +56,11 @@ class Config:
     MAX_EPG_FILE_SIZE: int = 500 * 1024 * 1024
 
     @property
+    def EPG_RETENTION_DAYS(self) -> int:
+        """Number of days to retain EPG data from current date"""
+        return int(os.getenv('EPG_RETENTION_DAYS', '4'))
+
+    @property
     def LOCAL_FILTERED_PLAYLIST_PATH(self) -> str:
         """Local path for filtered playlist, using S3_OBJECT_KEY environment variable or default"""
         return os.getenv('S3_OBJECT_KEY', 'playlist.m3u')

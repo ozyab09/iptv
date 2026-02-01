@@ -108,6 +108,30 @@ class TestConfig(unittest.TestCase):
         self.assertEqual(config.get_channel_names_to_exclude(), expected_exclusions)
         self.assertEqual(config.CHANNEL_NAMES_TO_EXCLUDE, expected_exclusions)
 
+    def test_epg_retention_days_default(self):
+        """Test that EPG retention days defaults to 4."""
+        config = Config()
+        self.assertEqual(config.EPG_RETENTION_DAYS, 4)
+
+    def test_epg_retention_days_from_env(self):
+        """Test that EPG retention days can be set from environment variable."""
+        # Save original value
+        original_value = os.environ.get('EPG_RETENTION_DAYS')
+
+        try:
+            # Set environment variable
+            os.environ['EPG_RETENTION_DAYS'] = '7'
+
+            # Create new config instance to pick up env var
+            config = Config()
+            self.assertEqual(config.EPG_RETENTION_DAYS, 7)
+        finally:
+            # Restore original value
+            if original_value is not None:
+                os.environ['EPG_RETENTION_DAYS'] = original_value
+            else:
+                os.environ.pop('EPG_RETENTION_DAYS', None)
+
 
 if __name__ == '__main__':
     unittest.main()
