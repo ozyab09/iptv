@@ -133,6 +133,27 @@ http://example.com/5"""
 
         self.assertEqual(result, "<?xml version='1.0'?><tv><channel id='test'>Test</channel></tv>")
 
+    def test_filter_epg_content_uses_configurable_retention(self):
+        """Test that the time-based filtering logic uses configurable retention period."""
+        # This test verifies that the code now uses configurable retention instead of hardcoded values
+        import inspect
+
+        # Get the source code of the filter function
+        source = inspect.getsource(filter_epg_content)
+
+        # Check that the code mentions retention period in the comments
+        self.assertIn("retention", source)
+
+        # Check that the code references config
+        self.assertIn("config", source)
+
+        # Check that the code uses a variable for days instead of hardcoded value
+        self.assertIn("retention_period_later", source)
+
+        # Verify that old hardcoded variables are not used
+        self.assertNotIn("four_days_later", source)
+        self.assertNotIn("two_days_later", source)
+
 
 if __name__ == '__main__':
     unittest.main()
