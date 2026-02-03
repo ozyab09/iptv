@@ -58,7 +58,7 @@ class Config:
     @property
     def EPG_RETENTION_DAYS(self) -> int:
         """Number of days to retain EPG data from current date"""
-        return int(os.getenv('EPG_RETENTION_DAYS', '7'))
+        return int(os.getenv('EPG_RETENTION_DAYS', '10'))
 
     @property
     def LOCAL_FILTERED_PLAYLIST_PATH(self) -> str:
