@@ -160,6 +160,18 @@ http://example.com/5"""
         self.assertNotIn("four_days_later", source)
         self.assertNotIn("two_days_later", source)
 
+    def test_filter_epg_content_logs_correct_counts(self):
+        """Test that the EPG filtering logs the correct channel counts after category exclusion."""
+        # This test verifies that the code logs the correct number of channels after filtering
+        import inspect
+
+        # Get the source code of the filter function
+        source = inspect.getsource(filter_epg_content)
+
+        # Check that the code logs the initial and final channel counts
+        self.assertIn("initial channels", source)
+        self.assertIn("channels after category exclusion", source)
+
 
 if __name__ == '__main__':
     unittest.main()

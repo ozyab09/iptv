@@ -238,7 +238,7 @@ def filter_epg_content(epg_content: str, channel_ids: Set[str], channel_categori
     Returns:
         str: Filtered EPG XML content
     """
-    logger.info(f"Filtering EPG content to keep only {len(channel_ids)} channels")
+    logger.info(f"Filtering EPG content for {len(channel_ids)} initial channels")
 
     if not channel_ids:
         logger.warning("No channel IDs provided, returning empty EPG")
@@ -281,6 +281,9 @@ def filter_epg_content(epg_content: str, channel_ids: Set[str], channel_categori
                 # Only add to channels_to_keep if not in excluded category
                 if not should_exclude:
                     channels_to_keep.add(channel_ref)
+
+        # Log the actual number of channels after filtering by categories
+        logger.info(f"EPG content filtering: {len(channels_to_keep)} channels after category exclusion (from {len(channel_ids)} initial channels)")
 
         # Second pass: copy channels that we need
         for channel_elem in root.findall('channel'):
