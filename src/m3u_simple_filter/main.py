@@ -14,7 +14,7 @@ from typing import NoReturn
 
 from .config import Config
 from .m3u_processor import download_m3u, filter_m3u_content
-from .epg_processor import download_epg, extract_channel_ids_from_playlist, filter_epg_content, save_filtered_epg_locally
+from .epg_processor import download_epg, extract_channel_info_from_playlist, filter_epg_content, save_filtered_epg_locally
 from .s3_operations import upload_to_s3, upload_file_to_s3
 from .utils import SanitizedLogger
 
@@ -115,11 +115,14 @@ def main() -> int:
             # Download original EPG
             epg_content = download_epg(epg_url, config)
 
-            # Extract channel IDs from the filtered M3U playlist
-            channel_ids = extract_channel_ids_from_playlist(filtered_content)
+            # Extract channel IDs and categories from the filtered M3U playlist
+            channel_ids, channel_categories = extract_channel_info_from_playlist(filtered_content)
 
-            # Filter EPG content to only include programs for channels in the filtered playlist
-            filtered_epg_content = filter_epg_content(epg_content, channel_ids)
+            # Get excluded categories from config
+            excluded_categories = config.get_epg_excluded_categories()
+
+            # Filter EPG content to only include programs for channels in the filtered playlist, excluding specified categories
+            filtered_epg_content = filter_epg_content(epg_content, channel_ids, channel_categories, excluded_categories)
 
             # Save filtered EPG locally
             save_filtered_epg_locally(filtered_epg_content, config.LOCAL_FILTERED_EPG_PATH, config)
