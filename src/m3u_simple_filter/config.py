@@ -58,7 +58,7 @@ class Config:
     @property
     def EPG_RETENTION_DAYS(self) -> int:
         """Number of days to retain EPG data from current date"""
-        return int(os.getenv('EPG_RETENTION_DAYS', '4'))
+        return int(os.getenv('EPG_RETENTION_DAYS', '7'))
 
     @property
     def LOCAL_FILTERED_PLAYLIST_PATH(self) -> str:
@@ -129,6 +129,11 @@ class Config:
         "Sports"
     ]
 
+    # Categories for which EPG should NOT be saved (for initial config file creation)
+    EPG_EXCLUDED_CATEGORIES: List[str] = [
+        "Кино"  # Exclude EPG for movie channels
+    ]
+
     @property
     def OUTPUT_DIR(self) -> str:
         """Output directory for saving processed files"""
@@ -143,6 +148,11 @@ class Config:
     def get_channel_names_to_exclude(cls) -> List[str]:
         """Return the list of channel names to exclude"""
         return cls.CHANNEL_NAMES_TO_EXCLUDE
+
+    @classmethod
+    def get_epg_excluded_categories(cls) -> List[str]:
+        """Return the list of categories for which EPG should not be saved"""
+        return cls.EPG_EXCLUDED_CATEGORIES
 
     @classmethod
     def validate_config(cls) -> List[str]:
