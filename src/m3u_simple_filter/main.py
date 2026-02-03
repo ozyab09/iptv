@@ -118,11 +118,12 @@ def main() -> int:
             # Extract channel IDs and categories from the filtered M3U playlist
             channel_ids, channel_categories = extract_channel_info_from_playlist(filtered_content)
 
-            # Get excluded categories from config
+            # Get excluded categories and channel IDs from config
             excluded_categories = config.get_epg_excluded_categories()
+            excluded_channel_ids = config.get_epg_excluded_channel_ids()
 
-            # Filter EPG content to only include programs for channels in the filtered playlist, excluding specified categories
-            filtered_epg_content = filter_epg_content(epg_content, channel_ids, channel_categories, excluded_categories)
+            # Filter EPG content to only include programs for channels in the filtered playlist, excluding specified categories and channel IDs
+            filtered_epg_content = filter_epg_content(epg_content, channel_ids, channel_categories, excluded_categories, excluded_channel_ids)
 
             # Save filtered EPG locally
             save_filtered_epg_locally(filtered_epg_content, config.LOCAL_FILTERED_EPG_PATH, config)

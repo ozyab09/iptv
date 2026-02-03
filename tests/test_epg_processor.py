@@ -69,7 +69,7 @@ http://example.com/5"""
 </tv>"""
 
         channel_ids = {"channel1", "channel3"}
-        filtered_content = filter_epg_content(epg_content, channel_ids, {}, [])
+        filtered_content = filter_epg_content(epg_content, channel_ids, {}, [], [])
 
         # Parse the result to verify it's valid XML
         root = ET.fromstring(filtered_content)
@@ -100,7 +100,7 @@ http://example.com/5"""
 </tv>"""
 
         channel_ids = set()
-        filtered_content = filter_epg_content(epg_content, channel_ids, {}, [])
+        filtered_content = filter_epg_content(epg_content, channel_ids, {}, [], [])
 
         # Should return an empty EPG structure
         self.assertIn('<tv>', filtered_content)
@@ -170,7 +170,54 @@ http://example.com/5"""
 
         # Check that the code logs the initial and final channel counts
         self.assertIn("initial channels", source)
-        self.assertIn("channels after category exclusion", source)
+        self.assertIn("channels after category and ID exclusions", source)
+
+    def test_filter_epg_content_excludes_specific_channel_ids(self):
+        """Test that EPG filtering excludes channels by specific IDs."""
+        epg_content = """<?xml version="1.0" encoding="UTF-8"?>
+<tv>
+  <channel id="channel1">
+    <display-name lang="en">Channel 1</display-name>
+  </channel>
+  <channel id="channel2">
+    <display-name lang="en">Channel 2</display-name>
+  </channel>
+  <channel id="channel3">
+    <display-name lang="en">Channel 3</display-name>
+  </channel>
+  <programme start="20230101000000 +0000" stop="20230101010000 +0000" channel="channel1">
+    <title lang="en">Show 1</title>
+  </programme>
+  <programme start="20230101000000 +0000" stop="20230101010000 +0000" channel="channel2">
+    <title lang="en">Show 2</title>
+  </programme>
+  <programme start="20230101000000 +0000" stop="20230101010000 +0000" channel="channel3">
+    <title lang="en">Show 3</title>
+  </programme>
+</tv>"""
+
+        channel_ids = {"channel1", "channel2", "channel3"}
+        channel_categories = {}
+        excluded_categories = []
+        excluded_channel_ids = ["channel2"]  # Exclude channel2 by ID
+
+        filtered_content = filter_epg_content(epg_content, channel_ids, channel_categories, excluded_categories, excluded_channel_ids)
+
+        # Parse the result to verify it's valid XML
+        root = ET.fromstring(filtered_content)
+
+        # Check that only channel1 and channel3 remain (channel2 was excluded by ID)
+        channels = root.findall('channel')
+        self.assertEqual(len(channels), 2)  # channel1 and channel3
+
+        channel_ids_in_result = {ch.get('id') for ch in channels}
+        self.assertEqual(channel_ids_in_result, {"channel1", "channel3"})
+
+        programmes = root.findall('programme')
+        self.assertEqual(len(programmes), 2)  # Programs for channel1 and channel3 only
+
+        programme_channels = {prog.get('channel') for prog in programmes}
+        self.assertEqual(programme_channels, {"channel1", "channel3"})
 
 
 if __name__ == '__main__':

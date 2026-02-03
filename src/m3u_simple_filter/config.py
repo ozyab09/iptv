@@ -134,6 +134,40 @@ class Config:
         "Кино"  # Exclude EPG for movie channels
     ]
 
+    # Specific channel IDs for which EPG should NOT be saved (for initial config file creation)
+    EPG_EXCLUDED_CHANNEL_IDS: List[str] = [
+        "2745",  # Home 4K
+        "6170",  # VF Хит-парад
+        "6168",  # VF Metal
+        "7553",  # VF Britney Spears
+        "6171",  # VF Русский рок
+        "9228",  # VF Король и Шут
+        "7552",  # VF Modern Talking
+        "4729",  # Cartoons Short
+        "7594",  # VF Союзмультфильм
+        "7595",  # VF Ералаш
+        "9233",  # VF Каламбур
+        "8822",  # Z! Science HD
+        "8817",  # BOX Gurman HD
+        "2438",  # Капитан Фантастика
+        "8811",  # Yosso TV Food
+        "6848",  # BCU Little HD
+        "9025",  # Kids TV HD
+        "153",   # Авто Плюс
+        "66",    # Уникум
+        "2760",  # Анекдот ТВ
+        "494",   # Jim Jam
+        "6135",  # VF Музыкальный Новый год!
+        "9303",  # BOX Kosmo 4K
+        "5387",  # YOSSO TV Союзмульт
+        "2420",  # ЕГЭ ТВ
+        "2239",  # Малыш
+        "9183",  # Cartoon Classics
+        "774",   # Flix Snip
+        "810",   # Gulli
+        "6419"   # VF Баня
+    ]
+
     @property
     def OUTPUT_DIR(self) -> str:
         """Output directory for saving processed files"""
@@ -153,6 +187,11 @@ class Config:
     def get_epg_excluded_categories(cls) -> List[str]:
         """Return the list of categories for which EPG should not be saved"""
         return cls.EPG_EXCLUDED_CATEGORIES
+
+    @classmethod
+    def get_epg_excluded_channel_ids(cls) -> List[str]:
+        """Return the list of channel IDs for which EPG should not be saved"""
+        return cls.EPG_EXCLUDED_CHANNEL_IDS
 
     @classmethod
     def validate_config(cls) -> List[str]:
