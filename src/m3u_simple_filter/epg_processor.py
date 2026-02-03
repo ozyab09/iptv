@@ -225,15 +225,16 @@ def extract_channel_info_from_playlist(playlist_content: str) -> tuple:
     return channel_ids, channel_categories
 
 
-def filter_epg_content(epg_content: str, channel_ids: Set[str], channel_categories: dict = None, excluded_categories: List[str] = None) -> str:
+def filter_epg_content(epg_content: str, channel_ids: Set[str], channel_categories: dict = None, excluded_categories: List[str] = None, excluded_channel_ids: List[str] = None) -> str:
     """
-    Filter EPG content to keep only programs for specified channel IDs, excluding channels from specified categories.
+    Filter EPG content to keep only programs for specified channel IDs, excluding channels from specified categories and specific channel IDs.
 
     Args:
         epg_content (str): Original EPG XML content
         channel_ids (Set[str]): Set of channel IDs to keep in the EPG
         channel_categories (dict): Dictionary mapping channel IDs to their categories
         excluded_categories (List[str]): List of categories to exclude from EPG
+        excluded_channel_ids (List[str]): List of specific channel IDs to exclude from EPG
 
     Returns:
         str: Filtered EPG XML content
@@ -250,8 +251,17 @@ def filter_epg_content(epg_content: str, channel_ids: Set[str], channel_categori
         config_obj = Config()
         excluded_categories = config_obj.get_epg_excluded_categories()
 
+    # Initialize excluded channel IDs if not provided
+    if excluded_channel_ids is None:
+        from .config import Config
+        config_obj = Config()
+        excluded_channel_ids = config_obj.get_epg_excluded_channel_ids()
+
     # Convert excluded categories to lowercase for comparison
     excluded_categories_lower = [cat.lower() for cat in excluded_categories] if excluded_categories else []
+
+    # Convert excluded channel IDs to a set for faster lookup
+    excluded_channel_ids_set = set(excluded_channel_ids) if excluded_channel_ids else set()
 
     try:
         # Pre-build sets for faster lookup
@@ -271,19 +281,22 @@ def filter_epg_content(epg_content: str, channel_ids: Set[str], channel_categori
             channel_ref = program_elem.get('channel', '')
             if channel_ref in channel_ids_set:
                 # Check if this channel belongs to an excluded category
-                should_exclude = False
+                should_exclude_by_category = False
                 if channel_categories and excluded_categories_lower:
                     if channel_ref in channel_categories:
                         channel_category = channel_categories[channel_ref].lower()
                         if channel_category in excluded_categories_lower:
-                            should_exclude = True
+                            should_exclude_by_category = True
 
-                # Only add to channels_to_keep if not in excluded category
-                if not should_exclude:
+                # Check if this channel ID is in the excluded list
+                should_exclude_by_id = channel_ref in excluded_channel_ids_set
+
+                # Only add to channels_to_keep if not in excluded category AND not in excluded channel IDs
+                if not should_exclude_by_category and not should_exclude_by_id:
                     channels_to_keep.add(channel_ref)
 
-        # Log the actual number of channels after filtering by categories
-        logger.info(f"EPG content filtering: {len(channels_to_keep)} channels after category exclusion (from {len(channel_ids)} initial channels)")
+        # Log the actual number of channels after filtering by categories and specific IDs
+        logger.info(f"EPG content filtering: {len(channels_to_keep)} channels after category and ID exclusions (from {len(channel_ids)} initial channels)")
 
         # Second pass: copy channels that we need
         for channel_elem in root.findall('channel'):
