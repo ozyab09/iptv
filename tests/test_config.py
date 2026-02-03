@@ -109,9 +109,9 @@ class TestConfig(unittest.TestCase):
         self.assertEqual(config.CHANNEL_NAMES_TO_EXCLUDE, expected_exclusions)
 
     def test_epg_retention_days_default(self):
-        """Test that EPG retention days defaults to 7."""
+        """Test that EPG retention days defaults to 10."""
         config = Config()
-        self.assertEqual(config.EPG_RETENTION_DAYS, 7)
+        self.assertEqual(config.EPG_RETENTION_DAYS, 10)
 
     def test_epg_retention_days_from_env(self):
         """Test that EPG retention days can be set from environment variable."""
