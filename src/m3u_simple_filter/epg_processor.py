@@ -340,11 +340,18 @@ def filter_epg_content(epg_content: str, channel_ids: Set[str], channel_categori
 
         # Calculate time thresholds
         current_time = datetime.now()
-        one_hour_ago = current_time - timedelta(hours=1)
 
         # Use retention days from config
-        from .config import Config
+        # Import here to allow mocking in tests
+        from importlib import import_module
+        config_module = import_module('.config', package=__name__.rsplit('.', 1)[0])
+        Config = config_module.Config
         config_obj = Config()
+
+        # Calculate past retention threshold (how many days back to keep programs that have ended)
+        past_retention_days = config_obj.EPG_PAST_RETENTION_DAYS
+        retention_start_time = current_time - timedelta(days=past_retention_days)
+
         retention_days = config_obj.EPG_RETENTION_DAYS
         retention_period_later = current_time + timedelta(days=retention_days)
 
@@ -373,10 +380,20 @@ def filter_epg_content(epg_content: str, channel_ids: Set[str], channel_categori
                         stop_datetime = datetime(stop_year, stop_month, stop_day, stop_hour, stop_min, stop_sec)
 
                         # Apply time-based filtering:
+                        # If past retention days is greater than 0, apply time-based filtering
                         # Include programs that either:
-                        # 1. Haven't ended yet (stop time >= current time), OR
+                        # 1. Haven't ended yet (stop time >= retention_start_time), OR
                         # 2. Will start within the configured retention period (start time <= retention days from now)
-                        if stop_datetime >= current_time or start_datetime <= retention_period_later:
+                        # But exclude programs that both started and ended in the distant past
+                        if past_retention_days > 0:
+                            condition1 = (stop_datetime >= retention_start_time or start_datetime <= retention_period_later)
+                            condition2 = (start_datetime >= retention_start_time or stop_datetime >= retention_start_time)
+                            should_include = condition1 and condition2
+                        else:
+                            # If past retention days is 0, use the original logic (no time-based filtering for past programs)
+                            should_include = stop_datetime >= current_time or start_datetime <= retention_period_later
+
+                        if should_include:
                             # Create a new program element with only essential elements
                             new_program_elem = ET.Element("programme")
                             # Copy attributes

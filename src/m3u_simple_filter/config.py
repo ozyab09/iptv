@@ -61,6 +61,11 @@ class Config:
         return int(os.getenv('EPG_RETENTION_DAYS', '10'))
 
     @property
+    def EPG_PAST_RETENTION_DAYS(self) -> int:
+        """Number of days in the past to retain EPG data (programs that ended recently)"""
+        return int(os.getenv('EPG_PAST_RETENTION_DAYS', '0'))
+
+    @property
     def LOCAL_FILTERED_PLAYLIST_PATH(self) -> str:
         """Local path for filtered playlist, using S3_OBJECT_KEY environment variable or default"""
         return os.getenv('S3_OBJECT_KEY', 'playlist.m3u')
