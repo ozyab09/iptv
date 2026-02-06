@@ -33,6 +33,10 @@ playlist-all.m3u
 .DS_Store
 Thumbs.db
 
+# Distribution / packaging
+*.egg-info/
+*.egg
+
 # Gitlab
 .gitlab-ci-local.yml
 .gitlab-ci-local/
