@@ -42,6 +42,7 @@ CATEGORIES_TO_KEEP: List[str] = [
 - **Cloud Storage**: Uploads filtered playlists to S3-compatible storage
 - **Dry-Run Mode**: Test functionality without uploading to S3
 - **Comprehensive Logging**: Detailed logs with before/after statistics and file sizes in KB
+- **Time-Based EPG Filtering**: Configurable retention periods for EPG data, allowing to keep programs that ended recently
 - **Optimized File Sizes**: Efficient compression to keep EPG files within typical S3 size limits (3-5 MB range)
 - **Organized File Management**: All downloaded and processed files saved in a dedicated output directory
 - **Full Test Coverage**: Unit tests for all core functionality
@@ -59,6 +60,7 @@ iptv/
 │   │   ├── __init__.py             # Package initialization
 │   │   ├── config.py               # Configuration management with validation
 │   │   ├── m3u_processor.py        # M3U download, parsing and filtering
+│   │   ├── epg_processor.py        # EPG download, parsing and filtering
 │   │   ├── s3_operations.py        # S3 upload operations
 │   │   └── main.py                 # Application entry point
 │   └── run_filter.py               # Script entry point
@@ -117,6 +119,7 @@ The application uses environment variables for configuration. Create a `.env` fi
 | `S3_EPG_KEY` | S3 object key for EPG file | `epg.xml.gz` |
 | `EPG_SOURCE_URL` | Source URL for the EPG XML file | `https://your-epg-provider.com/epg.xml.gz` |
 | `LOCAL_EPG_PATH` | Local path for downloaded EPG file | `epg.xml.gz` |
+| `EPG_PAST_RETENTION_DAYS` | Number of days in the past to retain EPG data (programs that ended recently) | `0` |
 | `OUTPUT_DIR` | Directory for saving processed files | `output` |
 | `DRY_RUN` | Run in dry-run mode | (unset) |
 | `AWS_ACCESS_KEY_ID` | S3-compatible storage access key | (required) |
