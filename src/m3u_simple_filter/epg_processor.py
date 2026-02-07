@@ -364,7 +364,7 @@ def filter_epg_content(epg_content: str, channel_ids: Set[str], channel_categori
                             condition2 = (start_datetime >= retention_start_time or stop_datetime >= retention_start_time)
                             should_include = condition1 and condition2
                         else:
-                            # If past retention days is 0, use the original logic (no time-based filtering for past programs)
+                            # If past retention days is 0, use a more flexible approach to handle historical data
                             # For excluded channels, only include programs that haven't ended more than 1 hour ago and are within 1 day ahead
                             if is_excluded_channel:
                                 # Get the new configuration values
@@ -372,17 +372,32 @@ def filter_epg_content(epg_content: str, channel_ids: Set[str], channel_categori
                                 config_obj = Config()
                                 future_limit_days = config_obj.EXCLUDED_CHANNELS_FUTURE_LIMIT_DAYS
                                 past_limit_hours = config_obj.EXCLUDED_CHANNELS_PAST_LIMIT_HOURS
-                                
+
                                 # Calculate time thresholds
                                 past_threshold = current_time - timedelta(hours=past_limit_hours)
                                 future_threshold = current_time + timedelta(days=future_limit_days)
-                                
+
                                 # Include programs that:
                                 # 1. Haven't ended more than 1 hour ago (stop_datetime >= past_threshold)
                                 # 2. Start within 1 day ahead (start_datetime <= future_threshold)
                                 should_include = stop_datetime >= past_threshold and start_datetime <= future_threshold
                             else:
-                                should_include = stop_datetime >= current_time or start_datetime <= retention_period_later
+                                # For non-excluded channels, when past retention is 0, we need to be more flexible
+                                # to handle historical EPG data. Include programs that are within a reasonable range
+                                # Calculate how far back this program is from current time
+                                time_diff = abs(current_time - stop_datetime)
+                                
+                                # If the program is reasonably close to current time (within 30 days), include it
+                                # This handles the case where EPG data contains historical programs
+                                reasonable_range = timedelta(days=30)
+                                
+                                # Include programs that either:
+                                # 1. Haven't ended yet (original condition)
+                                # 2. Will start in the future period (original condition)  
+                                # 3. Ended recently (within 30 days) - NEW CONDITION to handle historical data
+                                should_include = (stop_datetime >= current_time or 
+                                                start_datetime <= retention_period_later or
+                                                time_diff <= reasonable_range)
 
                         if should_include:
                             # Track which channels have programs
