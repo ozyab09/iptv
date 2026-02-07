@@ -361,33 +361,11 @@ def filter_epg_content(epg_content: str, channel_ids: Set[str], channel_categori
                         # If there's an error parsing the datetime, skip this program
                         continue
 
-            # If still no channels are selected, use a more conservative approach
+            # If still no channels are selected after the first fallback, 
+            # we should not include all programs from the EPG as that would be too permissive
+            # Instead, we'll log that we couldn't match any channels and proceed with empty set
             if not channels_to_keep:
-                logger.info("Still no channels matched, including channels with programs in the next few days")
-                # Include channels that have programs in the next few days
-                from datetime import timedelta
-                future_threshold = current_time + timedelta(days=7)  # Programs in next 7 days
-                
-                for program_elem in root.findall('programme'):
-                    channel_ref = program_elem.get('channel', '')
-                    
-                    # Extract start time from the program
-                    start_attr = program_elem.get('start', '')
-                    start_match = re.match(r'(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})\s+(\S+)', start_attr)
-
-                    if start_match:
-                        # Parse start time
-                        start_year, start_month, start_day = int(start_match.group(1)), int(start_match.group(2)), int(start_match.group(3))
-                        start_hour, start_min, start_sec = int(start_match.group(4)), int(start_match.group(5)), int(start_match.group(6))
-
-                        try:
-                            start_datetime = datetime(start_year, start_month, start_day, start_hour, start_min, start_sec)
-
-                            # Include channels that have programs in the next 7 days
-                            if current_time <= start_datetime <= future_threshold:
-                                channels_to_keep.add(channel_ref)
-                        except ValueError:
-                            continue
+                logger.warning("No channels matched even after fallback, proceeding with empty EPG")
 
         # Log the actual number of channels that have programs
         logger.info(f"EPG content filtering: {len(channel_ids)} initial channels, {len(channels_to_keep)} channels in filtered playlist (from {len(channel_ids)} initial channels)")
@@ -469,7 +447,7 @@ def filter_epg_content(epg_content: str, channel_ids: Set[str], channel_categori
                             condition2 = (start_datetime >= retention_start_time or stop_datetime >= retention_start_time)
                             should_include = condition1 and condition2
                         else:
-                            # If past retention days is 0, use a more flexible approach to handle historical data
+                            # If past retention days is 0, use a more appropriate approach for current/upcoming programs
                             # For excluded channels, only include programs that haven't ended more than 1 hour ago and are within 1 day ahead
                             if is_excluded_channel:
                                 # Get the new configuration values
@@ -487,23 +465,14 @@ def filter_epg_content(epg_content: str, channel_ids: Set[str], channel_categori
                                 # 2. Start within 1 day ahead (start_datetime <= future_threshold)
                                 should_include = stop_datetime >= past_threshold and start_datetime <= future_threshold
                             else:
-                                # For non-excluded channels, when past retention is 0, we need to be much more flexible
-                                # to handle historical EPG data. Include programs that are within a wider time range
-                                # Calculate how far back this program is from current time
-                                time_since_stop = current_time - stop_datetime
-                                
-                                # If the program ended not too long ago OR starts not too far in the future, include it
-                                # This handles the case where EPG data contains historical programs
-                                reasonable_past_range = timedelta(days=365)  # Allow up to 1 year in the past
-                                
+                                # For non-excluded channels, when past retention is 0, only include current and upcoming programs
+                                # Don't include historical programs from months ago
                                 # Include programs that either:
                                 # 1. Haven't ended yet (original condition)
                                 # 2. Will start in the future period (original condition)  
-                                # 3. Ended recently (within reasonable past range) - UPDATED to be more permissive
-                                # 4. Started in the past but ends in the future (overlapping with current time)
+                                # 3. Started in the past but ends in the future (currently ongoing programs)
                                 should_include = (stop_datetime >= current_time or 
                                                 start_datetime <= retention_period_later or
-                                                time_since_stop <= reasonable_past_range or
                                                 (start_datetime <= current_time and stop_datetime >= current_time))
 
                         if should_include:
