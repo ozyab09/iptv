@@ -47,7 +47,7 @@ http://example.com/5"""
     def test_filter_epg_content_basic(self):
         """Test filtering EPG content to keep only specified channels."""
         from datetime import datetime, timedelta
-        
+
         # Use dates where programs haven't ended yet (future programs)
         now = datetime.now()
         start_time = (now + timedelta(hours=1)).strftime("%Y%m%d%H%M%S +0000")  # 1 hour in the future
