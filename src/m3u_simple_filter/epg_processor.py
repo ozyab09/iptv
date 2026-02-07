@@ -382,22 +382,24 @@ def filter_epg_content(epg_content: str, channel_ids: Set[str], channel_categori
                                 # 2. Start within 1 day ahead (start_datetime <= future_threshold)
                                 should_include = stop_datetime >= past_threshold and start_datetime <= future_threshold
                             else:
-                                # For non-excluded channels, when past retention is 0, we need to be more flexible
-                                # to handle historical EPG data. Include programs that are within a reasonable range
+                                # For non-excluded channels, when past retention is 0, we need to be much more flexible
+                                # to handle historical EPG data. Include programs that are within a wider time range
                                 # Calculate how far back this program is from current time
-                                time_diff = abs(current_time - stop_datetime)
+                                time_since_stop = current_time - stop_datetime
                                 
-                                # If the program is reasonably close to current time (within 30 days), include it
+                                # If the program ended not too long ago OR starts not too far in the future, include it
                                 # This handles the case where EPG data contains historical programs
-                                reasonable_range = timedelta(days=30)
+                                reasonable_past_range = timedelta(days=365)  # Allow up to 1 year in the past
                                 
                                 # Include programs that either:
                                 # 1. Haven't ended yet (original condition)
                                 # 2. Will start in the future period (original condition)  
-                                # 3. Ended recently (within 30 days) - NEW CONDITION to handle historical data
+                                # 3. Ended recently (within reasonable past range) - UPDATED to be more permissive
+                                # 4. Started in the past but ends in the future (overlapping with current time)
                                 should_include = (stop_datetime >= current_time or 
                                                 start_datetime <= retention_period_later or
-                                                time_diff <= reasonable_range)
+                                                time_since_stop <= reasonable_past_range or
+                                                (start_datetime <= current_time and stop_datetime >= current_time))
 
                         if should_include:
                             # Track which channels have programs
