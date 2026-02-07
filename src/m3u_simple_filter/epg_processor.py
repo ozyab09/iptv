@@ -225,7 +225,7 @@ def extract_channel_info_from_playlist(playlist_content: str) -> tuple:
     return channel_ids, channel_categories
 
 
-def filter_epg_content(epg_content: str, channel_ids: Set[str], channel_categories: dict = None, excluded_categories: List[str] = None, excluded_channel_ids: List[str] = None) -> str:
+def filter_epg_content(epg_content: str, channel_ids: Set[str], channel_categories: dict = None, excluded_categories: List[str] = None, excluded_channel_ids: List[str] = None, current_time_override=None) -> str:
     """
     Filter EPG content to keep only programs for specified channel IDs, excluding channels from specified categories and specific channel IDs.
 
@@ -280,66 +280,26 @@ def filter_epg_content(epg_content: str, channel_ids: Set[str], channel_categori
         for program_elem in root.findall('programme'):
             channel_ref = program_elem.get('channel', '')
             if channel_ref in channel_ids_set:
-                # Check if this channel belongs to an excluded category
-                should_exclude_by_category = False
-                if channel_categories and excluded_categories_lower:
-                    if channel_ref in channel_categories:
-                        channel_category = channel_categories[channel_ref].lower()
-                        if channel_category in excluded_categories_lower:
-                            should_exclude_by_category = True
+                # Add all channels that are in the filtered M3U playlist to channels_to_keep
+                # This includes both regular channels and excluded channels
+                channels_to_keep.add(channel_ref)
 
-                # Check if this channel ID is in the excluded list
-                should_exclude_by_id = channel_ref in excluded_channel_ids_set
+        # Log the actual number of channels that have programs
+        logger.info(f"EPG content filtering: {len(channel_ids)} initial channels, {len(channels_to_keep)} channels in filtered playlist (from {len(channel_ids)} initial channels)")
 
-                # Only add to channels_to_keep if not in excluded category AND not in excluded channel IDs
-                if not should_exclude_by_category and not should_exclude_by_id:
-                    channels_to_keep.add(channel_ref)
-
-        # Log the actual number of channels after filtering by categories and specific IDs
-        logger.info(f"EPG content filtering: {len(channels_to_keep)} channels after category and ID exclusions (from {len(channel_ids)} initial channels)")
-
-        # Second pass: copy channels that we need
-        for channel_elem in root.findall('channel'):
-            channel_id = channel_elem.get('id', '')
-            if channel_id in channels_to_keep:
-                # Create a new channel element with only the first display-name
-                new_channel_elem = ET.Element("channel")
-                new_channel_elem.set("id", channel_id)
-
-                # Find and add only the first display-name, skip the rest
-                display_names = channel_elem.findall('display-name')
-                if display_names:
-                    first_display_name = display_names[0]
-                    new_display_name = ET.Element("display-name")
-                    new_display_name.text = first_display_name.text
-                    new_display_name.set("lang", first_display_name.get("lang", "ru"))
-                    new_channel_elem.append(new_display_name)
-
-                # Add all other child elements except display-names and icons
-                for child in channel_elem:
-                    if child.tag == 'display-name':
-                        # Skip additional display-names (we already added the first one)
-                        continue
-                    elif child.tag == 'icon':
-                        # Skip icon elements to reduce file size
-                        continue
-                    else:
-                        # Copy other elements (like url, etc.)
-                        new_child = ET.Element(child.tag)
-                        new_child.text = child.text
-                        # Copy attributes
-                        for attr, value in child.attrib.items():
-                            new_child.set(attr, value)
-                        new_channel_elem.append(new_child)
-
-                filtered_root.append(new_channel_elem)
+        # Create a set to track which channels actually have programs
+        channels_with_programs = set()
 
         # Third pass: copy programs for channels we're keeping, with time-based filtering
         from datetime import datetime, timedelta
         import re
 
         # Calculate time thresholds
-        current_time = datetime.now()
+        from datetime import timezone
+        if current_time_override is not None:
+            current_time = current_time_override
+        else:
+            current_time = datetime.now(timezone.utc).replace(tzinfo=None)  # Convert to naive UTC datetime
 
         # Use retention days from config
         # Import here to allow mocking in tests
@@ -405,14 +365,29 @@ def filter_epg_content(epg_content: str, channel_ids: Set[str], channel_categori
                             should_include = condition1 and condition2
                         else:
                             # If past retention days is 0, use the original logic (no time-based filtering for past programs)
-                            # For excluded channels, only include programs that haven't ended yet and are within 1 day ahead
+                            # For excluded channels, only include programs that haven't ended more than 1 hour ago and are within 1 day ahead
                             if is_excluded_channel:
-                                one_day_ahead = current_time + timedelta(days=1)
-                                should_include = stop_datetime >= current_time and start_datetime <= one_day_ahead
+                                # Get the new configuration values
+                                from .config import Config
+                                config_obj = Config()
+                                future_limit_days = config_obj.EXCLUDED_CHANNELS_FUTURE_LIMIT_DAYS
+                                past_limit_hours = config_obj.EXCLUDED_CHANNELS_PAST_LIMIT_HOURS
+                                
+                                # Calculate time thresholds
+                                past_threshold = current_time - timedelta(hours=past_limit_hours)
+                                future_threshold = current_time + timedelta(days=future_limit_days)
+                                
+                                # Include programs that:
+                                # 1. Haven't ended more than 1 hour ago (stop_datetime >= past_threshold)
+                                # 2. Start within 1 day ahead (start_datetime <= future_threshold)
+                                should_include = stop_datetime >= past_threshold and start_datetime <= future_threshold
                             else:
                                 should_include = stop_datetime >= current_time or start_datetime <= retention_period_later
 
                         if should_include:
+                            # Track which channels have programs
+                            channels_with_programs.add(channel_ref)
+                            
                             # Create a new program element with only essential elements
                             new_program_elem = ET.Element("programme")
                             # Copy attributes
@@ -429,6 +404,7 @@ def filter_epg_content(epg_content: str, channel_ids: Set[str], channel_categori
                     except ValueError:
                         # If there's an error parsing the datetime, include the program anyway to avoid losing data
                         logger.warning(f"Could not parse datetime for program on channel {channel_ref}, including it anyway")
+                        
                         # Create a new program element with only essential elements
                         new_program_elem = ET.Element("programme")
                         # Copy attributes
@@ -441,10 +417,13 @@ def filter_epg_content(epg_content: str, channel_ids: Set[str], channel_categori
                             new_child = copy_element_with_children(child)
                             new_program_elem.append(new_child)
 
+                        # Track which channels have programs (since we're including the program)
+                        channels_with_programs.add(channel_ref)
                         filtered_root.append(new_program_elem)
                 else:
                     # If we can't parse the time format, include the program anyway to avoid losing data
                     logger.warning(f"Could not parse time format for program on channel {channel_ref}, including it anyway")
+                    
                     # Create a new program element with only essential elements
                     new_program_elem = ET.Element("programme")
                     # Copy attributes
@@ -457,7 +436,46 @@ def filter_epg_content(epg_content: str, channel_ids: Set[str], channel_categori
                         new_child = copy_element_with_children(child)
                         new_program_elem.append(new_child)
 
+                    # Track which channels have programs (since we're including the program)
+                    channels_with_programs.add(channel_ref)
                     filtered_root.append(new_program_elem)
+
+        # Second pass: copy channels that we need (only those that have programs)
+        for channel_elem in root.findall('channel'):
+            channel_id = channel_elem.get('id', '')
+            if channel_id in channels_to_keep and channel_id in channels_with_programs:
+                # Create a new channel element with only the first display-name
+                new_channel_elem = ET.Element("channel")
+                new_channel_elem.set("id", channel_id)
+
+                # Find and add only the first display-name, skip the rest
+                display_names = channel_elem.findall('display-name')
+                if display_names:
+                    first_display_name = display_names[0]
+                    new_display_name = ET.Element("display-name")
+                    new_display_name.text = first_display_name.text
+                    new_display_name.set("lang", first_display_name.get("lang", "ru"))
+                    new_channel_elem.append(new_display_name)
+
+                # Add all other child elements except display-names and icons
+                for child in channel_elem:
+                    if child.tag == 'display-name':
+                        # Skip additional display-names (we already added the first one)
+                        continue
+                    elif child.tag == 'icon':
+                        # Skip icon elements to reduce file size
+                        continue
+                    else:
+                        # Copy other elements (like url, etc.)
+                        new_child = ET.Element(child.tag)
+                        new_child.text = child.text
+                        # Copy attributes
+                        for attr, value in child.attrib.items():
+                            new_child.set(attr, value)
+                        new_channel_elem.append(new_child)
+
+                filtered_root.append(new_channel_elem)
+
 
         # Convert back to string with proper formatting
         # Create a string buffer to write the prettified XML
