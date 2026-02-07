@@ -44,4 +44,4 @@ epg2.xml-filtered.gz
 epg2.xml-filtered
 .env
 output/
-run_with_env.sh
+run_with_env.shepg2.xml.gz*
