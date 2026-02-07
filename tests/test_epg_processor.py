@@ -48,9 +48,9 @@ http://example.com/5"""
         """Test filtering EPG content to keep only specified channels."""
         from datetime import datetime, timedelta
         
-        # Use more recent dates that would be within retention period
+        # Use dates where programs haven't ended yet (future programs)
         now = datetime.now()
-        start_time = (now - timedelta(days=1)).strftime("%Y%m%d%H%M%S +0000")  # Yesterday
+        start_time = (now + timedelta(hours=1)).strftime("%Y%m%d%H%M%S +0000")  # 1 hour in the future
         stop_time = (now + timedelta(days=1)).strftime("%Y%m%d%H%M%S +0000")   # Tomorrow
         
         epg_content = f"""<?xml version="1.0" encoding="UTF-8"?>
@@ -183,9 +183,9 @@ http://example.com/5"""
         """Test that EPG filtering excludes channels by specific IDs."""
         from datetime import datetime, timedelta
         
-        # Use more recent dates that would be within retention period
+        # Use dates where programs haven't ended yet (future programs)
         now = datetime.now()
-        start_time = (now - timedelta(days=1)).strftime("%Y%m%d%H%M%S +0000")  # Yesterday
+        start_time = (now + timedelta(hours=1)).strftime("%Y%m%d%H%M%S +0000")  # 1 hour in the future
         stop_time = (now + timedelta(days=1)).strftime("%Y%m%d%H%M%S +0000")   # Tomorrow
         
         epg_content = f"""<?xml version="1.0" encoding="UTF-8"?>
@@ -397,14 +397,14 @@ http://example.com/5"""
         # - Current show on excluded channel (started today, ends tomorrow) - meets criteria
         # - Future show on excluded channel (within 1 day) - meets criteria
         # Programs that should be included for normal channels:
-        # - Past show on normal channel (due to original logic)
         # - Current show on normal channel (hasn't ended yet)
-        
+        # Programs that should NOT be included:
+        # - Past show on normal channel (ended in the past when past_retention_days=0)
+
         expected_titles = [
-            "Past show on excluded channel (ended 1 hour ago)", 
-            "Current show on excluded channel", 
+            "Past show on excluded channel (ended 1 hour ago)",
+            "Current show on excluded channel",
             "Future show on excluded channel (within 1 day)",
-            "Past show on normal channel",  # Should be included due to original logic (start_datetime <= retention_period_later)
             "Current show on normal channel"
         ]
         

@@ -467,14 +467,11 @@ def filter_epg_content(epg_content: str, channel_ids: Set[str], channel_categori
                                 # 2. Start within 1 day ahead (start_datetime <= future_threshold)
                                 should_include = stop_datetime >= past_threshold and start_datetime <= future_threshold
                             else:
-                                # For non-excluded channels, when past_retention_days is 0, apply a reasonable default
-                                # to prevent very old programs from being included while maintaining backward compatibility
+                                # For non-excluded channels, when past_retention_days is 0, apply strict filtering
+                                # to prevent any programs that ended in the past from being included
                                 # Include programs that either:
-                                # 1. Haven't ended yet (stop_datetime >= current_time), OR
-                                # 2. Ended recently (within a reasonable timeframe, e.g., 30 days) AND will start within the future retention period
-                                reasonable_past_threshold = current_time - timedelta(days=30)  # Reasonable default for "recent"
-                                should_include = (stop_datetime >= current_time or 
-                                                (stop_datetime >= reasonable_past_threshold and start_datetime <= retention_period_later))
+                                # 1. Haven't ended yet (stop_datetime >= current_time)
+                                should_include = stop_datetime >= current_time
                         
                         # Apply additional filtering for excluded categories
                         if is_excluded_category:
