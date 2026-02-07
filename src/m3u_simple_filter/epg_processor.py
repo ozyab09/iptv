@@ -77,7 +77,7 @@ def download_epg(url: str, config=None) -> str:
         response = urlopen(url)
 
         # Read content in chunks to prevent memory issues with large files
-        content_chunks = []
+        content_parts = []  # Use list to collect parts
         total_size = 0
 
         while True:
@@ -91,9 +91,9 @@ def download_epg(url: str, config=None) -> str:
             if total_size > Config.MAX_EPG_FILE_SIZE:
                 raise ValueError(f"EPG file exceeds maximum allowed size of {Config.MAX_EPG_FILE_SIZE} bytes")
 
-            content_chunks.append(chunk)
+            content_parts.append(chunk)
 
-        raw_content = b''.join(content_chunks)
+        raw_content = b''.join(content_parts)
 
         # Use config if provided, otherwise create a new instance
         if config is None:
