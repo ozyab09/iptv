@@ -438,10 +438,6 @@ def filter_epg_content(epg_content: str, channel_ids: Set[str], channel_categori
                         if channel_ref in excluded_channel_ids_set:
                             is_excluded_channel_id = True
                         
-                        # Completely exclude programs for channels in excluded channel IDs
-                        if is_excluded_channel_id:
-                            continue  # Skip this program entirely
-
                         # Apply time-based filtering:
                         # If past retention days is greater than 0, apply time-based filtering
                         # Include programs that either:
@@ -471,9 +467,35 @@ def filter_epg_content(epg_content: str, channel_ids: Set[str], channel_categori
                                 # 2. Start within 1 day ahead (start_datetime <= future_threshold)
                                 should_include = stop_datetime >= past_threshold and start_datetime <= future_threshold
                             else:
-                                # For non-excluded channels, include programs that start within 7 days ahead
-                                future_threshold = current_time + timedelta(days=7)  # 7 days ahead for regular channels
-                                should_include = start_datetime <= future_threshold
+                                # For non-excluded channels, when past_retention_days is 0, apply a reasonable default
+                                # to prevent very old programs from being included while maintaining backward compatibility
+                                # Include programs that either:
+                                # 1. Haven't ended yet (stop_datetime >= current_time), OR
+                                # 2. Ended recently (within a reasonable timeframe, e.g., 30 days) AND will start within the future retention period
+                                reasonable_past_threshold = current_time - timedelta(days=30)  # Reasonable default for "recent"
+                                should_include = (stop_datetime >= current_time or 
+                                                (stop_datetime >= reasonable_past_threshold and start_datetime <= retention_period_later))
+                        
+                        # Apply additional filtering for excluded categories
+                        if is_excluded_category:
+                            # Get the new configuration values
+                            from .config import Config
+                            config_obj = Config()
+                            future_limit_days = config_obj.EXCLUDED_CHANNELS_FUTURE_LIMIT_DAYS
+                            past_limit_hours = config_obj.EXCLUDED_CHANNELS_PAST_LIMIT_HOURS
+
+                            # Calculate time thresholds
+                            past_threshold = current_time - timedelta(hours=past_limit_hours)
+                            future_threshold = current_time + timedelta(days=future_limit_days)
+
+                            # Include programs that:
+                            # 1. Haven't ended more than specified hours ago (stop_datetime >= past_threshold)
+                            # 2. Start within specified days ahead (start_datetime <= future_threshold)
+                            should_include = should_include and (stop_datetime >= past_threshold and start_datetime <= future_threshold)
+                        
+                        # Completely exclude programs for channels in excluded channel IDs
+                        if is_excluded_channel_id:
+                            should_include = False
 
                         if should_include:
                             # Track which channels have programs

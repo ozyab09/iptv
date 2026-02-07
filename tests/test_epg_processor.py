@@ -46,7 +46,14 @@ http://example.com/5"""
 
     def test_filter_epg_content_basic(self):
         """Test filtering EPG content to keep only specified channels."""
-        epg_content = """<?xml version="1.0" encoding="UTF-8"?>
+        from datetime import datetime, timedelta
+        
+        # Use more recent dates that would be within retention period
+        now = datetime.now()
+        start_time = (now - timedelta(days=1)).strftime("%Y%m%d%H%M%S +0000")  # Yesterday
+        stop_time = (now + timedelta(days=1)).strftime("%Y%m%d%H%M%S +0000")   # Tomorrow
+        
+        epg_content = f"""<?xml version="1.0" encoding="UTF-8"?>
 <tv>
   <channel id="channel1">
     <display-name lang="en">Channel 1</display-name>
@@ -57,13 +64,13 @@ http://example.com/5"""
   <channel id="channel3">
     <display-name lang="en">Channel 3</display-name>
   </channel>
-  <programme start="20230101000000 +0000" stop="20230101010000 +0000" channel="channel1">
+  <programme start="{start_time}" stop="{stop_time}" channel="channel1">
     <title lang="en">Show 1</title>
   </programme>
-  <programme start="20230101000000 +0000" stop="20230101010000 +0000" channel="channel2">
+  <programme start="{start_time}" stop="{stop_time}" channel="channel2">
     <title lang="en">Show 2</title>
   </programme>
-  <programme start="20230101000000 +0000" stop="20230101010000 +0000" channel="channel3">
+  <programme start="{start_time}" stop="{stop_time}" channel="channel3">
     <title lang="en">Show 3</title>
   </programme>
 </tv>"""
@@ -174,7 +181,14 @@ http://example.com/5"""
 
     def test_filter_epg_content_excludes_specific_channel_ids(self):
         """Test that EPG filtering excludes channels by specific IDs."""
-        epg_content = """<?xml version="1.0" encoding="UTF-8"?>
+        from datetime import datetime, timedelta
+        
+        # Use more recent dates that would be within retention period
+        now = datetime.now()
+        start_time = (now - timedelta(days=1)).strftime("%Y%m%d%H%M%S +0000")  # Yesterday
+        stop_time = (now + timedelta(days=1)).strftime("%Y%m%d%H%M%S +0000")   # Tomorrow
+        
+        epg_content = f"""<?xml version="1.0" encoding="UTF-8"?>
 <tv>
   <channel id="channel1">
     <display-name lang="en">Channel 1</display-name>
@@ -185,13 +199,13 @@ http://example.com/5"""
   <channel id="channel3">
     <display-name lang="en">Channel 3</display-name>
   </channel>
-  <programme start="20230101000000 +0000" stop="20230101010000 +0000" channel="channel1">
+  <programme start="{start_time}" stop="{stop_time}" channel="channel1">
     <title lang="en">Show 1</title>
   </programme>
-  <programme start="20230101000000 +0000" stop="20230101010000 +0000" channel="channel2">
+  <programme start="{start_time}" stop="{stop_time}" channel="channel2">
     <title lang="en">Show 2</title>
   </programme>
-  <programme start="20230101000000 +0000" stop="20230101010000 +0000" channel="channel3">
+  <programme start="{start_time}" stop="{stop_time}" channel="channel3">
     <title lang="en">Show 3</title>
   </programme>
 </tv>"""
