@@ -355,6 +355,10 @@ def filter_epg_content(epg_content: str, channel_ids: Set[str], channel_categori
         retention_days = config_obj.EPG_RETENTION_DAYS
         retention_period_later = current_time + timedelta(days=retention_days)
 
+        # Get excluded categories and channel IDs for special handling
+        excluded_categories_lower = [cat.lower() for cat in excluded_categories] if excluded_categories else []
+        excluded_channel_ids_set = set(excluded_channel_ids) if excluded_channel_ids else set()
+
         for program_elem in root.findall('programme'):
             channel_ref = program_elem.get('channel', '')
             if channel_ref in channels_to_keep:
@@ -379,6 +383,16 @@ def filter_epg_content(epg_content: str, channel_ids: Set[str], channel_categori
                         start_datetime = datetime(start_year, start_month, start_day, start_hour, start_min, start_sec)
                         stop_datetime = datetime(stop_year, stop_month, stop_day, stop_hour, stop_min, stop_sec)
 
+                        # Determine if this channel is in an excluded category or is an excluded channel ID
+                        is_excluded_channel = False
+                        if channel_categories and channel_ref in channel_categories:
+                            channel_category = channel_categories[channel_ref].lower()
+                            if channel_category in excluded_categories_lower:
+                                is_excluded_channel = True
+                        
+                        if channel_ref in excluded_channel_ids_set:
+                            is_excluded_channel = True
+
                         # Apply time-based filtering:
                         # If past retention days is greater than 0, apply time-based filtering
                         # Include programs that either:
@@ -391,7 +405,12 @@ def filter_epg_content(epg_content: str, channel_ids: Set[str], channel_categori
                             should_include = condition1 and condition2
                         else:
                             # If past retention days is 0, use the original logic (no time-based filtering for past programs)
-                            should_include = stop_datetime >= current_time or start_datetime <= retention_period_later
+                            # For excluded channels, only include programs that haven't ended yet and are within 1 day ahead
+                            if is_excluded_channel:
+                                one_day_ahead = current_time + timedelta(days=1)
+                                should_include = stop_datetime >= current_time and start_datetime <= one_day_ahead
+                            else:
+                                should_include = stop_datetime >= current_time or start_datetime <= retention_period_later
 
                         if should_include:
                             # Create a new program element with only essential elements

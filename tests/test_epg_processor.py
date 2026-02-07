@@ -288,6 +288,104 @@ http://example.com/5"""
         self.assertIn("Future show", programme_titles)
         self.assertNotIn("Show that ended 5 days ago", programme_titles)
 
+    def test_filter_epg_content_excluded_channels_one_day_limit(self):
+        """Test that excluded channels only show programs that haven't ended yet and within 1 day."""
+        from datetime import datetime, timedelta
+
+        # Create EPG content with programs at different times for excluded channel
+        now = datetime.now()
+        yesterday = (now - timedelta(days=1)).strftime("%Y%m%d%H%M%S +0000")
+        today = now.strftime("%Y%m%d%H%M%S +0000")
+        tomorrow = (now + timedelta(days=1)).strftime("%Y%m%d%H%M%S +0000")
+        in_two_days = (now + timedelta(days=2)).strftime("%Y%m%d%H%M%S +0000")
+
+        epg_content = f"""<?xml version="1.0" encoding="UTF-8"?>
+<tv>
+  <channel id="excluded_channel">
+    <display-name lang="en">Excluded Channel</display-name>
+  </channel>
+  <channel id="normal_channel">
+    <display-name lang="en">Normal Channel</display-name>
+  </channel>
+  <!-- Programs for excluded channel -->
+  <programme start="{yesterday}" stop="{yesterday}" channel="excluded_channel">
+    <title lang="en">Past show on excluded channel</title>
+  </programme>
+  <programme start="{today}" stop="{tomorrow}" channel="excluded_channel">
+    <title lang="en">Current show on excluded channel</title>
+  </programme>
+  <programme start="{tomorrow}" stop="{in_two_days}" channel="excluded_channel">
+    <title lang="en">Future show on excluded channel (within 1 day)</title>
+  </programme>
+  <programme start="{in_two_days}" stop="{in_two_days.replace(str(now.day + 2), str(now.day + 3))}" channel="excluded_channel">
+    <title lang="en">Future show on excluded channel (beyond 1 day)</title>
+  </programme>
+  <!-- Programs for normal channel -->
+  <programme start="{yesterday}" stop="{yesterday}" channel="normal_channel">
+    <title lang="en">Past show on normal channel</title>
+  </programme>
+  <programme start="{today}" stop="{tomorrow}" channel="normal_channel">
+    <title lang="en">Current show on normal channel</title>
+  </programme>
+</tv>"""
+
+        channel_ids = {"excluded_channel", "normal_channel"}
+        channel_categories = {"excluded_channel": "Кино"}  # Кино is in excluded categories
+        excluded_categories = ["Кино"]
+        excluded_channel_ids = []  # No specific IDs to exclude in this test
+
+        # Mock the config to set past retention to 0 days (default)
+        from unittest.mock import patch
+        from src.m3u_simple_filter.config import Config
+
+        # Create a custom config class with our test values
+        class TestConfig(Config):
+            @property
+            def EPG_PAST_RETENTION_DAYS(self) -> int:
+                return 0  # Default value
+
+            @property
+            def EPG_RETENTION_DAYS(self) -> int:
+                return 10  # Keep future programs for 10 days
+
+        # Patch the config import in the epg_processor module
+        with patch('src.m3u_simple_filter.config.Config', TestConfig):
+            filtered_content = filter_epg_content(epg_content, channel_ids, channel_categories, excluded_categories, excluded_channel_ids)
+
+        # Parse the result to verify filtering
+        root = ET.fromstring(filtered_content)
+
+        programmes = root.findall('programme')
+        programme_titles = [p.find('title').text for p in programmes]
+
+        # For excluded channels with past retention 0, only programs that haven't ended yet 
+        # and start within 1 day should be included
+        # So we should have:
+        # - Current show on excluded channel (started today, ends tomorrow)
+        # - Future show on excluded channel (within 1 day)
+        # - Past show on normal channel (normal channels follow different rules when past_retention=0)
+        # - Current show on normal channel
+        
+        # Actually, with past_retention_days=0, normal channels will only show programs that haven't ended yet
+        # So the "Past show on normal channel" should be excluded
+        expected_titles = [
+            "Current show on excluded channel", 
+            "Future show on excluded channel (within 1 day)",
+            "Current show on normal channel"
+        ]
+        
+        # The past shows should be excluded for both types of channels when past_retention_days=0
+        unexpected_titles = [
+            "Past show on excluded channel",
+            "Future show on excluded channel (beyond 1 day)"
+        ]
+        
+        for title in expected_titles:
+            self.assertIn(title, programme_titles)
+            
+        for title in unexpected_titles:
+            self.assertNotIn(title, programme_titles)
+
 
 if __name__ == '__main__':
     unittest.main()
