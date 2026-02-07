@@ -427,14 +427,20 @@ def filter_epg_content(epg_content: str, channel_ids: Set[str], channel_categori
                         stop_datetime = datetime(stop_year, stop_month, stop_day, stop_hour, stop_min, stop_sec)
 
                         # Determine if this channel is in an excluded category or is an excluded channel ID
-                        is_excluded_channel = False
+                        is_excluded_category = False
+                        is_excluded_channel_id = False
+                        
                         if channel_categories and channel_ref in channel_categories:
                             channel_category = channel_categories[channel_ref].lower()
                             if channel_category in excluded_categories_lower:
-                                is_excluded_channel = True
-                        
+                                is_excluded_category = True
+
                         if channel_ref in excluded_channel_ids_set:
-                            is_excluded_channel = True
+                            is_excluded_channel_id = True
+                        
+                        # Completely exclude programs for channels in excluded channel IDs
+                        if is_excluded_channel_id:
+                            continue  # Skip this program entirely
 
                         # Apply time-based filtering:
                         # If past retention days is greater than 0, apply time-based filtering
@@ -447,9 +453,9 @@ def filter_epg_content(epg_content: str, channel_ids: Set[str], channel_categori
                             condition2 = (start_datetime >= retention_start_time or stop_datetime >= retention_start_time)
                             should_include = condition1 and condition2
                         else:
-                            # If past retention days is 0, use a more appropriate approach for current/upcoming programs
+                            # If past retention days is 0, use the original logic for excluded channels
                             # For excluded channels, only include programs that haven't ended more than 1 hour ago and are within 1 day ahead
-                            if is_excluded_channel:
+                            if is_excluded_category:
                                 # Get the new configuration values
                                 from .config import Config
                                 config_obj = Config()
@@ -465,15 +471,9 @@ def filter_epg_content(epg_content: str, channel_ids: Set[str], channel_categori
                                 # 2. Start within 1 day ahead (start_datetime <= future_threshold)
                                 should_include = stop_datetime >= past_threshold and start_datetime <= future_threshold
                             else:
-                                # For non-excluded channels, when past retention is 0, only include current and upcoming programs
-                                # Don't include historical programs from months ago
-                                # Include programs that either:
-                                # 1. Haven't ended yet (original condition)
-                                # 2. Will start in the future period (original condition)  
-                                # 3. Started in the past but ends in the future (currently ongoing programs)
-                                should_include = (stop_datetime >= current_time or 
-                                                start_datetime <= retention_period_later or
-                                                (start_datetime <= current_time and stop_datetime >= current_time))
+                                # For non-excluded channels, include programs that start within 7 days ahead
+                                future_threshold = current_time + timedelta(days=7)  # 7 days ahead for regular channels
+                                should_include = start_datetime <= future_threshold
 
                         if should_include:
                             # Track which channels have programs
