@@ -66,6 +66,16 @@ class Config:
         return int(os.getenv('EPG_PAST_RETENTION_DAYS', '0'))
 
     @property
+    def EXCLUDED_CHANNELS_FUTURE_LIMIT_DAYS(self) -> int:
+        """Number of days in the future to retain programs for excluded channels"""
+        return int(os.getenv('EXCLUDED_CHANNELS_FUTURE_LIMIT_DAYS', '1'))
+
+    @property
+    def EXCLUDED_CHANNELS_PAST_LIMIT_HOURS(self) -> int:
+        """Number of hours in the past (before now) to retain programs for excluded channels that have already ended"""
+        return int(os.getenv('EXCLUDED_CHANNELS_PAST_LIMIT_HOURS', '1'))
+
+    @property
     def LOCAL_FILTERED_PLAYLIST_PATH(self) -> str:
         """Local path for filtered playlist, using S3_OBJECT_KEY environment variable or default"""
         return os.getenv('S3_OBJECT_KEY', 'playlist.m3u')

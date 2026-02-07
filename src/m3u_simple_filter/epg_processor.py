@@ -225,7 +225,7 @@ def extract_channel_info_from_playlist(playlist_content: str) -> tuple:
     return channel_ids, channel_categories
 
 
-def filter_epg_content(epg_content: str, channel_ids: Set[str], channel_categories: dict = None, excluded_categories: List[str] = None, excluded_channel_ids: List[str] = None) -> str:
+def filter_epg_content(epg_content: str, channel_ids: Set[str], channel_categories: dict = None, excluded_categories: List[str] = None, excluded_channel_ids: List[str] = None, current_time_override=None) -> str:
     """
     Filter EPG content to keep only programs for specified channel IDs, excluding channels from specified categories and specific channel IDs.
 
@@ -280,28 +280,170 @@ def filter_epg_content(epg_content: str, channel_ids: Set[str], channel_categori
         for program_elem in root.findall('programme'):
             channel_ref = program_elem.get('channel', '')
             if channel_ref in channel_ids_set:
-                # Check if this channel belongs to an excluded category
-                should_exclude_by_category = False
-                if channel_categories and excluded_categories_lower:
-                    if channel_ref in channel_categories:
-                        channel_category = channel_categories[channel_ref].lower()
-                        if channel_category in excluded_categories_lower:
-                            should_exclude_by_category = True
+                # Add all channels that are in the filtered M3U playlist to channels_to_keep
+                # This includes both regular channels and excluded channels
+                channels_to_keep.add(channel_ref)
 
-                # Check if this channel ID is in the excluded list
-                should_exclude_by_id = channel_ref in excluded_channel_ids_set
+        # Log the actual number of channels that have programs
+        logger.info(f"EPG content filtering: {len(channel_ids)} initial channels, {len(channels_to_keep)} channels in filtered playlist (from {len(channel_ids)} initial channels)")
 
-                # Only add to channels_to_keep if not in excluded category AND not in excluded channel IDs
-                if not should_exclude_by_category and not should_exclude_by_id:
-                    channels_to_keep.add(channel_ref)
+        # Create a set to track which channels actually have programs
+        channels_with_programs = set()
 
-        # Log the actual number of channels after filtering by categories and specific IDs
-        logger.info(f"EPG content filtering: {len(channels_to_keep)} channels after category and ID exclusions (from {len(channel_ids)} initial channels)")
+        # Third pass: copy programs for channels we're keeping, with time-based filtering
+        from datetime import datetime, timedelta
+        import re
 
-        # Second pass: copy channels that we need
+        # Calculate time thresholds
+        from datetime import timezone
+        if current_time_override is not None:
+            current_time = current_time_override
+        else:
+            current_time = datetime.now(timezone.utc).replace(tzinfo=None)  # Convert to naive UTC datetime
+
+        # Use retention days from config
+        # Import here to allow mocking in tests
+        from importlib import import_module
+        config_module = import_module('.config', package=__name__.rsplit('.', 1)[0])
+        Config = config_module.Config
+        config_obj = Config()
+
+        # Calculate past retention threshold (how many days back to keep programs that have ended)
+        past_retention_days = config_obj.EPG_PAST_RETENTION_DAYS
+        retention_start_time = current_time - timedelta(days=past_retention_days)
+
+        retention_days = config_obj.EPG_RETENTION_DAYS
+        retention_period_later = current_time + timedelta(days=retention_days)
+
+        # Get excluded categories and channel IDs for special handling
+        excluded_categories_lower = [cat.lower() for cat in excluded_categories] if excluded_categories else []
+        excluded_channel_ids_set = set(excluded_channel_ids) if excluded_channel_ids else set()
+
+        for program_elem in root.findall('programme'):
+            channel_ref = program_elem.get('channel', '')
+            if channel_ref in channels_to_keep:
+                # Extract start and stop times from the program
+                start_attr = program_elem.get('start', '')
+                stop_attr = program_elem.get('stop', '')
+
+                # Parse the time strings (format: YYYYMMDDHHMMSS +ZZZZ)
+                start_match = re.match(r'(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})\s+(\S+)', start_attr)
+                stop_match = re.match(r'(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})\s+(\S+)', stop_attr)
+
+                if start_match and stop_match:
+                    # Parse start time
+                    start_year, start_month, start_day = int(start_match.group(1)), int(start_match.group(2)), int(start_match.group(3))
+                    start_hour, start_min, start_sec = int(start_match.group(4)), int(start_match.group(5)), int(start_match.group(6))
+
+                    # Parse stop time
+                    stop_year, stop_month, stop_day = int(stop_match.group(1)), int(stop_match.group(2)), int(stop_match.group(3))
+                    stop_hour, stop_min, stop_sec = int(stop_match.group(4)), int(stop_match.group(5)), int(stop_match.group(6))
+
+                    try:
+                        start_datetime = datetime(start_year, start_month, start_day, start_hour, start_min, start_sec)
+                        stop_datetime = datetime(stop_year, stop_month, stop_day, stop_hour, stop_min, stop_sec)
+
+                        # Determine if this channel is in an excluded category or is an excluded channel ID
+                        is_excluded_channel = False
+                        if channel_categories and channel_ref in channel_categories:
+                            channel_category = channel_categories[channel_ref].lower()
+                            if channel_category in excluded_categories_lower:
+                                is_excluded_channel = True
+                        
+                        if channel_ref in excluded_channel_ids_set:
+                            is_excluded_channel = True
+
+                        # Apply time-based filtering:
+                        # If past retention days is greater than 0, apply time-based filtering
+                        # Include programs that either:
+                        # 1. Haven't ended yet (stop time >= retention_start_time), OR
+                        # 2. Will start within the configured retention period (start time <= retention days from now)
+                        # But exclude programs that both started and ended in the distant past
+                        if past_retention_days > 0:
+                            condition1 = (stop_datetime >= retention_start_time or start_datetime <= retention_period_later)
+                            condition2 = (start_datetime >= retention_start_time or stop_datetime >= retention_start_time)
+                            should_include = condition1 and condition2
+                        else:
+                            # If past retention days is 0, use the original logic (no time-based filtering for past programs)
+                            # For excluded channels, only include programs that haven't ended more than 1 hour ago and are within 1 day ahead
+                            if is_excluded_channel:
+                                # Get the new configuration values
+                                from .config import Config
+                                config_obj = Config()
+                                future_limit_days = config_obj.EXCLUDED_CHANNELS_FUTURE_LIMIT_DAYS
+                                past_limit_hours = config_obj.EXCLUDED_CHANNELS_PAST_LIMIT_HOURS
+                                
+                                # Calculate time thresholds
+                                past_threshold = current_time - timedelta(hours=past_limit_hours)
+                                future_threshold = current_time + timedelta(days=future_limit_days)
+                                
+                                # Include programs that:
+                                # 1. Haven't ended more than 1 hour ago (stop_datetime >= past_threshold)
+                                # 2. Start within 1 day ahead (start_datetime <= future_threshold)
+                                should_include = stop_datetime >= past_threshold and start_datetime <= future_threshold
+                            else:
+                                should_include = stop_datetime >= current_time or start_datetime <= retention_period_later
+
+                        if should_include:
+                            # Track which channels have programs
+                            channels_with_programs.add(channel_ref)
+                            
+                            # Create a new program element with only essential elements
+                            new_program_elem = ET.Element("programme")
+                            # Copy attributes
+                            for attr, value in program_elem.attrib.items():
+                                new_program_elem.set(attr, value)
+
+                            # Copy child elements (keeping all elements including icons, descriptions, ratings, and categories)
+                            for child in program_elem:
+                                # Recursively copy the entire element with all sub-elements and attributes
+                                new_child = copy_element_with_children(child)
+                                new_program_elem.append(new_child)
+
+                            filtered_root.append(new_program_elem)
+                    except ValueError:
+                        # If there's an error parsing the datetime, include the program anyway to avoid losing data
+                        logger.warning(f"Could not parse datetime for program on channel {channel_ref}, including it anyway")
+                        
+                        # Create a new program element with only essential elements
+                        new_program_elem = ET.Element("programme")
+                        # Copy attributes
+                        for attr, value in program_elem.attrib.items():
+                            new_program_elem.set(attr, value)
+
+                        # Copy child elements (keeping all elements including icons, descriptions, ratings, and categories)
+                        for child in program_elem:
+                            # Recursively copy the entire element with all sub-elements and attributes
+                            new_child = copy_element_with_children(child)
+                            new_program_elem.append(new_child)
+
+                        # Track which channels have programs (since we're including the program)
+                        channels_with_programs.add(channel_ref)
+                        filtered_root.append(new_program_elem)
+                else:
+                    # If we can't parse the time format, include the program anyway to avoid losing data
+                    logger.warning(f"Could not parse time format for program on channel {channel_ref}, including it anyway")
+                    
+                    # Create a new program element with only essential elements
+                    new_program_elem = ET.Element("programme")
+                    # Copy attributes
+                    for attr, value in program_elem.attrib.items():
+                        new_program_elem.set(attr, value)
+
+                    # Copy child elements (keeping all elements including icons, descriptions, ratings, and categories)
+                    for child in program_elem:
+                            # Recursively copy the entire element with all sub-elements and attributes
+                        new_child = copy_element_with_children(child)
+                        new_program_elem.append(new_child)
+
+                    # Track which channels have programs (since we're including the program)
+                    channels_with_programs.add(channel_ref)
+                    filtered_root.append(new_program_elem)
+
+        # Second pass: copy channels that we need (only those that have programs)
         for channel_elem in root.findall('channel'):
             channel_id = channel_elem.get('id', '')
-            if channel_id in channels_to_keep:
+            if channel_id in channels_to_keep and channel_id in channels_with_programs:
                 # Create a new channel element with only the first display-name
                 new_channel_elem = ET.Element("channel")
                 new_channel_elem.set("id", channel_id)
@@ -334,111 +476,6 @@ def filter_epg_content(epg_content: str, channel_ids: Set[str], channel_categori
 
                 filtered_root.append(new_channel_elem)
 
-        # Third pass: copy programs for channels we're keeping, with time-based filtering
-        from datetime import datetime, timedelta
-        import re
-
-        # Calculate time thresholds
-        current_time = datetime.now()
-
-        # Use retention days from config
-        # Import here to allow mocking in tests
-        from importlib import import_module
-        config_module = import_module('.config', package=__name__.rsplit('.', 1)[0])
-        Config = config_module.Config
-        config_obj = Config()
-
-        # Calculate past retention threshold (how many days back to keep programs that have ended)
-        past_retention_days = config_obj.EPG_PAST_RETENTION_DAYS
-        retention_start_time = current_time - timedelta(days=past_retention_days)
-
-        retention_days = config_obj.EPG_RETENTION_DAYS
-        retention_period_later = current_time + timedelta(days=retention_days)
-
-        for program_elem in root.findall('programme'):
-            channel_ref = program_elem.get('channel', '')
-            if channel_ref in channels_to_keep:
-                # Extract start and stop times from the program
-                start_attr = program_elem.get('start', '')
-                stop_attr = program_elem.get('stop', '')
-
-                # Parse the time strings (format: YYYYMMDDHHMMSS +ZZZZ)
-                start_match = re.match(r'(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})\s+(\S+)', start_attr)
-                stop_match = re.match(r'(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})\s+(\S+)', stop_attr)
-
-                if start_match and stop_match:
-                    # Parse start time
-                    start_year, start_month, start_day = int(start_match.group(1)), int(start_match.group(2)), int(start_match.group(3))
-                    start_hour, start_min, start_sec = int(start_match.group(4)), int(start_match.group(5)), int(start_match.group(6))
-
-                    # Parse stop time
-                    stop_year, stop_month, stop_day = int(stop_match.group(1)), int(stop_match.group(2)), int(stop_match.group(3))
-                    stop_hour, stop_min, stop_sec = int(stop_match.group(4)), int(stop_match.group(5)), int(stop_match.group(6))
-
-                    try:
-                        start_datetime = datetime(start_year, start_month, start_day, start_hour, start_min, start_sec)
-                        stop_datetime = datetime(stop_year, stop_month, stop_day, stop_hour, stop_min, stop_sec)
-
-                        # Apply time-based filtering:
-                        # If past retention days is greater than 0, apply time-based filtering
-                        # Include programs that either:
-                        # 1. Haven't ended yet (stop time >= retention_start_time), OR
-                        # 2. Will start within the configured retention period (start time <= retention days from now)
-                        # But exclude programs that both started and ended in the distant past
-                        if past_retention_days > 0:
-                            condition1 = (stop_datetime >= retention_start_time or start_datetime <= retention_period_later)
-                            condition2 = (start_datetime >= retention_start_time or stop_datetime >= retention_start_time)
-                            should_include = condition1 and condition2
-                        else:
-                            # If past retention days is 0, use the original logic (no time-based filtering for past programs)
-                            should_include = stop_datetime >= current_time or start_datetime <= retention_period_later
-
-                        if should_include:
-                            # Create a new program element with only essential elements
-                            new_program_elem = ET.Element("programme")
-                            # Copy attributes
-                            for attr, value in program_elem.attrib.items():
-                                new_program_elem.set(attr, value)
-
-                            # Copy child elements (keeping all elements including icons, descriptions, ratings, and categories)
-                            for child in program_elem:
-                                # Recursively copy the entire element with all sub-elements and attributes
-                                new_child = copy_element_with_children(child)
-                                new_program_elem.append(new_child)
-
-                            filtered_root.append(new_program_elem)
-                    except ValueError:
-                        # If there's an error parsing the datetime, include the program anyway to avoid losing data
-                        logger.warning(f"Could not parse datetime for program on channel {channel_ref}, including it anyway")
-                        # Create a new program element with only essential elements
-                        new_program_elem = ET.Element("programme")
-                        # Copy attributes
-                        for attr, value in program_elem.attrib.items():
-                            new_program_elem.set(attr, value)
-
-                        # Copy child elements (keeping all elements including icons, descriptions, ratings, and categories)
-                        for child in program_elem:
-                            # Recursively copy the entire element with all sub-elements and attributes
-                            new_child = copy_element_with_children(child)
-                            new_program_elem.append(new_child)
-
-                        filtered_root.append(new_program_elem)
-                else:
-                    # If we can't parse the time format, include the program anyway to avoid losing data
-                    logger.warning(f"Could not parse time format for program on channel {channel_ref}, including it anyway")
-                    # Create a new program element with only essential elements
-                    new_program_elem = ET.Element("programme")
-                    # Copy attributes
-                    for attr, value in program_elem.attrib.items():
-                        new_program_elem.set(attr, value)
-
-                    # Copy child elements (keeping all elements including icons, descriptions, ratings, and categories)
-                    for child in program_elem:
-                            # Recursively copy the entire element with all sub-elements and attributes
-                        new_child = copy_element_with_children(child)
-                        new_program_elem.append(new_child)
-
-                    filtered_root.append(new_program_elem)
 
         # Convert back to string with proper formatting
         # Create a string buffer to write the prettified XML
