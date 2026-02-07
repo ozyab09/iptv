@@ -99,8 +99,20 @@ def get_base_channel_name(channel_name: str) -> str:
     Returns:
         str: Base channel name without 'orig' and 'hd' suffixes
     """
-    # Use the more comprehensive normalization function
-    return normalize_channel_name_for_comparison(channel_name)
+    # Remove 'orig' and 'hd' suffixes in a loop until no more can be removed
+    temp_name = channel_name
+    changed = True
+
+    while changed:
+        changed = False
+        if temp_name.lower().endswith(' orig'):
+            temp_name = temp_name[:-5].strip()
+            changed = True
+        elif temp_name.lower().endswith(' hd'):
+            temp_name = temp_name[:-3].strip()
+            changed = True
+
+    return temp_name
 
 
 def filter_m3u_content(content: str, categories_to_keep: List[str], channel_names_to_exclude: List[str] = None, custom_epg_url: str = None) -> str:

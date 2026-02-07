@@ -213,6 +213,16 @@ class Config:
         """Output directory for saving processed files"""
         return self._output_dir
 
+    @property
+    def CATEGORIES_TO_KEEP(self) -> List[str]:
+        """Return the list of categories to keep"""
+        return self._categories_to_keep
+
+    @property
+    def CHANNEL_NAMES_TO_EXCLUDE(self) -> List[str]:
+        """Return the list of channel names to exclude"""
+        return self._channel_names_to_exclude
+
     def get_categories_to_keep(self) -> List[str]:
         """Return the list of categories to keep"""
         return self._categories_to_keep
