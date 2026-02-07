@@ -310,23 +310,84 @@ def filter_epg_content(epg_content: str, channel_ids: Set[str], channel_categori
                         epg_channel_name_to_id[channel_name] = channel_id
             
             # Extract channel names from the M3U playlist for comparison
+            # We need to extract channel names from the original M3U content
             m3u_channel_names = set()
-            if channel_categories:
-                # If we have channel categories, we can infer channel names from the keys
-                # This is a simplification - in practice, we'd need to extract names from the original M3U
-                pass  # We'll rely on the program matching below for the fallback
+            lines = epg_content.split('\n')  # This is not correct - we need the original M3U content
+            # Actually, we need to get the channel names from the original M3U playlist, not the EPG content
+            # Since we don't have access to the original M3U content here, we'll use a different approach
             
-            # Look for programs whose channel names match those in our M3U playlist
-            # This requires having access to the original M3U channel names, which we don't currently have
-            # So we'll use a different approach - just include some programs if no ID matches were found
-            logger.info(f"No ID matches found, including programs for channels that might match by name")
+            # For now, let's use the channel_categories mapping to get channel names
+            # This is a workaround since we don't have direct access to M3U channel names here
+            for channel_id, category in channel_categories.items():
+                # We don't have the channel names directly, so we'll implement a different fallback
+                pass
             
-            # For each program, check if its channel name matches any in our EPG name-to-ID map
+            # A better approach: check if any programs are currently active or upcoming
+            # and include channels that have relevant programs
+            from datetime import datetime, timezone
+            current_time = datetime.now(timezone.utc).replace(tzinfo=None) if current_time_override is None else current_time_override
+            
+            # Look for programs that are currently active or upcoming
             for program_elem in root.findall('programme'):
                 channel_ref = program_elem.get('channel', '')
-                # Since we couldn't match IDs, we'll include programs from channels that exist in the EPG
-                # This is a broader fallback to ensure we have SOME EPG data
-                channels_to_keep.add(channel_ref)
+                
+                # Extract start and stop times from the program
+                start_attr = program_elem.get('start', '')
+                stop_attr = program_elem.get('stop', '')
+
+                # Parse the time strings (format: YYYYMMDDHHMMSS +ZZZZ)
+                import re
+                start_match = re.match(r'(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})\s+(\S+)', start_attr)
+                stop_match = re.match(r'(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})\s+(\S+)', stop_attr)
+
+                if start_match and stop_match:
+                    # Parse start time
+                    start_year, start_month, start_day = int(start_match.group(1)), int(start_match.group(2)), int(start_match.group(3))
+                    start_hour, start_min, start_sec = int(start_match.group(4)), int(start_match.group(5)), int(start_match.group(6))
+
+                    # Parse stop time
+                    stop_year, stop_month, stop_day = int(stop_match.group(1)), int(stop_match.group(2)), int(stop_match.group(3))
+                    stop_hour, stop_min, stop_sec = int(stop_match.group(4)), int(stop_match.group(5)), int(stop_match.group(6))
+
+                    try:
+                        start_datetime = datetime(start_year, start_month, start_day, start_hour, start_min, start_sec)
+                        stop_datetime = datetime(stop_year, stop_month, stop_day, stop_hour, stop_min, stop_sec)
+
+                        # Only include channels that have programs that are currently active or upcoming
+                        # This prevents including channels with only historical programs
+                        if stop_datetime >= current_time or start_datetime >= current_time:
+                            channels_to_keep.add(channel_ref)
+                    except ValueError:
+                        # If there's an error parsing the datetime, skip this program
+                        continue
+
+            # If still no channels are selected, use a more conservative approach
+            if not channels_to_keep:
+                logger.info("Still no channels matched, including channels with programs in the next few days")
+                # Include channels that have programs in the next few days
+                from datetime import timedelta
+                future_threshold = current_time + timedelta(days=7)  # Programs in next 7 days
+                
+                for program_elem in root.findall('programme'):
+                    channel_ref = program_elem.get('channel', '')
+                    
+                    # Extract start time from the program
+                    start_attr = program_elem.get('start', '')
+                    start_match = re.match(r'(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})\s+(\S+)', start_attr)
+
+                    if start_match:
+                        # Parse start time
+                        start_year, start_month, start_day = int(start_match.group(1)), int(start_match.group(2)), int(start_match.group(3))
+                        start_hour, start_min, start_sec = int(start_match.group(4)), int(start_match.group(5)), int(start_match.group(6))
+
+                        try:
+                            start_datetime = datetime(start_year, start_month, start_day, start_hour, start_min, start_sec)
+
+                            # Include channels that have programs in the next 7 days
+                            if current_time <= start_datetime <= future_threshold:
+                                channels_to_keep.add(channel_ref)
+                        except ValueError:
+                            continue
 
         # Log the actual number of channels that have programs
         logger.info(f"EPG content filtering: {len(channel_ids)} initial channels, {len(channels_to_keep)} channels in filtered playlist (from {len(channel_ids)} initial channels)")
