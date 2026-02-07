@@ -44,7 +44,7 @@ def download_m3u(url: str) -> str:
         response = urlopen(url)
 
         # Read content in chunks to prevent memory issues with large files
-        content_chunks = []
+        content_parts = []  # Use list to collect parts
         total_size = 0
 
         while True:
@@ -58,9 +58,9 @@ def download_m3u(url: str) -> str:
             if total_size > Config.MAX_M3U_FILE_SIZE:
                 raise ValueError(f"M3U file exceeds maximum allowed size of {Config.MAX_M3U_FILE_SIZE} bytes")
 
-            content_chunks.append(chunk)
+            content_parts.append(chunk)
 
-        content = b''.join(content_chunks).decode('utf-8')
+        content = b''.join(content_parts).decode('utf-8')
         logger.info(f"M3U file downloaded successfully, size: {len(content)} characters")
         return content
     except URLError as e:
@@ -99,20 +99,8 @@ def get_base_channel_name(channel_name: str) -> str:
     Returns:
         str: Base channel name without 'orig' and 'hd' suffixes
     """
-    # Remove 'orig' and 'hd' suffixes in a loop until no more can be removed
-    temp_name = channel_name
-    changed = True
-
-    while changed:
-        changed = False
-        if temp_name.lower().endswith(' orig'):
-            temp_name = temp_name[:-5].strip()
-            changed = True
-        elif temp_name.lower().endswith(' hd'):
-            temp_name = temp_name[:-3].strip()
-            changed = True
-
-    return temp_name
+    # Use the more comprehensive normalization function
+    return normalize_channel_name_for_comparison(channel_name)
 
 
 def filter_m3u_content(content: str, categories_to_keep: List[str], channel_names_to_exclude: List[str] = None, custom_epg_url: str = None) -> str:
@@ -434,6 +422,7 @@ def remove_duplicates_and_apply_hd_preference(content: str) -> str:
             i += 1
 
     # Create a dictionary to track unique channels based on normalized name
+    # Use a more efficient approach: map normalized names to best variant
     unique_channels: dict = {}
 
     for extinf_line, url_line in channel_entries:
@@ -455,54 +444,41 @@ def remove_duplicates_and_apply_hd_preference(content: str) -> str:
         # This allows us to handle cases where tvg-id differs but channel names suggest same channel
         key = normalized_name
 
-        # If this key doesn't exist, add it
-        if key not in unique_channels:
-            unique_channels[key] = []
+        # Check if this is an HD version
+        is_hd = ' hd' in channel_name.lower()
+        
+        # Get tvg-rec value if present
+        tvg_rec_match = re.search(r'tvg-rec="(\d+)"', extinf_line)
+        tvg_rec = int(tvg_rec_match.group(1)) if tvg_rec_match else 0
 
-        # Add this variant to the list
-        unique_channels[key].append((extinf_line, url_line))
-
-    # For each group of channels, decide which version(s) to keep
-    final_channel_entries: List[Tuple[str, str]] = []
-    for key, variants in unique_channels.items():
-        # Separate HD and non-HD versions
-        hd_variants = []
-        non_hd_variants = []
-
-        for extinf, url in variants:
-            channel_name = extinf.rsplit(',', 1)[1].strip()
-            # Check if the channel name contains ' hd' anywhere (case insensitive)
-            if ' hd' in channel_name.lower():
-                hd_variants.append((extinf, url))
-            else:
-                non_hd_variants.append((extinf, url))
-
-        # If both HD and non-HD versions exist, only consider HD versions
-        if hd_variants and non_hd_variants:
-            variants_to_process = hd_variants
-            # Log which non-HD versions were removed
-            removed_channels = [ext.rsplit(',', 1)[1].strip() for ext, _ in non_hd_variants]
-            logger.debug(f"Removed non-HD versions for '{key}': {removed_channels}")
+        # If we already have an entry for this key, determine which one to keep
+        if key in unique_channels:
+            existing_extinf, existing_url, existing_is_hd, existing_tvg_rec = unique_channels[key]
+            
+            # Determine if we should replace the existing entry
+            should_replace = False
+            
+            # If we have both HD and non-HD versions, prefer HD
+            if is_hd and not existing_is_hd:
+                should_replace = True
+            elif existing_is_hd and not is_hd:
+                # Keep existing HD version
+                should_replace = False
+            # If both are HD or both are non-HD, prefer higher tvg-rec
+            elif tvg_rec > existing_tvg_rec:
+                should_replace = True
+            # If tvg-rec is the same, prefer the one we already have (to maintain consistency)
+            
+            if should_replace:
+                unique_channels[key] = (extinf_line, url_line, is_hd, tvg_rec)
         else:
-            # Otherwise, consider all variants for duplicate removal
-            variants_to_process = variants
+            # Add this as the first entry for this key
+            unique_channels[key] = (extinf_line, url_line, is_hd, tvg_rec)
 
-        # If there are multiple variants to process, apply tvg-rec preference
-        if len(variants_to_process) > 1:
-            # Sort by tvg-rec value (if present) in descending order
-            sorted_variants = sorted(variants_to_process,
-                                    key=lambda x: int(re.search(r'tvg-rec="(\d+)"', x[0]).group(1)) if re.search(r'tvg-rec="(\d+)"', x[0]) else 0,
-                                    reverse=True)
-            # Keep only the first one (highest tvg-rec)
-            final_channel_entries.append(sorted_variants[0])
-
-            # Log which duplicates were removed
-            if len(sorted_variants) > 1:
-                removed_channels = [ext.rsplit(',', 1)[1].strip() for ext, _ in sorted_variants[1:]]
-                logger.debug(f"Removed duplicate versions for '{key}': {removed_channels}")
-        else:
-            # Only one variant, add it directly
-            final_channel_entries.extend(variants_to_process)
+    # Extract the final channel entries
+    final_channel_entries: List[Tuple[str, str]] = [
+        (extinf, url) for extinf, url, is_hd, tvg_rec in unique_channels.values()
+    ]
 
     # Reconstruct the final content
     final_lines = header_lines
