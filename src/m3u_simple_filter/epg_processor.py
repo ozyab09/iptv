@@ -231,6 +231,28 @@ def extract_channel_info_from_playlist(playlist_content: str) -> tuple:
     return channel_ids, channel_categories
 
 
+def count_programs_in_epg(epg_content: str) -> int:
+    """
+    Count the number of programme elements in EPG content.
+
+    Args:
+        epg_content (str): EPG XML content
+
+    Returns:
+        int: Number of programme elements
+    """
+    try:
+        root = ET.fromstring(epg_content)
+        programmes = root.findall('programme')
+        return len(programmes)
+    except ET.ParseError as e:
+        logger.error(f"Error parsing EPG XML for program count: {e}")
+        return 0
+    except Exception as e:
+        logger.error(f"Unexpected error counting programs in EPG: {e}")
+        return 0
+
+
 def filter_epg_content(epg_content: str, channel_ids: Set[str], channel_categories: dict = None, excluded_categories: List[str] = None, excluded_channel_ids: List[str] = None) -> str:
     """
     Filter EPG content to keep only programs for specified channel IDs, excluding channels from specified categories and specific channel IDs.
@@ -245,7 +267,9 @@ def filter_epg_content(epg_content: str, channel_ids: Set[str], channel_categori
     Returns:
         str: Filtered EPG XML content
     """
-    logger.info(f"Filtering EPG content for {len(channel_ids)} initial channels")
+    # Count original programs before filtering
+    original_program_count = count_programs_in_epg(epg_content)
+    logger.info(f"Filtering EPG content for {len(channel_ids)} initial channels, original program count: {original_program_count}")
 
     if not channel_ids:
         logger.warning("No channel IDs provided, returning empty EPG")
@@ -459,6 +483,9 @@ def filter_epg_content(epg_content: str, channel_ids: Set[str], channel_categori
 
                     filtered_root.append(new_program_elem)
 
+        # Count remaining programs after filtering
+        remaining_program_count = len(filtered_root.findall('programme'))
+        
         # Convert back to string with proper formatting
         # Create a string buffer to write the prettified XML
         rough_string = ET.tostring(filtered_root, encoding='unicode')
@@ -471,7 +498,7 @@ def filter_epg_content(epg_content: str, channel_ids: Set[str], channel_categori
         lines = [line for line in filtered_xml_str.split('\n') if line.strip()]
         filtered_xml_str = '\n'.join(lines)
 
-        logger.info("EPG filtering completed successfully")
+        logger.info(f"EPG filtering completed successfully. Programs: {original_program_count} -> {remaining_program_count} ({len(channels_to_keep)} channels)")
         return filtered_xml_str
 
     except ET.ParseError as e:
