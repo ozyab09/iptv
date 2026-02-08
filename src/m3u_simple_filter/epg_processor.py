@@ -348,6 +348,9 @@ def filter_epg_content(epg_content: str, channel_ids: Set[str], channel_categori
         Config = config_module.Config
         config_obj = Config()
 
+        # Check if strict old programs filtering is enabled
+        strict_old_programs_filter = config_obj.STRICT_EPG_OLD_PROGRAMS_FILTER
+
         # Calculate past retention threshold (how many days back to keep programs that have ended)
         past_retention_days = config_obj.EPG_PAST_RETENTION_DAYS
         retention_start_time = current_time - timedelta(days=past_retention_days)
@@ -379,13 +382,27 @@ def filter_epg_content(epg_content: str, channel_ids: Set[str], channel_categori
                         start_datetime = datetime(start_year, start_month, start_day, start_hour, start_min, start_sec)
                         stop_datetime = datetime(stop_year, stop_month, stop_day, stop_hour, stop_min, stop_sec)
 
+                        # Check if strict old programs filtering is enabled
+                        # If the program is from a year that's significantly different from current year,
+                        # treat it as too old and exclude it (this solves the original issue with old programs)
+                        if strict_old_programs_filter:
+                            year_difference = abs(stop_datetime.year - current_time.year)
+                            if year_difference > 1:
+                                # Skip this program as it's too old
+                                continue
+
                         # Apply time-based filtering:
-                        # Include programs that haven't ended yet (stop time >= current time)
-                        # and that start within the configured retention period
-                        should_include = (
-                            stop_datetime >= current_time and  # Program hasn't ended yet
-                            start_datetime <= retention_period_later  # Program starts within retention period
-                        )
+                        # If past retention days is greater than 0, apply time-based filtering
+                        # Include programs that either:
+                        # 1. Ended recently (within past retention days) and started before retention start time, OR
+                        # 2. Haven't ended yet and start within the configured retention period
+                        if past_retention_days > 0:
+                            condition1 = (stop_datetime >= retention_start_time or start_datetime <= retention_period_later)
+                            condition2 = (start_datetime >= retention_start_time or stop_datetime >= retention_start_time)
+                            should_include = condition1 and condition2
+                        else:
+                            # If past retention days is 0, use the original logic (no time-based filtering for past programs)
+                            should_include = stop_datetime >= current_time or start_datetime <= retention_period_later
 
                         if should_include:
                             # Create a new program element with only essential elements
