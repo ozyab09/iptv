@@ -32,7 +32,12 @@ def copy_element_with_children(element):
     """
     Рекурсивно копирует XML элемент со всеми атрибутами и дочерними элементами.
     Для элементов 'desc' очищает содержимое, оставляя атрибуты.
+    Исключает элементы 'rating' и 'category'.
     """
+    # Если это элемент 'rating' или 'category', не копируем его
+    if element.tag.lower() in ['rating', 'category']:
+        return None
+
     new_element = ET.Element(element.tag)
 
     # Копируем атрибуты
@@ -50,7 +55,8 @@ def copy_element_with_children(element):
     # Рекурсивно копируем дочерние элементы
     for child in element:
         new_child = copy_element_with_children(child)
-        new_element.append(new_child)
+        if new_child is not None:  # Только если элемент не исключен
+            new_element.append(new_child)
 
     return new_element
 
@@ -348,6 +354,9 @@ def filter_epg_content(epg_content: str, channel_ids: Set[str], channel_categori
         Config = config_module.Config
         config_obj = Config()
 
+        # Check if strict old programs filtering is enabled
+        strict_old_programs_filter = config_obj.STRICT_EPG_OLD_PROGRAMS_FILTER
+
         # Calculate past retention threshold (how many days back to keep programs that have ended)
         past_retention_days = config_obj.EPG_PAST_RETENTION_DAYS
         retention_start_time = current_time - timedelta(days=past_retention_days)
@@ -379,12 +388,20 @@ def filter_epg_content(epg_content: str, channel_ids: Set[str], channel_categori
                         start_datetime = datetime(start_year, start_month, start_day, start_hour, start_min, start_sec)
                         stop_datetime = datetime(stop_year, stop_month, stop_day, stop_hour, stop_min, stop_sec)
 
+                        # Check if strict old programs filtering is enabled
+                        # If the program is from a year that's significantly different from current year,
+                        # treat it as too old and exclude it (this solves the original issue with old programs)
+                        if strict_old_programs_filter:
+                            year_difference = abs(stop_datetime.year - current_time.year)
+                            if year_difference > 1:
+                                # Skip this program as it's too old
+                                continue
+
                         # Apply time-based filtering:
                         # If past retention days is greater than 0, apply time-based filtering
                         # Include programs that either:
-                        # 1. Haven't ended yet (stop time >= retention_start_time), OR
-                        # 2. Will start within the configured retention period (start time <= retention days from now)
-                        # But exclude programs that both started and ended in the distant past
+                        # 1. Ended recently (within past retention days) and started before retention start time, OR
+                        # 2. Haven't ended yet and start within the configured retention period
                         if past_retention_days > 0:
                             condition1 = (stop_datetime >= retention_start_time or start_datetime <= retention_period_later)
                             condition2 = (start_datetime >= retention_start_time or stop_datetime >= retention_start_time)
@@ -400,11 +417,12 @@ def filter_epg_content(epg_content: str, channel_ids: Set[str], channel_categori
                             for attr, value in program_elem.attrib.items():
                                 new_program_elem.set(attr, value)
 
-                            # Copy child elements (keeping all elements including icons, descriptions, ratings, and categories)
+                            # Copy child elements (keeping all elements except ratings and categories)
                             for child in program_elem:
                                 # Recursively copy the entire element with all sub-elements and attributes
                                 new_child = copy_element_with_children(child)
-                                new_program_elem.append(new_child)
+                                if new_child is not None:  # Only add if element was not excluded
+                                    new_program_elem.append(new_child)
 
                             filtered_root.append(new_program_elem)
                     except ValueError:
@@ -416,11 +434,12 @@ def filter_epg_content(epg_content: str, channel_ids: Set[str], channel_categori
                         for attr, value in program_elem.attrib.items():
                             new_program_elem.set(attr, value)
 
-                        # Copy child elements (keeping all elements including icons, descriptions, ratings, and categories)
+                        # Copy child elements (keeping all elements except ratings and categories)
                         for child in program_elem:
                             # Recursively copy the entire element with all sub-elements and attributes
                             new_child = copy_element_with_children(child)
-                            new_program_elem.append(new_child)
+                            if new_child is not None:  # Only add if element was not excluded
+                                new_program_elem.append(new_child)
 
                         filtered_root.append(new_program_elem)
                 else:

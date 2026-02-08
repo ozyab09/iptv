@@ -17,6 +17,11 @@ class Config:
     MAX_M3U_FILE_SIZE: int = 100 * 1024 * 1024
     MAX_EPG_FILE_SIZE: int = 500 * 1024 * 1024
 
+    # EPG filtering options
+    # When STRICT_EPG_OLD_PROGRAMS_FILTER is True, programs more than 1 year old will be filtered out
+    # regardless of other retention settings
+    STRICT_EPG_OLD_PROGRAMS_FILTER: bool = False
+
     # Categories to keep (for initial config file creation)
     DEFAULT_CATEGORIES_TO_KEEP: List[str] = [
         "Россия | Russia",
@@ -165,13 +170,46 @@ class Config:
         }
 
     @property
+    def STRICT_EPG_OLD_PROGRAMS_FILTER(self) -> bool:
+        """Whether to strictly filter out old EPG programs that are more than 1 year old"""
+        return self._strict_epg_old_programs_filter
+
+    def __init__(self):
+        """Initialize configuration from environment variables"""
+        # Initialize all configuration values
+        self._m3u_source_url = os.getenv('M3U_SOURCE_URL', 'https://your-provider.com/playlist.m3u')
+        self._s3_default_bucket_name = os.getenv('S3_BUCKET_NAME', 'your-bucket-name')
+        self._s3_filtered_playlist_key = os.getenv('S3_OBJECT_KEY', 'playlist.m3u')
+        self._s3_endpoint_url = os.getenv('S3_ENDPOINT_URL', 'https://s3.amazonaws.com')
+        self._s3_region = os.getenv('S3_REGION', 'us-east-1')
+        self._epg_source_url = os.getenv('EPG_SOURCE_URL', 'https://your-epg-provider.com/epg.xml.gz')
+        self._s3_epg_key = os.getenv('S3_EPG_KEY', 'epg.xml.gz')
+        self._local_epg_path = os.getenv('LOCAL_EPG_PATH', 'epg.xml.gz')
+        self._output_dir = os.getenv('OUTPUT_DIR', 'output')
+
+        # Parse numeric values
+        self._epg_retention_days = int(os.getenv('EPG_RETENTION_DAYS', '10'))
+        self._epg_past_retention_days = int(os.getenv('EPG_PAST_RETENTION_DAYS', '0'))
+        self._excluded_channels_future_limit_days = int(os.getenv('EXCLUDED_CHANNELS_FUTURE_LIMIT_DAYS', '1'))
+        self._excluded_channels_past_limit_hours = int(os.getenv('EXCLUDED_CHANNELS_PAST_LIMIT_HOURS', '1'))
+
+        # Parse boolean values
+        self._strict_epg_old_programs_filter = os.getenv('STRICT_EPG_OLD_PROGRAMS_FILTER', 'false').lower() in ('true', '1', 'yes', 'on')
+
+        # Initialize lists
+        self._categories_to_keep = self.DEFAULT_CATEGORIES_TO_KEEP.copy()
+        self._channel_names_to_exclude = self.DEFAULT_CHANNEL_NAMES_TO_EXCLUDE.copy()
+        self._epg_excluded_categories = self.DEFAULT_EPG_EXCLUDED_CATEGORIES.copy()
+        self._epg_excluded_channel_ids = self.DEFAULT_EPG_EXCLUDED_CHANNEL_IDS.copy()
+
+    @property
     def EPG_RETENTION_DAYS(self) -> int:
-        """Number of days to retain EPG data from current date"""
+        """Number of days in the future to retain EPG data from current date"""
         return self._epg_retention_days
 
     @property
     def EPG_PAST_RETENTION_DAYS(self) -> int:
-        """Number of days in the past to retain EPG data (programs that ended recently)"""
+        """DEPRECATED: Number of days in the past to retain EPG data (programs that ended recently) - not used anymore due to strict filtering of ended programs"""
         return self._epg_past_retention_days
 
     @property
