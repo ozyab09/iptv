@@ -380,18 +380,12 @@ def filter_epg_content(epg_content: str, channel_ids: Set[str], channel_categori
                         stop_datetime = datetime(stop_year, stop_month, stop_day, stop_hour, stop_min, stop_sec)
 
                         # Apply time-based filtering:
-                        # If past retention days is greater than 0, apply time-based filtering
-                        # Include programs that either:
-                        # 1. Haven't ended yet (stop time >= retention_start_time), OR
-                        # 2. Will start within the configured retention period (start time <= retention days from now)
-                        # But exclude programs that both started and ended in the distant past
-                        if past_retention_days > 0:
-                            condition1 = (stop_datetime >= retention_start_time or start_datetime <= retention_period_later)
-                            condition2 = (start_datetime >= retention_start_time or stop_datetime >= retention_start_time)
-                            should_include = condition1 and condition2
-                        else:
-                            # If past retention days is 0, use the original logic (no time-based filtering for past programs)
-                            should_include = stop_datetime >= current_time or start_datetime <= retention_period_later
+                        # Include programs that haven't ended yet (stop time >= current time)
+                        # and that start within the configured retention period
+                        should_include = (
+                            stop_datetime >= current_time and  # Program hasn't ended yet
+                            start_datetime <= retention_period_later  # Program starts within retention period
+                        )
 
                         if should_include:
                             # Create a new program element with only essential elements

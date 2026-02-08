@@ -166,12 +166,12 @@ class Config:
 
     @property
     def EPG_RETENTION_DAYS(self) -> int:
-        """Number of days to retain EPG data from current date"""
+        """Number of days in the future to retain EPG data from current date"""
         return self._epg_retention_days
 
     @property
     def EPG_PAST_RETENTION_DAYS(self) -> int:
-        """Number of days in the past to retain EPG data (programs that ended recently)"""
+        """DEPRECATED: Number of days in the past to retain EPG data (programs that ended recently) - not used anymore due to strict filtering of ended programs"""
         return self._epg_past_retention_days
 
     @property
