@@ -41,3 +41,6 @@ epg2.xml-filtered
 .env
 output/
 run_with_env.sh
+
+# Package build files
+*.egg-info/
