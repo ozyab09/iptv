@@ -32,7 +32,12 @@ def copy_element_with_children(element):
     """
     Рекурсивно копирует XML элемент со всеми атрибутами и дочерними элементами.
     Для элементов 'desc' очищает содержимое, оставляя атрибуты.
+    Исключает элементы 'rating' и 'category'.
     """
+    # Если это элемент 'rating' или 'category', не копируем его
+    if element.tag.lower() in ['rating', 'category']:
+        return None
+
     new_element = ET.Element(element.tag)
 
     # Копируем атрибуты
@@ -50,7 +55,8 @@ def copy_element_with_children(element):
     # Рекурсивно копируем дочерние элементы
     for child in element:
         new_child = copy_element_with_children(child)
-        new_element.append(new_child)
+        if new_child is not None:  # Только если элемент не исключен
+            new_element.append(new_child)
 
     return new_element
 
@@ -411,11 +417,12 @@ def filter_epg_content(epg_content: str, channel_ids: Set[str], channel_categori
                             for attr, value in program_elem.attrib.items():
                                 new_program_elem.set(attr, value)
 
-                            # Copy child elements (keeping all elements including icons, descriptions, ratings, and categories)
+                            # Copy child elements (keeping all elements except ratings and categories)
                             for child in program_elem:
                                 # Recursively copy the entire element with all sub-elements and attributes
                                 new_child = copy_element_with_children(child)
-                                new_program_elem.append(new_child)
+                                if new_child is not None:  # Only add if element was not excluded
+                                    new_program_elem.append(new_child)
 
                             filtered_root.append(new_program_elem)
                     except ValueError:
@@ -427,11 +434,12 @@ def filter_epg_content(epg_content: str, channel_ids: Set[str], channel_categori
                         for attr, value in program_elem.attrib.items():
                             new_program_elem.set(attr, value)
 
-                        # Copy child elements (keeping all elements including icons, descriptions, ratings, and categories)
+                        # Copy child elements (keeping all elements except ratings and categories)
                         for child in program_elem:
                             # Recursively copy the entire element with all sub-elements and attributes
                             new_child = copy_element_with_children(child)
-                            new_program_elem.append(new_child)
+                            if new_child is not None:  # Only add if element was not excluded
+                                new_program_elem.append(new_child)
 
                         filtered_root.append(new_program_elem)
                 else:
