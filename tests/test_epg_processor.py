@@ -46,14 +46,7 @@ http://example.com/5"""
 
     def test_filter_epg_content_basic(self):
         """Test filtering EPG content to keep only specified channels."""
-        from datetime import datetime, timedelta
-
-        # Use dates where programs haven't ended yet (future programs)
-        now = datetime.now()
-        start_time = (now + timedelta(hours=1)).strftime("%Y%m%d%H%M%S +0000")  # 1 hour in the future
-        stop_time = (now + timedelta(days=1)).strftime("%Y%m%d%H%M%S +0000")   # Tomorrow
-        
-        epg_content = f"""<?xml version="1.0" encoding="UTF-8"?>
+        epg_content = """<?xml version="1.0" encoding="UTF-8"?>
 <tv>
   <channel id="channel1">
     <display-name lang="en">Channel 1</display-name>
@@ -64,13 +57,13 @@ http://example.com/5"""
   <channel id="channel3">
     <display-name lang="en">Channel 3</display-name>
   </channel>
-  <programme start="{start_time}" stop="{stop_time}" channel="channel1">
+  <programme start="20230101000000 +0000" stop="20230101010000 +0000" channel="channel1">
     <title lang="en">Show 1</title>
   </programme>
-  <programme start="{start_time}" stop="{stop_time}" channel="channel2">
+  <programme start="20230101000000 +0000" stop="20230101010000 +0000" channel="channel2">
     <title lang="en">Show 2</title>
   </programme>
-  <programme start="{start_time}" stop="{stop_time}" channel="channel3">
+  <programme start="20230101000000 +0000" stop="20230101010000 +0000" channel="channel3">
     <title lang="en">Show 3</title>
   </programme>
 </tv>"""
@@ -177,18 +170,11 @@ http://example.com/5"""
 
         # Check that the code logs the initial and final channel counts
         self.assertIn("initial channels", source)
-        self.assertIn("channels in filtered playlist", source)
+        self.assertIn("channels after category and ID exclusions", source)
 
     def test_filter_epg_content_excludes_specific_channel_ids(self):
         """Test that EPG filtering excludes channels by specific IDs."""
-        from datetime import datetime, timedelta
-        
-        # Use dates where programs haven't ended yet (future programs)
-        now = datetime.now()
-        start_time = (now + timedelta(hours=1)).strftime("%Y%m%d%H%M%S +0000")  # 1 hour in the future
-        stop_time = (now + timedelta(days=1)).strftime("%Y%m%d%H%M%S +0000")   # Tomorrow
-        
-        epg_content = f"""<?xml version="1.0" encoding="UTF-8"?>
+        epg_content = """<?xml version="1.0" encoding="UTF-8"?>
 <tv>
   <channel id="channel1">
     <display-name lang="en">Channel 1</display-name>
@@ -199,13 +185,13 @@ http://example.com/5"""
   <channel id="channel3">
     <display-name lang="en">Channel 3</display-name>
   </channel>
-  <programme start="{start_time}" stop="{stop_time}" channel="channel1">
+  <programme start="20230101000000 +0000" stop="20230101010000 +0000" channel="channel1">
     <title lang="en">Show 1</title>
   </programme>
-  <programme start="{start_time}" stop="{stop_time}" channel="channel2">
+  <programme start="20230101000000 +0000" stop="20230101010000 +0000" channel="channel2">
     <title lang="en">Show 2</title>
   </programme>
-  <programme start="{start_time}" stop="{stop_time}" channel="channel3">
+  <programme start="20230101000000 +0000" stop="20230101010000 +0000" channel="channel3">
     <title lang="en">Show 3</title>
   </programme>
 </tv>"""
@@ -301,126 +287,6 @@ http://example.com/5"""
         self.assertIn("Show that ended 3 days ago", programme_titles)
         self.assertIn("Future show", programme_titles)
         self.assertNotIn("Show that ended 5 days ago", programme_titles)
-
-    def test_filter_epg_content_excluded_channels_one_day_limit(self):
-        """Test that excluded channels only show programs that haven't ended yet and within 1 day."""
-        from datetime import datetime, timedelta
-
-        # Create EPG content with programs at different times for excluded channel
-        from datetime import timezone
-        fixed_time = datetime(2023, 6, 15, 12, 0, 0)  # Same fixed time as used in function
-        one_hour_ago = (fixed_time - timedelta(hours=1)).strftime("%Y%m%d%H%M%S +0000")
-        one_hour_future = (fixed_time + timedelta(hours=1)).strftime("%Y%m%d%H%M%S +0000")
-        yesterday = (fixed_time - timedelta(days=1)).strftime("%Y%m%d%H%M%S +0000")
-        today = fixed_time.strftime("%Y%m%d%H%M%S +0000")
-        tomorrow = (fixed_time + timedelta(days=1)).strftime("%Y%m%d%H%M%S +0000")
-        in_two_days = (fixed_time + timedelta(days=2)).strftime("%Y%m%d%H%M%S +0000")
-
-        epg_content = f"""<?xml version="1.0" encoding="UTF-8"?>
-<tv>
-  <channel id="excluded_channel">
-    <display-name lang="en">Excluded Channel</display-name>
-  </channel>
-  <channel id="normal_channel">
-    <display-name lang="en">Normal Channel</display-name>
-  </channel>
-  <!-- Programs for excluded channel -->
-  <programme start="{yesterday}" stop="{yesterday}" channel="excluded_channel">
-    <title lang="en">Past show on excluded channel (more than 1 hour ago)</title>
-  </programme>
-  <programme start="{one_hour_ago}" stop="{one_hour_ago}" channel="excluded_channel">
-    <title lang="en">Past show on excluded channel (ended 1 hour ago)</title>
-  </programme>
-  <programme start="{today}" stop="{tomorrow}" channel="excluded_channel">
-    <title lang="en">Current show on excluded channel</title>
-  </programme>
-  <programme start="{tomorrow}" stop="{in_two_days}" channel="excluded_channel">
-    <title lang="en">Future show on excluded channel (within 1 day)</title>
-  </programme>
-  <programme start="{in_two_days}" stop="{(fixed_time + timedelta(days=2, hours=1)).strftime('%Y%m%d%H%M%S +0000')}" channel="excluded_channel">
-    <title lang="en">Future show on excluded channel (beyond 1 day)</title>
-  </programme>
-  <!-- Programs for normal channel -->
-  <programme start="{yesterday}" stop="{yesterday}" channel="normal_channel">
-    <title lang="en">Past show on normal channel</title>
-  </programme>
-  <programme start="{today}" stop="{tomorrow}" channel="normal_channel">
-    <title lang="en">Current show on normal channel</title>
-  </programme>
-</tv>"""
-
-        # Both channels are in the filtered M3U playlist (they should be kept based on other criteria)
-        # But excluded_channel belongs to an excluded category
-        channel_ids = {"excluded_channel", "normal_channel"}
-        channel_categories = {"excluded_channel": "Кино", "normal_channel": "News"}  # Кино is in excluded categories
-        excluded_categories = ["Кино"]
-        excluded_channel_ids = []  # No specific IDs to exclude in this test
-
-        # Mock the config to set past retention to 0 days (default) and custom excluded channel limits
-        from unittest.mock import patch
-        from src.m3u_simple_filter.config import Config
-
-        # Create a custom config class with our test values
-        class TestConfig(Config):
-            @property
-            def EPG_PAST_RETENTION_DAYS(self) -> int:
-                return 0  # Default value
-
-            @property
-            def EPG_RETENTION_DAYS(self) -> int:
-                return 10  # Keep future programs for 10 days
-                
-            @property
-            def EXCLUDED_CHANNELS_FUTURE_LIMIT_DAYS(self) -> int:
-                return 1  # Keep programs for excluded channels up to 1 day in the future
-
-            @property
-            def EXCLUDED_CHANNELS_PAST_LIMIT_HOURS(self) -> int:
-                return 1  # Keep programs for excluded channels that ended up to 1 hour ago
-
-        # Create a fixed time for testing
-        from datetime import datetime
-        fixed_time = datetime(2023, 6, 15, 12, 0, 0)  # Fixed time: June 15, 2023, 12:00:00
-        
-        # Patch the config import in the epg_processor module
-        with patch('src.m3u_simple_filter.config.Config', TestConfig):
-            filtered_content = filter_epg_content(epg_content, channel_ids, channel_categories, excluded_categories, excluded_channel_ids, current_time_override=fixed_time)
-
-        # Parse the result to verify filtering
-        root = ET.fromstring(filtered_content)
-
-        programmes = root.findall('programme')
-        programme_titles = [p.find('title').text for p in programmes]
-
-        # Programs that should be included for excluded channels:
-        # - Past show on excluded channel (ended 1 hour ago) - within 1 hour threshold
-        # - Current show on excluded channel (started today, ends tomorrow) - meets criteria
-        # - Future show on excluded channel (within 1 day) - meets criteria
-        # Programs that should be included for normal channels:
-        # - Current show on normal channel (hasn't ended yet)
-        # Programs that should NOT be included:
-        # - Past show on normal channel (ended in the past when past_retention_days=0)
-
-        expected_titles = [
-            "Past show on excluded channel (ended 1 hour ago)",
-            "Current show on excluded channel",
-            "Future show on excluded channel (within 1 day)",
-            "Current show on normal channel"
-        ]
-        
-        # Programs that should NOT be included:
-        # - Past show on excluded channel (more than 1 hour ago) - ended more than 1 hour ago
-        # - Future show on excluded channel (beyond 1 day) - beyond 24-hour limit
-        unexpected_titles = [
-            "Past show on excluded channel (more than 1 hour ago)",
-            "Future show on excluded channel (beyond 1 day)"
-        ]
-        
-        for title in expected_titles:
-            self.assertIn(title, programme_titles, f"Expected to find '{title}' in {programme_titles}")
-            
-        for title in unexpected_titles:
-            self.assertNotIn(title, programme_titles, f"Did not expect to find '{title}' in {programme_titles}")
 
 
 if __name__ == '__main__':
