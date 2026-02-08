@@ -1,0 +1,1058 @@
+diff --git a/.gitignore b/.gitignore
+index 6bb574e..47a784d 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -33,10 +33,6 @@ playlist-all.m3u
+ .DS_Store
+ Thumbs.db
+ 
+-# Distribution / packaging
+-*.egg-info/
+-*.egg
+-
+ # Gitlab
+ .gitlab-ci-local.yml
+ .gitlab-ci-local/
+@@ -44,8 +40,4 @@ epg2.xml-filtered.gz
+ epg2.xml-filtered
+ .env
+ output/
+-run_with_env.sh
+-epg2.xml.gz
+-
+-# Package build files
+-*.egg-info/
++run_with_env.sh
+\ No newline at end of file
+diff --git a/README.md b/README.md
+index afc4271..a7a3aa5 100644
+--- a/README.md
++++ b/README.md
+@@ -39,11 +39,9 @@ CATEGORIES_TO_KEEP: List[str] = [
+   - Removes 'orig' suffix from channel names
+   - Keeps only HD versions when both HD and non-HD versions exist
+ - **Smart Filtering**: Excludes channels matching specific regex patterns (e.g., `+1` channels)
+-- **EPG Processing**: Downloads, filters, and uploads Electronic Program Guide (EPG) data based on channels in the filtered playlist
+ - **Cloud Storage**: Uploads filtered playlists to S3-compatible storage
+ - **Dry-Run Mode**: Test functionality without uploading to S3
+ - **Comprehensive Logging**: Detailed logs with before/after statistics and file sizes in KB
+-- **Time-Based EPG Filtering**: Configurable retention periods for EPG data, allowing to keep programs that ended recently
+ - **Optimized File Sizes**: Efficient compression to keep EPG files within typical S3 size limits (3-5 MB range)
+ - **Organized File Management**: All downloaded and processed files saved in a dedicated output directory
+ - **Full Test Coverage**: Unit tests for all core functionality
+@@ -61,27 +59,20 @@ iptv/
+ │   │   ├── __init__.py             # Package initialization
+ │   │   ├── config.py               # Configuration management with validation
+ │   │   ├── m3u_processor.py        # M3U download, parsing and filtering
+-│   │   ├── epg_processor.py        # EPG download, parsing and filtering
+ │   │   ├── s3_operations.py        # S3 upload operations
+-│   │   ├── utils.py                # Utility functions for sanitization and helpers
+ │   │   └── main.py                 # Application entry point
+ │   └── run_filter.py               # Script entry point
+ ├── tests/                          # Unit tests
+ │   ├── test_config.py              # Configuration tests
+ │   ├── test_m3u_processor.py       # M3U processing tests
+-│   ├── test_epg_processor.py       # EPG processing tests
+ │   ├── test_s3_operations.py       # S3 operations tests
+-│   ├── test_main.py                # Main application tests
+-│   ├── test_simple_playlist.py     # Simple playlist tests
+-│   ├── test_url_tvg_replacement.py # URL TVG replacement tests
+-│   └── conftest.py                 # Pytest configuration
++│   └── test_main.py                # Main application tests
+ ├── output/                         # Directory for saving processed files (created at runtime)
+ ├── .github/
+ │   └── workflows/
+ │       └── filter-m3u.yml          # GitHub Actions workflow
+ ├── pyproject.toml                  # Project configuration and dependencies
+ ├── test.sh                         # Local testing script
+-├── .env.example                    # Example environment variables file
+ └── README.md                       # Project documentation
+ ```
+ 
+@@ -126,7 +117,6 @@ The application uses environment variables for configuration. Create a `.env` fi
+ | `S3_EPG_KEY` | S3 object key for EPG file | `epg.xml.gz` |
+ | `EPG_SOURCE_URL` | Source URL for the EPG XML file | `https://your-epg-provider.com/epg.xml.gz` |
+ | `LOCAL_EPG_PATH` | Local path for downloaded EPG file | `epg.xml.gz` |
+-| `EPG_PAST_RETENTION_DAYS` | Number of days in the past to retain EPG data (programs that ended recently) | `0` |
+ | `OUTPUT_DIR` | Directory for saving processed files | `output` |
+ | `DRY_RUN` | Run in dry-run mode | (unset) |
+ | `AWS_ACCESS_KEY_ID` | S3-compatible storage access key | (required) |
+@@ -144,7 +134,7 @@ The application uses environment variables for configuration. Create a `.env` fi
+    nano .env
+    ```
+ 
+-3. The `.env.example` file contains all the required environment variables with their default values. Make sure to update the following required values:
++3. Set the required values:
+    - `M3U_SOURCE_URL`: Your M3U playlist source URL
+    - `S3_BUCKET_NAME`: Your S3 bucket name
+    - `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`: Your S3-compatible storage credentials
+diff --git a/src/m3u_simple_filter/config.py b/src/m3u_simple_filter/config.py
+index 2243c1f..b2d1cbd 100644
+--- a/src/m3u_simple_filter/config.py
++++ b/src/m3u_simple_filter/config.py
+@@ -12,139 +12,21 @@ class Config:
+     """
+     Configuration class for M3U filter
+     """
+-    
+-    # Security: Maximum allowed file sizes (100MB for M3U, 500MB for EPG)
+-    MAX_M3U_FILE_SIZE: int = 100 * 1024 * 1024
+-    MAX_EPG_FILE_SIZE: int = 500 * 1024 * 1024
+-
+-    # EPG filtering options
+-    # When STRICT_EPG_OLD_PROGRAMS_FILTER is True, programs more than 1 year old will be filtered out
+-    # regardless of other retention settings
+-    STRICT_EPG_OLD_PROGRAMS_FILTER: bool = False
+-
+-    # Categories to keep (for initial config file creation)
+-    DEFAULT_CATEGORIES_TO_KEEP: List[str] = [
+-        "Россия | Russia",
+-        "Общие",
+-        "Развлекательные",
+-        "Новостные",
+-        "Познавательные",
+-        "Детские",
+-        "Музыка",
+-        "Региональные",
+-        "Европа | Europe",
+-        "Австралия | Australia",
+-        "Беларусь | Беларускія",
+-        "Великобритания | United Kingdom",
+-        "Канада | Canada",
+-        "США | USA",
+-        "Кино"
+-    ]
+-
+-    # Channel names to exclude (for initial config file creation)
+-    DEFAULT_CHANNEL_NAMES_TO_EXCLUDE: List[str] = [
+-        "Fashion",
+-        "СПАС",
+-        "Три ангела",
+-        "ЛДПР",
+-        "UA",
+-        "Sports"
+-    ]
+-
+-    # Categories for which EPG should NOT be saved (for initial config file creation)
+-    DEFAULT_EPG_EXCLUDED_CATEGORIES: List[str] = [
+-        "Кино"  # Exclude EPG for movie channels
+-    ]
+-
+-    # Specific channel IDs for which EPG should NOT be saved (for initial config file creation)
+-    DEFAULT_EPG_EXCLUDED_CHANNEL_IDS: List[str] = [
+-        "2745",  # Home 4K
+-        "6170",  # VF Хит-парад
+-        "6168",  # VF Metal
+-        "7553",  # VF Britney Spears
+-        "6171",  # VF Русский рок
+-        "9228",  # VF Король и Шут
+-        "7552",  # VF Modern Talking
+-        "4729",  # Cartoons Short
+-        "7594",  # VF Союзмультфильм
+-        "7595",  # VF Ералаш
+-        "9233",  # VF Каламбур
+-        "8822",  # Z! Science HD
+-        "8817",  # BOX Gurman HD
+-        "2438",  # Капитан Фантастика
+-        "8811",  # Yosso TV Food
+-        "6848",  # BCU Little HD
+-        "9025",  # Kids TV HD
+-        "153",   # Авто Плюс
+-        "66",    # Уникум
+-        "2760",  # Анекдот ТВ
+-        "494",   # Jim Jam
+-        "6135",  # VF Музыкальный Новый год!
+-        "9303",  # BOX Kosmo 4K
+-        "5387",  # YOSSO TV Союзмульт
+-        "2420",  # ЕГЭ ТВ
+-        "2239",  # Малыш
+-        "9183",  # Cartoon Classics
+-        "774",   # Flix Snip
+-        "810",   # Gulli
+-        "6419",  # VF Баня
+-        "2156",  # Duck TV
+-        "2495",  # Живая природа HD
+-        "4795",  # VF Малыш
+-        "6169",  # VF Rap
+-        "2436",  # Baby TV
+-        "2442",  # Смайл ТВ
+-        "2746",  # Наша Сибирь 4K
+-        "2027",  # В гостях у сказки
+-        "2481",  # СТС Kids HD
+-        "555",   # Tiji TV
+-        "6125",  # VF Стройка
+-        "2448",  # Союз
+-        "2474",  # КРЫМ 24
+-        "2008",  # Авто 24
+-        "2398",  # Вместе-РФ
+-        "9082"   # The Explorers
+-    ]
+-
+-    def __init__(self):
+-        """Initialize configuration from environment variables"""
+-        # Initialize all configuration values
+-        self._m3u_source_url = os.getenv('M3U_SOURCE_URL', 'https://your-provider.com/playlist.m3u')
+-        self._s3_default_bucket_name = os.getenv('S3_BUCKET_NAME', 'your-bucket-name')
+-        self._s3_filtered_playlist_key = os.getenv('S3_OBJECT_KEY', 'playlist.m3u')
+-        self._s3_endpoint_url = os.getenv('S3_ENDPOINT_URL', 'https://s3.amazonaws.com')
+-        self._s3_region = os.getenv('S3_REGION', 'us-east-1')
+-        self._epg_source_url = os.getenv('EPG_SOURCE_URL', 'https://your-epg-provider.com/epg.xml.gz')
+-        self._s3_epg_key = os.getenv('S3_EPG_KEY', 'epg.xml.gz')
+-        self._local_epg_path = os.getenv('LOCAL_EPG_PATH', 'epg.xml.gz')
+-        self._output_dir = os.getenv('OUTPUT_DIR', 'output')
+-        
+-        # Parse numeric values
+-        self._epg_retention_days = int(os.getenv('EPG_RETENTION_DAYS', '10'))
+-        self._epg_past_retention_days = int(os.getenv('EPG_PAST_RETENTION_DAYS', '0'))
+-        self._excluded_channels_future_limit_days = int(os.getenv('EXCLUDED_CHANNELS_FUTURE_LIMIT_DAYS', '1'))
+-        self._excluded_channels_past_limit_hours = int(os.getenv('EXCLUDED_CHANNELS_PAST_LIMIT_HOURS', '1'))
+-        
+-        # Initialize lists
+-        self._categories_to_keep = self.DEFAULT_CATEGORIES_TO_KEEP.copy()
+-        self._channel_names_to_exclude = self.DEFAULT_CHANNEL_NAMES_TO_EXCLUDE.copy()
+-        self._epg_excluded_categories = self.DEFAULT_EPG_EXCLUDED_CATEGORIES.copy()
+-        self._epg_excluded_channel_ids = self.DEFAULT_EPG_EXCLUDED_CHANNEL_IDS.copy()
+ 
+     @property
+     def M3U_SOURCE_URL(self) -> str:
+         """M3U source URL from environment variable or default"""
+-        return self._m3u_source_url
++        return os.getenv('M3U_SOURCE_URL', 'https://your-provider.com/playlist.m3u')
+ 
+     @property
+     def S3_DEFAULT_BUCKET_NAME(self) -> str:
+         """S3 default bucket name from environment variable or default"""
+-        return self._s3_default_bucket_name
++        return os.getenv('S3_BUCKET_NAME', 'your-bucket-name')
+ 
+     @property
+     def S3_FILTERED_PLAYLIST_KEY(self) -> str:
+         """S3 filtered playlist key from environment variable or default"""
+-        return self._s3_filtered_playlist_key
++        return os.getenv('S3_OBJECT_KEY', 'playlist.m3u')
+ 
+     @property
+     def S3_ALL_CATEGORIES_PLAYLIST_KEY(self) -> str:
+@@ -154,12 +36,12 @@ class Config:
+     @property
+     def S3_ENDPOINT_URL(self) -> str:
+         """S3 endpoint URL from environment variable or default"""
+-        return self._s3_endpoint_url
++        return os.getenv('S3_ENDPOINT_URL', 'https://s3.amazonaws.com')
+ 
+     @property
+     def S3_REGION(self) -> str:
+         """S3 region from environment variable or default"""
+-        return self._s3_region
++        return os.getenv('S3_REGION', 'us-east-1')
+ 
+     @property
+     def S3_COMPATIBLE_CONFIG(self) -> dict:
+@@ -169,58 +51,14 @@ class Config:
+             "region": self.S3_REGION
+         }
+ 
+-    @property
+-    def STRICT_EPG_OLD_PROGRAMS_FILTER(self) -> bool:
+-        """Whether to strictly filter out old EPG programs that are more than 1 year old"""
+-        return self._strict_epg_old_programs_filter
+-
+-    def __init__(self):
+-        """Initialize configuration from environment variables"""
+-        # Initialize all configuration values
+-        self._m3u_source_url = os.getenv('M3U_SOURCE_URL', 'https://your-provider.com/playlist.m3u')
+-        self._s3_default_bucket_name = os.getenv('S3_BUCKET_NAME', 'your-bucket-name')
+-        self._s3_filtered_playlist_key = os.getenv('S3_OBJECT_KEY', 'playlist.m3u')
+-        self._s3_endpoint_url = os.getenv('S3_ENDPOINT_URL', 'https://s3.amazonaws.com')
+-        self._s3_region = os.getenv('S3_REGION', 'us-east-1')
+-        self._epg_source_url = os.getenv('EPG_SOURCE_URL', 'https://your-epg-provider.com/epg.xml.gz')
+-        self._s3_epg_key = os.getenv('S3_EPG_KEY', 'epg.xml.gz')
+-        self._local_epg_path = os.getenv('LOCAL_EPG_PATH', 'epg.xml.gz')
+-        self._output_dir = os.getenv('OUTPUT_DIR', 'output')
+-
+-        # Parse numeric values
+-        self._epg_retention_days = int(os.getenv('EPG_RETENTION_DAYS', '10'))
+-        self._epg_past_retention_days = int(os.getenv('EPG_PAST_RETENTION_DAYS', '0'))
+-        self._excluded_channels_future_limit_days = int(os.getenv('EXCLUDED_CHANNELS_FUTURE_LIMIT_DAYS', '1'))
+-        self._excluded_channels_past_limit_hours = int(os.getenv('EXCLUDED_CHANNELS_PAST_LIMIT_HOURS', '1'))
+-
+-        # Parse boolean values
+-        self._strict_epg_old_programs_filter = os.getenv('STRICT_EPG_OLD_PROGRAMS_FILTER', 'false').lower() in ('true', '1', 'yes', 'on')
+-
+-        # Initialize lists
+-        self._categories_to_keep = self.DEFAULT_CATEGORIES_TO_KEEP.copy()
+-        self._channel_names_to_exclude = self.DEFAULT_CHANNEL_NAMES_TO_EXCLUDE.copy()
+-        self._epg_excluded_categories = self.DEFAULT_EPG_EXCLUDED_CATEGORIES.copy()
+-        self._epg_excluded_channel_ids = self.DEFAULT_EPG_EXCLUDED_CHANNEL_IDS.copy()
++    # Security: Maximum allowed file sizes (100MB for M3U, 500MB for EPG)
++    MAX_M3U_FILE_SIZE: int = 100 * 1024 * 1024
++    MAX_EPG_FILE_SIZE: int = 500 * 1024 * 1024
+ 
+     @property
+     def EPG_RETENTION_DAYS(self) -> int:
+-        """Number of days in the future to retain EPG data from current date"""
+-        return self._epg_retention_days
+-
+-    @property
+-    def EPG_PAST_RETENTION_DAYS(self) -> int:
+-        """DEPRECATED: Number of days in the past to retain EPG data (programs that ended recently) - not used anymore due to strict filtering of ended programs"""
+-        return self._epg_past_retention_days
+-
+-    @property
+-    def EXCLUDED_CHANNELS_FUTURE_LIMIT_DAYS(self) -> int:
+-        """Number of days in the future to retain programs for excluded channels"""
+-        return self._excluded_channels_future_limit_days
+-
+-    @property
+-    def EXCLUDED_CHANNELS_PAST_LIMIT_HOURS(self) -> int:
+-        """Number of hours in the past (before now) to retain programs for excluded channels that have already ended"""
+-        return self._excluded_channels_past_limit_hours
++        """Number of days to retain EPG data from current date"""
++        return int(os.getenv('EPG_RETENTION_DAYS', '10'))
+ 
+     @property
+     def LOCAL_FILTERED_PLAYLIST_PATH(self) -> str:
+@@ -240,17 +78,17 @@ class Config:
+     @property
+     def EPG_SOURCE_URL(self) -> str:
+         """EPG source URL from environment variable or default"""
+-        return self._epg_source_url
++        return os.getenv('EPG_SOURCE_URL', 'https://your-epg-provider.com/epg.xml.gz')
+ 
+     @property
+     def S3_EPG_KEY(self) -> str:
+         """S3 EPG key from environment variable or default"""
+-        return self._s3_epg_key
++        return os.getenv('S3_EPG_KEY', 'epg.xml.gz')
+ 
+     @property
+     def LOCAL_EPG_PATH(self) -> str:
+         """Local path for downloaded EPG file"""
+-        return self._local_epg_path
++        return os.getenv('LOCAL_EPG_PATH', 'epg.xml.gz')
+ 
+     @property
+     def LOCAL_FILTERED_EPG_PATH(self) -> str:
+@@ -262,79 +100,143 @@ class Config:
+         else:
+             return f"{s3_epg_key}-filtered"
+ 
+-    @property
+-    def OUTPUT_DIR(self) -> str:
+-        """Output directory for saving processed files"""
+-        return self._output_dir
++    # Categories to keep (for initial config file creation)
++    CATEGORIES_TO_KEEP: List[str] = [
++        "Россия | Russia",
++        "Общие",
++        "Развлекательные",
++        "Новостные",
++        "Познавательные",
++        "Детские",
++        "Музыка",
++        "Региональные",
++        "Европа | Europe",
++        "Австралия | Australia",
++        "Беларусь | Беларускія",
++        "Великобритания | United Kingdom",
++        "Канада | Canada",
++        "США | USA",
++        "Кино"
++    ]
+ 
+-    @property
+-    def CATEGORIES_TO_KEEP(self) -> List[str]:
+-        """Return the list of categories to keep"""
+-        return self._categories_to_keep
++    # Channel names to exclude (for initial config file creation)
++    CHANNEL_NAMES_TO_EXCLUDE: List[str] = [
++        "Fashion",
++        "СПАС",
++        "Три ангела",
++        "ЛДПР",
++        "UA",
++        "Sports"
++    ]
++
++    # Categories for which EPG should NOT be saved (for initial config file creation)
++    EPG_EXCLUDED_CATEGORIES: List[str] = [
++        "Кино"  # Exclude EPG for movie channels
++    ]
++
++    # Specific channel IDs for which EPG should NOT be saved (for initial config file creation)
++    EPG_EXCLUDED_CHANNEL_IDS: List[str] = [
++        "2745",  # Home 4K
++        "6170",  # VF Хит-парад
++        "6168",  # VF Metal
++        "7553",  # VF Britney Spears
++        "6171",  # VF Русский рок
++        "9228",  # VF Король и Шут
++        "7552",  # VF Modern Talking
++        "4729",  # Cartoons Short
++        "7594",  # VF Союзмультфильм
++        "7595",  # VF Ералаш
++        "9233",  # VF Каламбур
++        "8822",  # Z! Science HD
++        "8817",  # BOX Gurman HD
++        "2438",  # Капитан Фантастика
++        "8811",  # Yosso TV Food
++        "6848",  # BCU Little HD
++        "9025",  # Kids TV HD
++        "153",   # Авто Плюс
++        "66",    # Уникум
++        "2760",  # Анекдот ТВ
++        "494",   # Jim Jam
++        "6135",  # VF Музыкальный Новый год!
++        "9303",  # BOX Kosmo 4K
++        "5387",  # YOSSO TV Союзмульт
++        "2420",  # ЕГЭ ТВ
++        "2239",  # Малыш
++        "9183",  # Cartoon Classics
++        "774",   # Flix Snip
++        "810",   # Gulli
++        "6419"   # VF Баня
++    ]
+ 
+     @property
+-    def CHANNEL_NAMES_TO_EXCLUDE(self) -> List[str]:
+-        """Return the list of channel names to exclude"""
+-        return self._channel_names_to_exclude
++    def OUTPUT_DIR(self) -> str:
++        """Output directory for saving processed files"""
++        return os.getenv('OUTPUT_DIR', 'output')
+ 
+-    def get_categories_to_keep(self) -> List[str]:
++    @classmethod
++    def get_categories_to_keep(cls) -> List[str]:
+         """Return the list of categories to keep"""
+-        return self._categories_to_keep
++        return cls.CATEGORIES_TO_KEEP
+ 
+-    def get_channel_names_to_exclude(self) -> List[str]:
++    @classmethod
++    def get_channel_names_to_exclude(cls) -> List[str]:
+         """Return the list of channel names to exclude"""
+-        return self._channel_names_to_exclude
++        return cls.CHANNEL_NAMES_TO_EXCLUDE
+ 
+-    def get_epg_excluded_categories(self) -> List[str]:
++    @classmethod
++    def get_epg_excluded_categories(cls) -> List[str]:
+         """Return the list of categories for which EPG should not be saved"""
+-        return self._epg_excluded_categories
++        return cls.EPG_EXCLUDED_CATEGORIES
+ 
+-    def get_epg_excluded_channel_ids(self) -> List[str]:
++    @classmethod
++    def get_epg_excluded_channel_ids(cls) -> List[str]:
+         """Return the list of channel IDs for which EPG should not be saved"""
+-        return self._epg_excluded_channel_ids
++        return cls.EPG_EXCLUDED_CHANNEL_IDS
+ 
+-    def validate_config(self) -> List[str]:
++    @classmethod
++    def validate_config(cls) -> List[str]:
+         """
+         Validate configuration settings and return list of validation errors.
+ 
+         Returns:
+             List[str]: List of validation errors, empty if all validations pass
+         """
++        config_instance = cls()
+         errors = []
+ 
+         # Validate M3U source URL
+-        if not self.M3U_SOURCE_URL or not self.M3U_SOURCE_URL.startswith(('http://', 'https://')):
++        if not config_instance.M3U_SOURCE_URL or not config_instance.M3U_SOURCE_URL.startswith(('http://', 'https://')):
+             errors.append("M3U_SOURCE_URL must be a valid HTTP/HTTPS URL")
+ 
+         # Validate EPG source URL
+-        if not self.EPG_SOURCE_URL or not self.EPG_SOURCE_URL.startswith(('http://', 'https://')):
++        if not config_instance.EPG_SOURCE_URL or not config_instance.EPG_SOURCE_URL.startswith(('http://', 'https://')):
+             errors.append("EPG_SOURCE_URL must be a valid HTTP/HTTPS URL")
+ 
+         # Validate S3 bucket name
+-        if not self.S3_DEFAULT_BUCKET_NAME or len(self.S3_DEFAULT_BUCKET_NAME) < 3 or len(self.S3_DEFAULT_BUCKET_NAME) > 63:
++        if not config_instance.S3_DEFAULT_BUCKET_NAME or len(config_instance.S3_DEFAULT_BUCKET_NAME) < 3 or len(config_instance.S3_DEFAULT_BUCKET_NAME) > 63:
+             errors.append("S3_DEFAULT_BUCKET_NAME must be between 3 and 63 characters")
+ 
+         # Validate S3 object key
+-        if not self.S3_FILTERED_PLAYLIST_KEY or '..' in self.S3_FILTERED_PLAYLIST_KEY or self.S3_FILTERED_PLAYLIST_KEY.startswith('/'):
++        if not config_instance.S3_FILTERED_PLAYLIST_KEY or '..' in config_instance.S3_FILTERED_PLAYLIST_KEY or config_instance.S3_FILTERED_PLAYLIST_KEY.startswith('/'):
+             errors.append("S3_OBJECT_KEY must not contain '..' or start with '/'")
+ 
+         # Validate S3 EPG key
+-        if not self.S3_EPG_KEY or '..' in self.S3_EPG_KEY or self.S3_EPG_KEY.startswith('/'):
++        if not config_instance.S3_EPG_KEY or '..' in config_instance.S3_EPG_KEY or config_instance.S3_EPG_KEY.startswith('/'):
+             errors.append("S3_EPG_KEY must not contain '..' or start with '/'")
+ 
+         # Validate S3 endpoint URL
+-        if not self.S3_ENDPOINT_URL or not self.S3_ENDPOINT_URL.startswith(('http://', 'https://')):
++        if not config_instance.S3_ENDPOINT_URL or not config_instance.S3_ENDPOINT_URL.startswith(('http://', 'https://')):
+             errors.append("S3_ENDPOINT_URL must be a valid HTTP/HTTPS URL")
+ 
+         # Additional validation to check for common malformed endpoint patterns
+-        endpoint_url = self.S3_ENDPOINT_URL
++        endpoint_url = config_instance.S3_ENDPOINT_URL
+         if endpoint_url and len(endpoint_url) > 10:  # Basic length check
+             # Check if the URL looks like it has credentials embedded or is malformed
+             if '@' in endpoint_url.split('/')[2] if len(endpoint_url.split('/')) > 2 else False:
+                 errors.append("S3_ENDPOINT_URL should not contain credentials in the URL")
+ 
+         # Validate S3 region
+-        if not self.S3_REGION:
++        if not config_instance.S3_REGION:
+             errors.append("S3_REGION must be specified")
+ 
+         return errors
+\ No newline at end of file
+diff --git a/src/m3u_simple_filter/epg_processor.py b/src/m3u_simple_filter/epg_processor.py
+index f49d9ab..0643ccf 100644
+--- a/src/m3u_simple_filter/epg_processor.py
++++ b/src/m3u_simple_filter/epg_processor.py
+@@ -32,12 +32,7 @@ def copy_element_with_children(element):
+     """
+     Рекурсивно копирует XML элемент со всеми атрибутами и дочерними элементами.
+     Для элементов 'desc' очищает содержимое, оставляя атрибуты.
+-    Исключает элементы 'rating' и 'category'.
+     """
+-    # Если это элемент 'rating' или 'category', не копируем его
+-    if element.tag.lower() in ['rating', 'category']:
+-        return None
+-
+     new_element = ET.Element(element.tag)
+ 
+     # Копируем атрибуты
+@@ -55,8 +50,7 @@ def copy_element_with_children(element):
+     # Рекурсивно копируем дочерние элементы
+     for child in element:
+         new_child = copy_element_with_children(child)
+-        if new_child is not None:  # Только если элемент не исключен
+-            new_element.append(new_child)
++        new_element.append(new_child)
+ 
+     return new_element
+ 
+@@ -231,28 +225,6 @@ def extract_channel_info_from_playlist(playlist_content: str) -> tuple:
+     return channel_ids, channel_categories
+ 
+ 
+-def count_programs_in_epg(epg_content: str) -> int:
+-    """
+-    Count the number of programme elements in EPG content.
+-
+-    Args:
+-        epg_content (str): EPG XML content
+-
+-    Returns:
+-        int: Number of programme elements
+-    """
+-    try:
+-        root = ET.fromstring(epg_content)
+-        programmes = root.findall('programme')
+-        return len(programmes)
+-    except ET.ParseError as e:
+-        logger.error(f"Error parsing EPG XML for program count: {e}")
+-        return 0
+-    except Exception as e:
+-        logger.error(f"Unexpected error counting programs in EPG: {e}")
+-        return 0
+-
+-
+ def filter_epg_content(epg_content: str, channel_ids: Set[str], channel_categories: dict = None, excluded_categories: List[str] = None, excluded_channel_ids: List[str] = None) -> str:
+     """
+     Filter EPG content to keep only programs for specified channel IDs, excluding channels from specified categories and specific channel IDs.
+@@ -267,9 +239,7 @@ def filter_epg_content(epg_content: str, channel_ids: Set[str], channel_categori
+     Returns:
+         str: Filtered EPG XML content
+     """
+-    # Count original programs before filtering
+-    original_program_count = count_programs_in_epg(epg_content)
+-    logger.info(f"Filtering EPG content for {len(channel_ids)} initial channels, original program count: {original_program_count}")
++    logger.info(f"Filtering EPG content for {len(channel_ids)} initial channels")
+ 
+     if not channel_ids:
+         logger.warning("No channel IDs provided, returning empty EPG")
+@@ -370,21 +340,11 @@ def filter_epg_content(epg_content: str, channel_ids: Set[str], channel_categori
+ 
+         # Calculate time thresholds
+         current_time = datetime.now()
++        one_hour_ago = current_time - timedelta(hours=1)
+ 
+         # Use retention days from config
+-        # Import here to allow mocking in tests
+-        from importlib import import_module
+-        config_module = import_module('.config', package=__name__.rsplit('.', 1)[0])
+-        Config = config_module.Config
++        from .config import Config
+         config_obj = Config()
+-
+-        # Check if strict old programs filtering is enabled
+-        strict_old_programs_filter = config_obj.STRICT_EPG_OLD_PROGRAMS_FILTER
+-
+-        # Calculate past retention threshold (how many days back to keep programs that have ended)
+-        past_retention_days = config_obj.EPG_PAST_RETENTION_DAYS
+-        retention_start_time = current_time - timedelta(days=past_retention_days)
+-
+         retention_days = config_obj.EPG_RETENTION_DAYS
+         retention_period_later = current_time + timedelta(days=retention_days)
+ 
+@@ -412,41 +372,22 @@ def filter_epg_content(epg_content: str, channel_ids: Set[str], channel_categori
+                         start_datetime = datetime(start_year, start_month, start_day, start_hour, start_min, start_sec)
+                         stop_datetime = datetime(stop_year, stop_month, stop_day, stop_hour, stop_min, stop_sec)
+ 
+-                        # Check if strict old programs filtering is enabled
+-                        # If the program is from a year that's significantly different from current year,
+-                        # treat it as too old and exclude it (this solves the original issue with old programs)
+-                        if strict_old_programs_filter:
+-                            year_difference = abs(stop_datetime.year - current_time.year)
+-                            if year_difference > 1:
+-                                # Skip this program as it's too old
+-                                continue
+-
+                         # Apply time-based filtering:
+-                        # If past retention days is greater than 0, apply time-based filtering
+                         # Include programs that either:
+-                        # 1. Ended recently (within past retention days) and started before retention start time, OR
+-                        # 2. Haven't ended yet and start within the configured retention period
+-                        if past_retention_days > 0:
+-                            condition1 = (stop_datetime >= retention_start_time or start_datetime <= retention_period_later)
+-                            condition2 = (start_datetime >= retention_start_time or stop_datetime >= retention_start_time)
+-                            should_include = condition1 and condition2
+-                        else:
+-                            # If past retention days is 0, use the original logic (no time-based filtering for past programs)
+-                            should_include = stop_datetime >= current_time or start_datetime <= retention_period_later
+-
+-                        if should_include:
++                        # 1. Haven't ended yet (stop time >= current time), OR
++                        # 2. Will start within the configured retention period (start time <= retention days from now)
++                        if stop_datetime >= current_time or start_datetime <= retention_period_later:
+                             # Create a new program element with only essential elements
+                             new_program_elem = ET.Element("programme")
+                             # Copy attributes
+                             for attr, value in program_elem.attrib.items():
+                                 new_program_elem.set(attr, value)
+ 
+-                            # Copy child elements (keeping all elements except ratings and categories)
++                            # Copy child elements (keeping all elements including icons, descriptions, ratings, and categories)
+                             for child in program_elem:
+                                 # Recursively copy the entire element with all sub-elements and attributes
+                                 new_child = copy_element_with_children(child)
+-                                if new_child is not None:  # Only add if element was not excluded
+-                                    new_program_elem.append(new_child)
++                                new_program_elem.append(new_child)
+ 
+                             filtered_root.append(new_program_elem)
+                     except ValueError:
+@@ -458,12 +399,11 @@ def filter_epg_content(epg_content: str, channel_ids: Set[str], channel_categori
+                         for attr, value in program_elem.attrib.items():
+                             new_program_elem.set(attr, value)
+ 
+-                        # Copy child elements (keeping all elements except ratings and categories)
++                        # Copy child elements (keeping all elements including icons, descriptions, ratings, and categories)
+                         for child in program_elem:
+                             # Recursively copy the entire element with all sub-elements and attributes
+                             new_child = copy_element_with_children(child)
+-                            if new_child is not None:  # Only add if element was not excluded
+-                                new_program_elem.append(new_child)
++                            new_program_elem.append(new_child)
+ 
+                         filtered_root.append(new_program_elem)
+                 else:
+@@ -483,9 +423,6 @@ def filter_epg_content(epg_content: str, channel_ids: Set[str], channel_categori
+ 
+                     filtered_root.append(new_program_elem)
+ 
+-        # Count remaining programs after filtering
+-        remaining_program_count = len(filtered_root.findall('programme'))
+-        
+         # Convert back to string with proper formatting
+         # Create a string buffer to write the prettified XML
+         rough_string = ET.tostring(filtered_root, encoding='unicode')
+@@ -498,7 +435,7 @@ def filter_epg_content(epg_content: str, channel_ids: Set[str], channel_categori
+         lines = [line for line in filtered_xml_str.split('\n') if line.strip()]
+         filtered_xml_str = '\n'.join(lines)
+ 
+-        logger.info(f"EPG filtering completed successfully. Programs: {original_program_count} -> {remaining_program_count} ({len(channels_to_keep)} channels)")
++        logger.info("EPG filtering completed successfully")
+         return filtered_xml_str
+ 
+     except ET.ParseError as e:
+diff --git a/src/m3u_simple_filter/m3u_processor.py b/src/m3u_simple_filter/m3u_processor.py
+index 8069a56..68be4c0 100644
+--- a/src/m3u_simple_filter/m3u_processor.py
++++ b/src/m3u_simple_filter/m3u_processor.py
+@@ -44,7 +44,7 @@ def download_m3u(url: str) -> str:
+         response = urlopen(url)
+ 
+         # Read content in chunks to prevent memory issues with large files
+-        content_parts = []  # Use list to collect parts
++        content_chunks = []
+         total_size = 0
+ 
+         while True:
+@@ -58,9 +58,9 @@ def download_m3u(url: str) -> str:
+             if total_size > Config.MAX_M3U_FILE_SIZE:
+                 raise ValueError(f"M3U file exceeds maximum allowed size of {Config.MAX_M3U_FILE_SIZE} bytes")
+ 
+-            content_parts.append(chunk)
++            content_chunks.append(chunk)
+ 
+-        content = b''.join(content_parts).decode('utf-8')
++        content = b''.join(content_chunks).decode('utf-8')
+         logger.info(f"M3U file downloaded successfully, size: {len(content)} characters")
+         return content
+     except URLError as e:
+@@ -434,7 +434,6 @@ def remove_duplicates_and_apply_hd_preference(content: str) -> str:
+             i += 1
+ 
+     # Create a dictionary to track unique channels based on normalized name
+-    # Use a more efficient approach: map normalized names to best variant
+     unique_channels: dict = {}
+ 
+     for extinf_line, url_line in channel_entries:
+@@ -456,41 +455,54 @@ def remove_duplicates_and_apply_hd_preference(content: str) -> str:
+         # This allows us to handle cases where tvg-id differs but channel names suggest same channel
+         key = normalized_name
+ 
+-        # Check if this is an HD version
+-        is_hd = ' hd' in channel_name.lower()
+-        
+-        # Get tvg-rec value if present
+-        tvg_rec_match = re.search(r'tvg-rec="(\d+)"', extinf_line)
+-        tvg_rec = int(tvg_rec_match.group(1)) if tvg_rec_match else 0
+-
+-        # If we already have an entry for this key, determine which one to keep
+-        if key in unique_channels:
+-            existing_extinf, existing_url, existing_is_hd, existing_tvg_rec = unique_channels[key]
+-            
+-            # Determine if we should replace the existing entry
+-            should_replace = False
+-            
+-            # If we have both HD and non-HD versions, prefer HD
+-            if is_hd and not existing_is_hd:
+-                should_replace = True
+-            elif existing_is_hd and not is_hd:
+-                # Keep existing HD version
+-                should_replace = False
+-            # If both are HD or both are non-HD, prefer higher tvg-rec
+-            elif tvg_rec > existing_tvg_rec:
+-                should_replace = True
+-            # If tvg-rec is the same, prefer the one we already have (to maintain consistency)
+-            
+-            if should_replace:
+-                unique_channels[key] = (extinf_line, url_line, is_hd, tvg_rec)
+-        else:
+-            # Add this as the first entry for this key
+-            unique_channels[key] = (extinf_line, url_line, is_hd, tvg_rec)
++        # If this key doesn't exist, add it
++        if key not in unique_channels:
++            unique_channels[key] = []
+ 
+-    # Extract the final channel entries
+-    final_channel_entries: List[Tuple[str, str]] = [
+-        (extinf, url) for extinf, url, is_hd, tvg_rec in unique_channels.values()
+-    ]
++        # Add this variant to the list
++        unique_channels[key].append((extinf_line, url_line))
++
++    # For each group of channels, decide which version(s) to keep
++    final_channel_entries: List[Tuple[str, str]] = []
++    for key, variants in unique_channels.items():
++        # Separate HD and non-HD versions
++        hd_variants = []
++        non_hd_variants = []
++
++        for extinf, url in variants:
++            channel_name = extinf.rsplit(',', 1)[1].strip()
++            # Check if the channel name contains ' hd' anywhere (case insensitive)
++            if ' hd' in channel_name.lower():
++                hd_variants.append((extinf, url))
++            else:
++                non_hd_variants.append((extinf, url))
++
++        # If both HD and non-HD versions exist, only consider HD versions
++        if hd_variants and non_hd_variants:
++            variants_to_process = hd_variants
++            # Log which non-HD versions were removed
++            removed_channels = [ext.rsplit(',', 1)[1].strip() for ext, _ in non_hd_variants]
++            logger.debug(f"Removed non-HD versions for '{key}': {removed_channels}")
++        else:
++            # Otherwise, consider all variants for duplicate removal
++            variants_to_process = variants
++
++        # If there are multiple variants to process, apply tvg-rec preference
++        if len(variants_to_process) > 1:
++            # Sort by tvg-rec value (if present) in descending order
++            sorted_variants = sorted(variants_to_process,
++                                    key=lambda x: int(re.search(r'tvg-rec="(\d+)"', x[0]).group(1)) if re.search(r'tvg-rec="(\d+)"', x[0]) else 0,
++                                    reverse=True)
++            # Keep only the first one (highest tvg-rec)
++            final_channel_entries.append(sorted_variants[0])
++
++            # Log which duplicates were removed
++            if len(sorted_variants) > 1:
++                removed_channels = [ext.rsplit(',', 1)[1].strip() for ext, _ in sorted_variants[1:]]
++                logger.debug(f"Removed duplicate versions for '{key}': {removed_channels}")
++        else:
++            # Only one variant, add it directly
++            final_channel_entries.extend(variants_to_process)
+ 
+     # Reconstruct the final content
+     final_lines = header_lines
+diff --git a/src/m3u_simple_filter/s3_operations.py b/src/m3u_simple_filter/s3_operations.py
+index a31d67b..8d5d3d1 100644
+--- a/src/m3u_simple_filter/s3_operations.py
++++ b/src/m3u_simple_filter/s3_operations.py
+@@ -35,29 +35,18 @@ def upload_to_s3(content: str, bucket_name: str, object_key: str, config: Any, c
+     """
+     logger.info(f"Uploading to S3-compatible storage: s3://{bucket_name}/{object_key}")
+ 
+-    # Validate content size to prevent uploading extremely large content
+-    content_size = len(content.encode('utf-8'))
+-    if content_size > 100 * 1024 * 1024:  # 100MB limit
+-        raise ValueError(f"Content is too large to upload: {content_size} bytes (>100MB)")
+-
+     # Validate S3 endpoint URL before initializing client
+     endpoint_url = config.S3_COMPATIBLE_CONFIG['endpoint_url']
+     if not endpoint_url or not isinstance(endpoint_url, str) or not endpoint_url.startswith(('http://', 'https://')):
+         raise ValueError(f"Invalid S3 endpoint URL: {endpoint_url}. Must be a valid HTTP/HTTPS URL.")
+ 
+-    # Validate AWS credentials are set
+-    aws_access_key_id = os.environ.get('AWS_ACCESS_KEY_ID')
+-    aws_secret_access_key = os.environ.get('AWS_SECRET_ACCESS_KEY')
+-    if not aws_access_key_id or not aws_secret_access_key:
+-        raise ValueError("AWS credentials not found in environment variables. Please set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY.")
+-
+     # Initialize S3 client with endpoint from config
+     # Use environment variables for credentials
+     s3_client = boto3.client(
+         's3',
+         endpoint_url=endpoint_url,  # S3-compatible storage endpoint from config
+-        aws_access_key_id=aws_access_key_id,
+-        aws_secret_access_key=aws_secret_access_key,
++        aws_access_key_id=os.environ.get('AWS_ACCESS_KEY_ID'),
++        aws_secret_access_key=os.environ.get('AWS_SECRET_ACCESS_KEY'),
+         region_name=config.S3_COMPATIBLE_CONFIG['region']  # S3-compatible storage region from config
+     )
+ 
+@@ -97,24 +86,12 @@ def upload_file_to_s3(file_path: str, bucket_name: str, object_key: str, config:
+     import os
+     from .config import Config as ConfigClass
+ 
+-    # Validate file exists and is readable
++    # If config is available and file doesn't exist at the given path, try looking in output directory
+     full_file_path = file_path
+     if config and hasattr(config, 'OUTPUT_DIR'):
+         output_file_path = os.path.join(config.OUTPUT_DIR, os.path.basename(file_path))
+         if os.path.exists(output_file_path):
+             full_file_path = output_file_path
+-    
+-    # Check if the file exists and is readable
+-    if not os.path.exists(full_file_path):
+-        raise FileNotFoundError(f"File does not exist: {full_file_path}")
+-    
+-    if not os.access(full_file_path, os.R_OK):
+-        raise PermissionError(f"File is not readable: {full_file_path}")
+-    
+-    # Check file size to prevent uploading extremely large files
+-    file_size = os.path.getsize(full_file_path)
+-    if file_size > 100 * 1024 * 1024:  # 100MB limit
+-        raise ValueError(f"File is too large to upload: {file_size} bytes (>100MB)")
+ 
+     logger.info(f"Uploading file to S3-compatible storage: s3://{bucket_name}/{object_key} from {full_file_path}")
+ 
+@@ -123,19 +100,13 @@ def upload_file_to_s3(file_path: str, bucket_name: str, object_key: str, config:
+     if not endpoint_url or not isinstance(endpoint_url, str) or not endpoint_url.startswith(('http://', 'https://')):
+         raise ValueError(f"Invalid S3 endpoint URL: {endpoint_url}. Must be a valid HTTP/HTTPS URL.")
+ 
+-    # Validate AWS credentials are set
+-    aws_access_key_id = os.environ.get('AWS_ACCESS_KEY_ID')
+-    aws_secret_access_key = os.environ.get('AWS_SECRET_ACCESS_KEY')
+-    if not aws_access_key_id or not aws_secret_access_key:
+-        raise ValueError("AWS credentials not found in environment variables. Please set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY.")
+-
+     # Initialize S3 client with endpoint from config
+     # Use environment variables for credentials
+     s3_client = boto3.client(
+         's3',
+         endpoint_url=endpoint_url,  # S3-compatible storage endpoint from config
+-        aws_access_key_id=aws_access_key_id,
+-        aws_secret_access_key=aws_secret_access_key,
++        aws_access_key_id=os.environ.get('AWS_ACCESS_KEY_ID'),
++        aws_secret_access_key=os.environ.get('AWS_SECRET_ACCESS_KEY'),
+         region_name=config.S3_COMPATIBLE_CONFIG['region']  # S3-compatible storage region from config
+     )
+ 
+diff --git a/src/m3u_simple_filter/utils.py b/src/m3u_simple_filter/utils.py
+index dc6f864..c32cc79 100644
+--- a/src/m3u_simple_filter/utils.py
++++ b/src/m3u_simple_filter/utils.py
+@@ -32,22 +32,22 @@ def sanitize_log_message(message: str) -> str:
+     }
+ 
+     # Get sensitive values from environment variables (only if they differ from defaults)
+-    sensitive_values = set()  # Use set to avoid duplicates
++    sensitive_values = []
+ 
+     for var_name, default_val in default_values.items():
+         env_val = os.getenv(var_name)
+         # Only add to sensitive values if the environment variable is set AND differs from default
+         if env_val and env_val != default_val:
+-            sensitive_values.add(env_val)
++            sensitive_values.append(env_val)
+ 
+-    # Create a list of sensitive values sorted by length (descending) to replace longer strings first
+-    sorted_sensitive_values = sorted(sensitive_values, key=len, reverse=True)
++    # Sort by length (descending) to replace longer strings first
++    sensitive_values.sort(key=len, reverse=True)
+ 
+     sanitized_message = message
+ 
+     # Replace sensitive values with masked versions
+     # But exclude values that look like S3 endpoint URLs to avoid corrupting them
+-    for value in sorted_sensitive_values:
++    for value in sensitive_values:
+         if value:  # Only replace non-empty values
+             # Skip masking if the value looks like an S3 endpoint URL
+             if value.startswith(('http://', 'https://')):
+@@ -62,10 +62,7 @@ def sanitize_log_message(message: str) -> str:
+                 visible_chars = max(3, len(value) // 4)  # Show at least 3 chars
+                 masked_value = f"{value[:visible_chars]}{'*' * (len(value) - 2 * visible_chars)}{value[-visible_chars:]}"
+ 
+-            # Use regex to avoid partial replacements within other sensitive values
+-            # This prevents issues where one sensitive value is contained in another
+-            escaped_value = re.escape(value)
+-            sanitized_message = re.sub(escaped_value, masked_value, sanitized_message)
++            sanitized_message = sanitized_message.replace(value, masked_value)
+ 
+     # Also mask potential URLs that might contain sensitive information
+     # But only if they are not default values or S3 endpoint URLs
+@@ -86,9 +83,7 @@ def sanitize_log_message(message: str) -> str:
+     for url in urls:
+         # Only mask URLs that are not default values and not S3 endpoint URLs
+         if url not in default_urls and not any(sensitive_val in url for sensitive_val in sensitive_values if sensitive_val.startswith(('http://', 'https://'))):
+-            # Use regex to avoid partial replacements within other sensitive values
+-            escaped_url = re.escape(url)
+-            sanitized_message = re.sub(escaped_url, mask_url(url), sanitized_message)
++            sanitized_message = sanitized_message.replace(url, mask_url(url))
+ 
+     return sanitized_message
+ 
+diff --git a/tests/test_config.py b/tests/test_config.py
+index 14bec1d..3f6cc77 100644
+--- a/tests/test_config.py
++++ b/tests/test_config.py
+@@ -132,30 +132,6 @@ class TestConfig(unittest.TestCase):
+             else:
+                 os.environ.pop('EPG_RETENTION_DAYS', None)
+ 
+-    def test_epg_past_retention_days_default(self):
+-        """Test that EPG past retention days defaults to 0."""
+-        config = Config()
+-        self.assertEqual(config.EPG_PAST_RETENTION_DAYS, 0)
+-
+-    def test_epg_past_retention_days_from_env(self):
+-        """Test that EPG past retention days can be set from environment variable."""
+-        # Save original value
+-        original_value = os.environ.get('EPG_PAST_RETENTION_DAYS')
+-
+-        try:
+-            # Set environment variable
+-            os.environ['EPG_PAST_RETENTION_DAYS'] = '4'
+-
+-            # Create new config instance to pick up env var
+-            config = Config()
+-            self.assertEqual(config.EPG_PAST_RETENTION_DAYS, 4)
+-        finally:
+-            # Restore original value
+-            if original_value is not None:
+-                os.environ['EPG_PAST_RETENTION_DAYS'] = original_value
+-            else:
+-                os.environ.pop('EPG_PAST_RETENTION_DAYS', None)
+-
+ 
+ if __name__ == '__main__':
+     unittest.main()
+\ No newline at end of file
+diff --git a/tests/test_epg_processor.py b/tests/test_epg_processor.py
+index 533991a..7bf93b6 100644
+--- a/tests/test_epg_processor.py
++++ b/tests/test_epg_processor.py
+@@ -219,75 +219,6 @@ http://example.com/5"""
+         programme_channels = {prog.get('channel') for prog in programmes}
+         self.assertEqual(programme_channels, {"channel1", "channel3"})
+ 
+-    def test_filter_epg_content_past_retention_logic(self):
+-        """Test that EPG filtering respects past retention days setting."""
+-        from datetime import datetime, timedelta
+-
+-        # Create EPG content with programs at different times
+-        # One program that ended 3 days ago (should be kept if past_retention_days >= 3)
+-        # One program that ended 5 days ago (should be removed if past_retention_days < 5)
+-        three_days_ago = (datetime.now() - timedelta(days=3)).strftime("%Y%m%d%H%M%S +0000")
+-        five_days_ago = (datetime.now() - timedelta(days=5)).strftime("%Y%m%d%H%M%S +0000")
+-        today = datetime.now().strftime("%Y%m%d%H%M%S +0000")
+-        tomorrow = (datetime.now() + timedelta(days=1)).strftime("%Y%m%d%H%M%S +0000")
+-
+-        epg_content = f"""<?xml version="1.0" encoding="UTF-8"?>
+-<tv>
+-  <channel id="channel1">
+-    <display-name lang="en">Channel 1</display-name>
+-  </channel>
+-  <channel id="channel2">
+-    <display-name lang="en">Channel 2</display-name>
+-  </channel>
+-  <programme start="{three_days_ago}" stop="{three_days_ago}" channel="channel1">
+-    <title lang="en">Show that ended 3 days ago</title>
+-  </programme>
+-  <programme start="{five_days_ago}" stop="{five_days_ago}" channel="channel2">
+-    <title lang="en">Show that ended 5 days ago</title>
+-  </programme>
+-  <programme start="{tomorrow}" stop="{tomorrow.replace(str(datetime.now().day + 1), str(datetime.now().day + 2))}" channel="channel1">
+-    <title lang="en">Future show</title>
+-  </programme>
+-</tv>"""
+-
+-        channel_ids = {"channel1", "channel2"}
+-
+-        # Mock the config to set past retention to 4 days
+-        import sys
+-        from unittest.mock import patch
+-        from src.m3u_simple_filter.config import Config
+-
+-        # Create a custom config class with our test values
+-        class TestConfig(Config):
+-            @property
+-            def EPG_PAST_RETENTION_DAYS(self) -> int:
+-                return 4  # Keep programs that ended up to 4 days ago
+-
+-            @property
+-            def EPG_RETENTION_DAYS(self) -> int:
+-                return 10  # Keep future programs for 10 days
+-
+-        # Patch the config import in the epg_processor module
+-        with patch('src.m3u_simple_filter.config.Config', TestConfig):
+-            filtered_content = filter_epg_content(epg_content, channel_ids, {}, [], [])
+-
+-        # Parse the result to verify filtering
+-        root = ET.fromstring(filtered_content)
+-
+-        # Should have programs that ended 3 days ago (within 4-day window) and future programs
+-        # But NOT programs that ended 5 days ago (beyond 4-day window)
+-        programmes = root.findall('programme')
+-
+-        # There should be 2 programs: one that ended 3 days ago and one future program
+-        # The program that ended 5 days ago should be excluded since 5 > 4 (past retention days)
+-        programme_titles = [p.find('title').text for p in programmes]
+-
+-        self.assertEqual(len(programmes), 2)
+-
+-        self.assertIn("Show that ended 3 days ago", programme_titles)
+-        self.assertIn("Future show", programme_titles)
+-        self.assertNotIn("Show that ended 5 days ago", programme_titles)
+-
+ 
+ if __name__ == '__main__':
+     unittest.main()
+\ No newline at end of file
