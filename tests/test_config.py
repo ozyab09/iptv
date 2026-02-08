@@ -132,30 +132,6 @@ class TestConfig(unittest.TestCase):
             else:
                 os.environ.pop('EPG_RETENTION_DAYS', None)
 
-    def test_epg_past_retention_days_default(self):
-        """Test that EPG past retention days defaults to 0."""
-        config = Config()
-        self.assertEqual(config.EPG_PAST_RETENTION_DAYS, 0)
-
-    def test_epg_past_retention_days_from_env(self):
-        """Test that EPG past retention days can be set from environment variable."""
-        # Save original value
-        original_value = os.environ.get('EPG_PAST_RETENTION_DAYS')
-
-        try:
-            # Set environment variable
-            os.environ['EPG_PAST_RETENTION_DAYS'] = '4'
-
-            # Create new config instance to pick up env var
-            config = Config()
-            self.assertEqual(config.EPG_PAST_RETENTION_DAYS, 4)
-        finally:
-            # Restore original value
-            if original_value is not None:
-                os.environ['EPG_PAST_RETENTION_DAYS'] = original_value
-            else:
-                os.environ.pop('EPG_PAST_RETENTION_DAYS', None)
-
 
 if __name__ == '__main__':
     unittest.main()

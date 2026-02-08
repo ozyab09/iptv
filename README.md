@@ -39,11 +39,9 @@ CATEGORIES_TO_KEEP: List[str] = [
   - Removes 'orig' suffix from channel names
   - Keeps only HD versions when both HD and non-HD versions exist
 - **Smart Filtering**: Excludes channels matching specific regex patterns (e.g., `+1` channels)
-- **EPG Processing**: Downloads, filters, and uploads Electronic Program Guide (EPG) data based on channels in the filtered playlist
 - **Cloud Storage**: Uploads filtered playlists to S3-compatible storage
 - **Dry-Run Mode**: Test functionality without uploading to S3
 - **Comprehensive Logging**: Detailed logs with before/after statistics and file sizes in KB
-- **Time-Based EPG Filtering**: Configurable retention periods for EPG data, allowing to keep programs that ended recently
 - **Optimized File Sizes**: Efficient compression to keep EPG files within typical S3 size limits (3-5 MB range)
 - **Organized File Management**: All downloaded and processed files saved in a dedicated output directory
 - **Full Test Coverage**: Unit tests for all core functionality
@@ -61,27 +59,20 @@ iptv/
 │   │   ├── __init__.py             # Package initialization
 │   │   ├── config.py               # Configuration management with validation
 │   │   ├── m3u_processor.py        # M3U download, parsing and filtering
-│   │   ├── epg_processor.py        # EPG download, parsing and filtering
 │   │   ├── s3_operations.py        # S3 upload operations
-│   │   ├── utils.py                # Utility functions for sanitization and helpers
 │   │   └── main.py                 # Application entry point
 │   └── run_filter.py               # Script entry point
 ├── tests/                          # Unit tests
 │   ├── test_config.py              # Configuration tests
 │   ├── test_m3u_processor.py       # M3U processing tests
-│   ├── test_epg_processor.py       # EPG processing tests
 │   ├── test_s3_operations.py       # S3 operations tests
-│   ├── test_main.py                # Main application tests
-│   ├── test_simple_playlist.py     # Simple playlist tests
-│   ├── test_url_tvg_replacement.py # URL TVG replacement tests
-│   └── conftest.py                 # Pytest configuration
+│   └── test_main.py                # Main application tests
 ├── output/                         # Directory for saving processed files (created at runtime)
 ├── .github/
 │   └── workflows/
 │       └── filter-m3u.yml          # GitHub Actions workflow
 ├── pyproject.toml                  # Project configuration and dependencies
 ├── test.sh                         # Local testing script
-├── .env.example                    # Example environment variables file
 └── README.md                       # Project documentation
 ```
 
@@ -126,7 +117,6 @@ The application uses environment variables for configuration. Create a `.env` fi
 | `S3_EPG_KEY` | S3 object key for EPG file | `epg.xml.gz` |
 | `EPG_SOURCE_URL` | Source URL for the EPG XML file | `https://your-epg-provider.com/epg.xml.gz` |
 | `LOCAL_EPG_PATH` | Local path for downloaded EPG file | `epg.xml.gz` |
-| `EPG_PAST_RETENTION_DAYS` | Number of days in the past to retain EPG data (programs that ended recently) | `0` |
 | `OUTPUT_DIR` | Directory for saving processed files | `output` |
 | `DRY_RUN` | Run in dry-run mode | (unset) |
 | `AWS_ACCESS_KEY_ID` | S3-compatible storage access key | (required) |
@@ -144,7 +134,7 @@ The application uses environment variables for configuration. Create a `.env` fi
    nano .env
    ```
 
-3. The `.env.example` file contains all the required environment variables with their default values. Make sure to update the following required values:
+3. Set the required values:
    - `M3U_SOURCE_URL`: Your M3U playlist source URL
    - `S3_BUCKET_NAME`: Your S3 bucket name
    - `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`: Your S3-compatible storage credentials

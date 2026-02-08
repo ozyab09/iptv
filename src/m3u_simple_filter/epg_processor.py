@@ -32,12 +32,7 @@ def copy_element_with_children(element):
     """
     Рекурсивно копирует XML элемент со всеми атрибутами и дочерними элементами.
     Для элементов 'desc' очищает содержимое, оставляя атрибуты.
-    Исключает элементы 'rating' и 'category'.
     """
-    # Если это элемент 'rating' или 'category', не копируем его
-    if element.tag.lower() in ['rating', 'category']:
-        return None
-
     new_element = ET.Element(element.tag)
 
     # Копируем атрибуты
@@ -55,8 +50,7 @@ def copy_element_with_children(element):
     # Рекурсивно копируем дочерние элементы
     for child in element:
         new_child = copy_element_with_children(child)
-        if new_child is not None:  # Только если элемент не исключен
-            new_element.append(new_child)
+        new_element.append(new_child)
 
     return new_element
 
@@ -231,28 +225,6 @@ def extract_channel_info_from_playlist(playlist_content: str) -> tuple:
     return channel_ids, channel_categories
 
 
-def count_programs_in_epg(epg_content: str) -> int:
-    """
-    Count the number of programme elements in EPG content.
-
-    Args:
-        epg_content (str): EPG XML content
-
-    Returns:
-        int: Number of programme elements
-    """
-    try:
-        root = ET.fromstring(epg_content)
-        programmes = root.findall('programme')
-        return len(programmes)
-    except ET.ParseError as e:
-        logger.error(f"Error parsing EPG XML for program count: {e}")
-        return 0
-    except Exception as e:
-        logger.error(f"Unexpected error counting programs in EPG: {e}")
-        return 0
-
-
 def filter_epg_content(epg_content: str, channel_ids: Set[str], channel_categories: dict = None, excluded_categories: List[str] = None, excluded_channel_ids: List[str] = None) -> str:
     """
     Filter EPG content to keep only programs for specified channel IDs, excluding channels from specified categories and specific channel IDs.
@@ -267,9 +239,7 @@ def filter_epg_content(epg_content: str, channel_ids: Set[str], channel_categori
     Returns:
         str: Filtered EPG XML content
     """
-    # Count original programs before filtering
-    original_program_count = count_programs_in_epg(epg_content)
-    logger.info(f"Filtering EPG content for {len(channel_ids)} initial channels, original program count: {original_program_count}")
+    logger.info(f"Filtering EPG content for {len(channel_ids)} initial channels")
 
     if not channel_ids:
         logger.warning("No channel IDs provided, returning empty EPG")
@@ -370,21 +340,11 @@ def filter_epg_content(epg_content: str, channel_ids: Set[str], channel_categori
 
         # Calculate time thresholds
         current_time = datetime.now()
+        one_hour_ago = current_time - timedelta(hours=1)
 
         # Use retention days from config
-        # Import here to allow mocking in tests
-        from importlib import import_module
-        config_module = import_module('.config', package=__name__.rsplit('.', 1)[0])
-        Config = config_module.Config
+        from .config import Config
         config_obj = Config()
-
-        # Check if strict old programs filtering is enabled
-        strict_old_programs_filter = config_obj.STRICT_EPG_OLD_PROGRAMS_FILTER
-
-        # Calculate past retention threshold (how many days back to keep programs that have ended)
-        past_retention_days = config_obj.EPG_PAST_RETENTION_DAYS
-        retention_start_time = current_time - timedelta(days=past_retention_days)
-
         retention_days = config_obj.EPG_RETENTION_DAYS
         retention_period_later = current_time + timedelta(days=retention_days)
 
@@ -412,41 +372,22 @@ def filter_epg_content(epg_content: str, channel_ids: Set[str], channel_categori
                         start_datetime = datetime(start_year, start_month, start_day, start_hour, start_min, start_sec)
                         stop_datetime = datetime(stop_year, stop_month, stop_day, stop_hour, stop_min, stop_sec)
 
-                        # Check if strict old programs filtering is enabled
-                        # If the program is from a year that's significantly different from current year,
-                        # treat it as too old and exclude it (this solves the original issue with old programs)
-                        if strict_old_programs_filter:
-                            year_difference = abs(stop_datetime.year - current_time.year)
-                            if year_difference > 1:
-                                # Skip this program as it's too old
-                                continue
-
                         # Apply time-based filtering:
-                        # If past retention days is greater than 0, apply time-based filtering
                         # Include programs that either:
-                        # 1. Ended recently (within past retention days) and started before retention start time, OR
-                        # 2. Haven't ended yet and start within the configured retention period
-                        if past_retention_days > 0:
-                            condition1 = (stop_datetime >= retention_start_time or start_datetime <= retention_period_later)
-                            condition2 = (start_datetime >= retention_start_time or stop_datetime >= retention_start_time)
-                            should_include = condition1 and condition2
-                        else:
-                            # If past retention days is 0, use the original logic (no time-based filtering for past programs)
-                            should_include = stop_datetime >= current_time or start_datetime <= retention_period_later
-
-                        if should_include:
+                        # 1. Haven't ended yet (stop time >= current time), OR
+                        # 2. Will start within the configured retention period (start time <= retention days from now)
+                        if stop_datetime >= current_time or start_datetime <= retention_period_later:
                             # Create a new program element with only essential elements
                             new_program_elem = ET.Element("programme")
                             # Copy attributes
                             for attr, value in program_elem.attrib.items():
                                 new_program_elem.set(attr, value)
 
-                            # Copy child elements (keeping all elements except ratings and categories)
+                            # Copy child elements (keeping all elements including icons, descriptions, ratings, and categories)
                             for child in program_elem:
                                 # Recursively copy the entire element with all sub-elements and attributes
                                 new_child = copy_element_with_children(child)
-                                if new_child is not None:  # Only add if element was not excluded
-                                    new_program_elem.append(new_child)
+                                new_program_elem.append(new_child)
 
                             filtered_root.append(new_program_elem)
                     except ValueError:
@@ -458,12 +399,11 @@ def filter_epg_content(epg_content: str, channel_ids: Set[str], channel_categori
                         for attr, value in program_elem.attrib.items():
                             new_program_elem.set(attr, value)
 
-                        # Copy child elements (keeping all elements except ratings and categories)
+                        # Copy child elements (keeping all elements including icons, descriptions, ratings, and categories)
                         for child in program_elem:
                             # Recursively copy the entire element with all sub-elements and attributes
                             new_child = copy_element_with_children(child)
-                            if new_child is not None:  # Only add if element was not excluded
-                                new_program_elem.append(new_child)
+                            new_program_elem.append(new_child)
 
                         filtered_root.append(new_program_elem)
                 else:
@@ -483,9 +423,6 @@ def filter_epg_content(epg_content: str, channel_ids: Set[str], channel_categori
 
                     filtered_root.append(new_program_elem)
 
-        # Count remaining programs after filtering
-        remaining_program_count = len(filtered_root.findall('programme'))
-        
         # Convert back to string with proper formatting
         # Create a string buffer to write the prettified XML
         rough_string = ET.tostring(filtered_root, encoding='unicode')
@@ -498,7 +435,7 @@ def filter_epg_content(epg_content: str, channel_ids: Set[str], channel_categori
         lines = [line for line in filtered_xml_str.split('\n') if line.strip()]
         filtered_xml_str = '\n'.join(lines)
 
-        logger.info(f"EPG filtering completed successfully. Programs: {original_program_count} -> {remaining_program_count} ({len(channels_to_keep)} channels)")
+        logger.info("EPG filtering completed successfully")
         return filtered_xml_str
 
     except ET.ParseError as e:

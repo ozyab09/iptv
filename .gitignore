@@ -33,10 +33,6 @@ playlist-all.m3u
 .DS_Store
 Thumbs.db
 
-# Distribution / packaging
-*.egg-info/
-*.egg
-
 # Gitlab
 .gitlab-ci-local.yml
 .gitlab-ci-local/
@@ -45,7 +41,3 @@ epg2.xml-filtered
 .env
 output/
 run_with_env.sh
-epg2.xml.gz
-
-# Package build files
-*.egg-info/

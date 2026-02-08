@@ -32,22 +32,22 @@ def sanitize_log_message(message: str) -> str:
     }
 
     # Get sensitive values from environment variables (only if they differ from defaults)
-    sensitive_values = set()  # Use set to avoid duplicates
+    sensitive_values = []
 
     for var_name, default_val in default_values.items():
         env_val = os.getenv(var_name)
         # Only add to sensitive values if the environment variable is set AND differs from default
         if env_val and env_val != default_val:
-            sensitive_values.add(env_val)
+            sensitive_values.append(env_val)
 
-    # Create a list of sensitive values sorted by length (descending) to replace longer strings first
-    sorted_sensitive_values = sorted(sensitive_values, key=len, reverse=True)
+    # Sort by length (descending) to replace longer strings first
+    sensitive_values.sort(key=len, reverse=True)
 
     sanitized_message = message
 
     # Replace sensitive values with masked versions
     # But exclude values that look like S3 endpoint URLs to avoid corrupting them
-    for value in sorted_sensitive_values:
+    for value in sensitive_values:
         if value:  # Only replace non-empty values
             # Skip masking if the value looks like an S3 endpoint URL
             if value.startswith(('http://', 'https://')):
@@ -62,10 +62,7 @@ def sanitize_log_message(message: str) -> str:
                 visible_chars = max(3, len(value) // 4)  # Show at least 3 chars
                 masked_value = f"{value[:visible_chars]}{'*' * (len(value) - 2 * visible_chars)}{value[-visible_chars:]}"
 
-            # Use regex to avoid partial replacements within other sensitive values
-            # This prevents issues where one sensitive value is contained in another
-            escaped_value = re.escape(value)
-            sanitized_message = re.sub(escaped_value, masked_value, sanitized_message)
+            sanitized_message = sanitized_message.replace(value, masked_value)
 
     # Also mask potential URLs that might contain sensitive information
     # But only if they are not default values or S3 endpoint URLs
@@ -86,9 +83,7 @@ def sanitize_log_message(message: str) -> str:
     for url in urls:
         # Only mask URLs that are not default values and not S3 endpoint URLs
         if url not in default_urls and not any(sensitive_val in url for sensitive_val in sensitive_values if sensitive_val.startswith(('http://', 'https://'))):
-            # Use regex to avoid partial replacements within other sensitive values
-            escaped_url = re.escape(url)
-            sanitized_message = re.sub(escaped_url, mask_url(url), sanitized_message)
+            sanitized_message = sanitized_message.replace(url, mask_url(url))
 
     return sanitized_message
 
