@@ -98,6 +98,9 @@ The following categories are kept by default (all others are removed):
 - Великобритания | United Kingdom
 - Канада | Canada
 - США | USA
+- Германия | Germany
+- Индия | India
+- Казахстан | Қазақстан
 - Кино
 - Спорт
 
