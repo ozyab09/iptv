@@ -87,6 +87,9 @@ class TestConfig(unittest.TestCase):
             "Великобритания | United Kingdom",
             "Канада | Canada",
             "США | USA",
+            "Германия | Germany",
+            "Индия | India",
+            "Казахстан | Қазақстан",
             "Кино"
         ]
 
