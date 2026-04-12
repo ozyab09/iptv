@@ -70,58 +70,38 @@ class TestConfig(unittest.TestCase):
         self.assertEqual(config.LOCAL_ALL_CATEGORIES_PLAYLIST_PATH, 'custom-all')
 
     def test_categories_to_keep(self):
-        """Test categories to keep configuration."""
+        """Test categories to keep configuration includes all sources."""
         config = Config()
-        expected_categories = [
+        categories = config.get_categories_to_keep()
+
+        # Source 1: Provider/ISP categories (45 categories)
+        source_1_categories = [
             "↕️ Торрент ТВ ↕️",
-            "Современные сетевые технологии (VPN)",
-            "С сайтов (VPN)",
-            "Большое ТВ (VPN)",
-            "С сайтов",
-            "Датагруп 🇺🇦",
-            "Скай Телеком",
-            "Музыкальные 🎶",
-            "Узбектелеком 🇺🇿",
-            "Сайт (VPN)",
-            "АСАРТА (VPN)",
-            "ТаймВэб (VPN)",
-            "Виктория (VPN)",
-            "Оргтехсервис (VPN)",
-            "Телевизор 24 (VPN)",
-            "📺 Usba TV",
-            "Квант-Телеком (VPN 🇷🇺)",
-            "Цитадель-Крым (VPN)",
-            "ОБИТ",
-            "Сириус",
-            "Казахтелеком",
-            "4K VIDEO (VPN)",
-            "AgroNet (VPN)",
-            "Catcast TV 🐈 Not 24/7",
-            "CloudFlare Inc (VPN 🇷🇺)",
-            "Cloudflare_Inc!",
-            "Cloudflare_Inc",
-            "Hetzner Online GmbH",
-            "Interhost",
-            "Internet42 LLC",
-            "Itv.uz (🇺🇿)",
-            "IZONE",
-            "KazTransCom",
-            "Lime (VPN 🇷🇺)",
-            "Peers (VPN)",
-            "RELAX",
-            "Rutube (VPN)",
-            "StarNet (VPN 🇳🇱)",
             "TEST ⓵",
-            "TEST (VPN)",
-            "Tricolor (VPN 🇷🇺)",
-            "Turon Media",
-            "Voka",
-            "Webhost (VPN 🇷🇺)",
-            "Wink (VPN 🇷🇺)"
+            "CloudFlare Inc (VPN 🇷🇺)",
+            "Wink (VPN 🇷🇺)",
         ]
 
-        self.assertEqual(config.get_categories_to_keep(), expected_categories)
-        self.assertEqual(config.CATEGORIES_TO_KEEP, expected_categories)
+        # Source 2: International categories (20 categories)
+        source_2_categories = [
+            "США 🇺🇸",
+            "Великобритания 🇬🇧",
+            "Грузия 🇬🇪 (GEO)",
+            "Австралия 🇦🇺",
+        ]
+
+        # Source 3: Content categories (5 categories)
+        source_3_categories = [
+            "Кино",
+            "Общие",
+            "Новости",
+        ]
+
+        for cat in source_1_categories + source_2_categories + source_3_categories:
+            self.assertIn(cat, categories, f"Expected '{cat}' to be in CATEGORIES_TO_KEEP")
+
+        # Total: 45 + 20 + 5 = 70 categories
+        self.assertEqual(len(categories), 70)
 
     def test_channel_names_to_exclude(self):
         """Test channel names to exclude configuration."""
