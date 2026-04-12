@@ -191,16 +191,21 @@ def extract_channel_info_from_playlist(playlist_content: str) -> tuple:
     """
     Extract channel IDs and their categories from M3U playlist content.
 
+    Also extracts channel names (display names after the comma in EXTINF lines)
+    to use as a fallback matching mechanism when tvg-id is not present.
+
     Args:
         playlist_content (str): M3U playlist content
 
     Returns:
-        tuple: (Set of unique channel IDs, Dict mapping channel IDs to categories)
+        tuple: (Set of unique channel IDs, Dict mapping channel IDs to categories, Set of channel names)
     """
     logger.info("Extracting channel IDs and categories from playlist")
 
     channel_ids = set()
     channel_categories = {}  # Maps channel ID to its category
+    channel_names = set()    # Channel display names for fallback matching
+    channel_name_categories = {}  # Maps channel name to its category
     lines = playlist_content.split('\n')
 
     for line in lines:
@@ -211,38 +216,79 @@ def extract_channel_info_from_playlist(playlist_content: str) -> tuple:
             # Look for group-title attribute in the EXTINF line (category)
             group_title_match = re.search(r'group-title="([^"]*)"', line, re.IGNORECASE)
 
+            category = group_title_match.group(1).strip() if group_title_match else None
+
             if tvg_id_match:
                 tvg_id = tvg_id_match.group(1).strip()
                 if tvg_id:  # Only add non-empty IDs
                     channel_ids.add(tvg_id)
 
                     # Store the category if available
-                    if group_title_match:
-                        category = group_title_match.group(1).strip()
+                    if category:
                         channel_categories[tvg_id] = category
 
-    logger.info(f"Found {len(channel_ids)} unique channel IDs in playlist")
-    return channel_ids, channel_categories
+            # Extract channel name (after the last comma)
+            parts = line.rsplit(',', 1)
+            if len(parts) > 1:
+                channel_name = parts[1].strip()
+                if channel_name:
+                    channel_names.add(channel_name)
+                    if category:
+                        channel_name_categories[channel_name] = category
+
+    logger.info(f"Found {len(channel_ids)} unique channel IDs and {len(channel_names)} channel names in playlist")
+    return channel_ids, channel_categories, channel_names, channel_name_categories
 
 
-def filter_epg_content(epg_content: str, channel_ids: Set[str], channel_categories: dict = None, excluded_categories: List[str] = None, excluded_channel_ids: List[str] = None) -> str:
+def build_epg_name_to_id_map(epg_content: str) -> dict:
+    """
+    Build a mapping from EPG display names to channel IDs.
+
+    Args:
+        epg_content (str): EPG XML content
+
+    Returns:
+        dict: Mapping from lowercase display-name to channel ID
+    """
+    import xml.etree.ElementTree as ET
+
+    name_to_id = {}
+    try:
+        root = ET.fromstring(epg_content)
+        for channel_elem in root.findall('channel'):
+            channel_id = channel_elem.get('id', '')
+            for display_name in channel_elem.findall('display-name'):
+                if display_name.text:
+                    name_to_id[display_name.text.strip().lower()] = channel_id
+    except ET.ParseError as e:
+        logger.error(f"Error parsing EPG XML for name-to-id map: {e}")
+
+    logger.info(f"Built EPG name-to-id map with {len(name_to_id)} entries")
+    return name_to_id
+
+
+def filter_epg_content(epg_content: str, channel_ids: Set[str], channel_categories: dict = None, excluded_categories: List[str] = None, excluded_channel_ids: List[str] = None, channel_names: Set[str] = None, channel_name_categories: dict = None) -> str:
     """
     Filter EPG content to keep only programs for specified channel IDs, excluding channels from specified categories and specific channel IDs.
 
+    Also matches channels by display-name when tvg-id is not present in the M3U playlist.
+
     Args:
         epg_content (str): Original EPG XML content
-        channel_ids (Set[str]): Set of channel IDs to keep in the EPG
+        channel_ids (Set[str]): Set of channel IDs (tvg-id) to keep in the EPG
         channel_categories (dict): Dictionary mapping channel IDs to their categories
         excluded_categories (List[str]): List of categories to exclude from EPG
         excluded_channel_ids (List[str]): List of specific channel IDs to exclude from EPG
+        channel_names (Set[str]): Set of channel display names from M3U (fallback matching)
+        channel_name_categories (dict): Dictionary mapping channel names to their categories
 
     Returns:
         str: Filtered EPG XML content
     """
-    logger.info(f"Filtering EPG content for {len(channel_ids)} initial channels")
+    logger.info(f"Filtering EPG content for {len(channel_ids)} channel IDs and {len(channel_names) if channel_names else 0} channel names")
 
-    if not channel_ids:
-        logger.warning("No channel IDs provided, returning empty EPG")
+    if not channel_ids and not channel_names:
+        logger.warning("No channel IDs or names provided, returning empty EPG")
         return '<?xml version="1.0" encoding="UTF-8"?><tv></tv>'
 
     # Initialize excluded categories if not provided
@@ -263,6 +309,21 @@ def filter_epg_content(epg_content: str, channel_ids: Set[str], channel_categori
     # Convert excluded channel IDs to a set for faster lookup
     excluded_channel_ids_set = set(excluded_channel_ids) if excluded_channel_ids else set()
 
+    # Normalize channel names for comparison (lowercase, stripped)
+    channel_names_normalized = set()
+    channel_names_lower_map = {}  # lowercase name -> original name
+    if channel_names:
+        for name in channel_names:
+            normalized = name.strip().lower()
+            channel_names_normalized.add(normalized)
+            channel_names_lower_map[normalized] = name
+
+    # Normalize channel name categories
+    channel_name_categories_lower = {}
+    if channel_name_categories:
+        for name, cat in channel_name_categories.items():
+            channel_name_categories_lower[name.strip().lower()] = cat
+
     try:
         # Pre-build sets for faster lookup
         channel_ids_set = set(channel_ids)
@@ -273,20 +334,50 @@ def filter_epg_content(epg_content: str, channel_ids: Set[str], channel_categori
         # Create a new root element for the filtered content
         filtered_root = ET.Element("tv")
 
+        # Build a lookup map: epg_channel_id -> list of display-names (lowercase)
+        epg_channel_display_names = {}
+        for channel_elem in root.findall('channel'):
+            epg_id = channel_elem.get('id', '')
+            display_names = []
+            for dn in channel_elem.findall('display-name'):
+                if dn.text:
+                    display_names.append(dn.text.strip().lower())
+            epg_channel_display_names[epg_id] = display_names
+
         # Create sets to track which channels we've seen and need to keep
         channels_to_keep = set()
+        channels_to_keep_by_name = {}  # epg_channel_id -> category (matched by name)
 
         # First pass: identify which channels have programs we need to keep
         for program_elem in root.findall('programme'):
             channel_ref = program_elem.get('channel', '')
-            if channel_ref in channel_ids_set:
+            matched_by_id = channel_ref in channel_ids_set
+
+            # Check if this EPG channel matches any of our M3U channel names
+            matched_by_name = False
+            matched_category = None
+
+            if not matched_by_id and channel_names_normalized:
+                display_names = epg_channel_display_names.get(channel_ref, [])
+                for dn in display_names:
+                    if dn in channel_names_normalized:
+                        matched_by_name = True
+                        matched_category = channel_name_categories_lower.get(dn)
+                        break
+
+            if matched_by_id or matched_by_name:
+                # Determine the category for exclusion check
+                category_to_check = None
+                if matched_by_id and channel_categories:
+                    category_to_check = channel_categories.get(channel_ref)
+                elif matched_by_name:
+                    category_to_check = matched_category
+
                 # Check if this channel belongs to an excluded category
                 should_exclude_by_category = False
-                if channel_categories and excluded_categories_lower:
-                    if channel_ref in channel_categories:
-                        channel_category = channel_categories[channel_ref].lower()
-                        if channel_category in excluded_categories_lower:
-                            should_exclude_by_category = True
+                if category_to_check and excluded_categories_lower:
+                    if category_to_check.lower() in excluded_categories_lower:
+                        should_exclude_by_category = True
 
                 # Check if this channel ID is in the excluded list
                 should_exclude_by_id = channel_ref in excluded_channel_ids_set
@@ -294,9 +385,11 @@ def filter_epg_content(epg_content: str, channel_ids: Set[str], channel_categori
                 # Only add to channels_to_keep if not in excluded category AND not in excluded channel IDs
                 if not should_exclude_by_category and not should_exclude_by_id:
                     channels_to_keep.add(channel_ref)
+                    if matched_by_name:
+                        channels_to_keep_by_name[channel_ref] = matched_category
 
         # Log the actual number of channels after filtering by categories and specific IDs
-        logger.info(f"EPG content filtering: {len(channels_to_keep)} channels after category and ID exclusions (from {len(channel_ids)} initial channels)")
+        logger.info(f"EPG content filtering: {len(channels_to_keep)} channels after category and ID exclusions (from {len(channel_ids)} tvg-id + {len(channel_names) if channel_names else 0} names)")
 
         # Second pass: copy channels that we need
         for channel_elem in root.findall('channel'):

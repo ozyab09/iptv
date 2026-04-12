@@ -30,7 +30,7 @@ http://example.com/4
 #EXTINF:-1 group-title="No ID",Channel 5
 http://example.com/5"""
 
-        channel_ids, channel_categories = extract_channel_info_from_playlist(playlist_content)
+        channel_ids, channel_categories, channel_names, channel_name_categories = extract_channel_info_from_playlist(playlist_content)
 
         self.assertIn("channel1", channel_ids)
         self.assertIn("channel2", channel_ids)
@@ -43,6 +43,18 @@ http://example.com/5"""
         self.assertEqual(channel_categories.get("channel2"), "News")
         self.assertEqual(channel_categories.get("channel3"), "Развлекательные")
         self.assertIsNone(channel_categories.get("channel4"))  # Channel without ID should not be in mapping
+
+        # Check that channel names are extracted
+        self.assertIn("Channel 1", channel_names)
+        self.assertIn("Channel 2", channel_names)
+        self.assertIn("Channel 3", channel_names)
+        self.assertIn("Channel 4", channel_names)
+        self.assertIn("Channel 5", channel_names)
+        self.assertEqual(len(channel_names), 5)
+
+        # Check channel name categories
+        self.assertEqual(channel_name_categories.get("Channel 1"), "Россия | Russia")
+        self.assertEqual(channel_name_categories.get("Channel 5"), "No ID")
 
     def test_filter_epg_content_basic(self):
         """Test filtering EPG content to keep only specified channels."""
@@ -168,8 +180,9 @@ http://example.com/5"""
         # Get the source code of the filter function
         source = inspect.getsource(filter_epg_content)
 
-        # Check that the code logs the initial and final channel counts
-        self.assertIn("initial channels", source)
+        # Check that the code logs the initial and final channel counts with tvg-id and names
+        self.assertIn("tvg-id", source)
+        self.assertIn("names", source)
         self.assertIn("channels after category and ID exclusions", source)
 
     def test_filter_epg_content_excludes_specific_channel_ids(self):
@@ -218,6 +231,99 @@ http://example.com/5"""
 
         programme_channels = {prog.get('channel') for prog in programmes}
         self.assertEqual(programme_channels, {"channel1", "channel3"})
+
+    def test_filter_epg_content_matches_by_channel_name(self):
+        """Test that EPG filtering matches channels by display-name when tvg-id is not present."""
+        epg_content = """<?xml version="1.0" encoding="UTF-8"?>
+<tv>
+  <channel id="epg100">
+    <display-name lang="ru">Первый канал</display-name>
+  </channel>
+  <channel id="epg200">
+    <display-name lang="ru">Россия 1</display-name>
+  </channel>
+  <channel id="epg300">
+    <display-name lang="ru">НТВ</display-name>
+  </channel>
+  <programme start="20230101000000 +0000" stop="20230101010000 +0000" channel="epg100">
+    <title lang="ru">Show 1</title>
+  </programme>
+  <programme start="20230101000000 +0000" stop="20230101010000 +0000" channel="epg200">
+    <title lang="ru">Show 2</title>
+  </programme>
+  <programme start="20230101000000 +0000" stop="20230101010000 +0000" channel="epg300">
+    <title lang="ru">Show 3</title>
+  </programme>
+</tv>"""
+
+        # No tvg-id, only channel names from M3U
+        channel_ids = set()
+        channel_categories = {}
+        channel_names = {"Первый канал", "НТВ"}
+        channel_name_categories = {"Первый канал": "Общие", "НТВ": "Общие"}
+
+        filtered_content = filter_epg_content(epg_content, channel_ids, channel_categories, [], [], channel_names, channel_name_categories)
+
+        # Parse the result to verify it's valid XML
+        root = ET.fromstring(filtered_content)
+
+        # Check that only epg100 (Первый канал) and epg300 (НТВ) remain
+        channels = root.findall('channel')
+        self.assertEqual(len(channels), 2)
+
+        channel_ids_in_result = {ch.get('id') for ch in channels}
+        self.assertEqual(channel_ids_in_result, {"epg100", "epg300"})
+
+        programmes = root.findall('programme')
+        self.assertEqual(len(programmes), 2)
+
+        programme_channels = {prog.get('channel') for prog in programmes}
+        self.assertEqual(programme_channels, {"epg100", "epg300"})
+
+    def test_filter_epg_content_matches_by_name_and_id_combined(self):
+        """Test that EPG filtering matches channels by both tvg-id and channel name."""
+        epg_content = """<?xml version="1.0" encoding="UTF-8"?>
+<tv>
+  <channel id="tvg-id-1">
+    <display-name lang="ru">Channel By ID</display-name>
+  </channel>
+  <channel id="epg-no-tvg">
+    <display-name lang="ru">Channel By Name</display-name>
+  </channel>
+  <channel id="epg-excluded">
+    <display-name lang="ru">Excluded Channel</display-name>
+  </channel>
+  <programme start="20230101000000 +0000" stop="20230101010000 +0000" channel="tvg-id-1">
+    <title lang="ru">Show 1</title>
+  </programme>
+  <programme start="20230101000000 +0000" stop="20230101010000 +0000" channel="epg-no-tvg">
+    <title lang="ru">Show 2</title>
+  </programme>
+  <programme start="20230101000000 +0000" stop="20230101010000 +0000" channel="epg-excluded">
+    <title lang="ru">Show 3</title>
+  </programme>
+</tv>"""
+
+        # Mix of tvg-id and channel names
+        channel_ids = {"tvg-id-1"}
+        channel_categories = {}
+        channel_names = {"Channel By Name"}
+        channel_name_categories = {"Channel By Name": "Общие"}
+
+        filtered_content = filter_epg_content(epg_content, channel_ids, channel_categories, [], [], channel_names, channel_name_categories)
+
+        # Parse the result to verify it's valid XML
+        root = ET.fromstring(filtered_content)
+
+        # Check that tvg-id-1 and epg-no-tvg remain (matched by id and name respectively)
+        channels = root.findall('channel')
+        self.assertEqual(len(channels), 2)
+
+        channel_ids_in_result = {ch.get('id') for ch in channels}
+        self.assertEqual(channel_ids_in_result, {"tvg-id-1", "epg-no-tvg"})
+
+        programmes = root.findall('programme')
+        self.assertEqual(len(programmes), 2)
 
 
 if __name__ == '__main__':

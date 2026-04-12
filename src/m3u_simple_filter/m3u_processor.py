@@ -283,6 +283,51 @@ def count_channels(content: str) -> int:
     return channel_count
 
 
+def parse_channel_entries(lines: List[str]) -> Tuple[List[str], List[Tuple[str, List[str]]]]:
+    """
+    Parse M3U lines into header lines and channel entries.
+
+    Each channel entry consists of an EXTINF line and a list of subsequent lines
+    (e.g., #EXTVLCOPT lines) up to and including the URL line.
+
+    Args:
+        lines (List[str]): List of M3U lines
+
+    Returns:
+        Tuple[List[str], List[Tuple[str, List[str]]]]: (header_lines, channel_entries)
+            where each channel_entry is (extinf_line, [extra_lines..., url_line])
+    """
+    header_lines: List[str] = []
+    channel_entries: List[Tuple[str, List[str]]] = []
+
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+
+        if line.strip().startswith('#EXTINF:'):
+            # This is an EXTINF line, collect subsequent lines until we find the URL
+            extinf_line = line
+            entry_lines: List[str] = []
+            i += 1
+
+            # Collect all lines until we find a URL line (starts with http)
+            while i < len(lines):
+                next_line = lines[i]
+                entry_lines.append(next_line)
+                if next_line.strip().startswith('http'):
+                    i += 1
+                    break
+                i += 1
+
+            channel_entries.append((extinf_line, entry_lines))
+        else:
+            # This is not an EXTINF line, add it to headers
+            header_lines.append(line)
+            i += 1
+
+    return header_lines, channel_entries
+
+
 def apply_hd_preference(content: str) -> str:
     """
     Apply HD preference rule: if both HD and non-HD versions exist, keep only HD
@@ -296,30 +341,11 @@ def apply_hd_preference(content: str) -> str:
     lines = content.split('\n')
 
     # Separate header lines from channel entries
-    header_lines: List[str] = []
-    channel_entries: List[Tuple[str, str]] = []
-
-    i = 0
-    while i < len(lines):
-        line = lines[i]
-
-        if line.strip().startswith('#EXTINF:'):
-            # This is an EXTINF line, get the corresponding URL
-            if i + 1 < len(lines):
-                url_line = lines[i + 1]
-                channel_entries.append((line, url_line))
-                i += 2  # Skip the next line since we've already processed it
-            else:
-                header_lines.append(line)
-                i += 1
-        else:
-            # This is not an EXTINF line, add it to headers
-            header_lines.append(line)
-            i += 1
+    header_lines, channel_entries = parse_channel_entries(lines)
 
     # Group channels by base name (without 'hd' suffix)
     channel_groups: dict = {}
-    for extinf_line, url_line in channel_entries:
+    for extinf_line, entry_lines in channel_entries:
         parts = extinf_line.rsplit(',', 1)
         if len(parts) > 1:
             channel_name = parts[1].strip()
@@ -327,10 +353,10 @@ def apply_hd_preference(content: str) -> str:
 
             if base_name not in channel_groups:
                 channel_groups[base_name] = []
-            channel_groups[base_name].append((extinf_line, url_line))
+            channel_groups[base_name].append((extinf_line, entry_lines))
 
     # For each group, decide which version(s) to keep
-    final_channel_entries: List[Tuple[str, str]] = []
+    final_channel_entries: List[Tuple[str, List[str]]] = []
     for base_name, variants in channel_groups.items():
         # Check if any variant is an HD version
         has_hd_version = any(extinf.rsplit(',', 1)[1].strip().lower().endswith(' hd')
@@ -338,12 +364,12 @@ def apply_hd_preference(content: str) -> str:
 
         if has_hd_version:
             # Get only HD versions
-            hd_variants = [(extinf, url) for extinf, url in variants
+            hd_variants = [(extinf, el) for extinf, el in variants
                            if extinf.rsplit(',', 1)[1].strip().lower().endswith(' hd')]
             final_channel_entries.extend(hd_variants)
 
             # Log which non-HD versions were removed
-            non_hd_variants = [(extinf, url) for extinf, url in variants
+            non_hd_variants = [(extinf, el) for extinf, el in variants
                                if not extinf.rsplit(',', 1)[1].strip().lower().endswith(' hd')]
             if non_hd_variants:
                 logger.debug(f"Removed non-HD versions for '{base_name}': {[ext.rsplit(',', 1)[1].strip() for ext, _ in non_hd_variants]}")
@@ -353,9 +379,9 @@ def apply_hd_preference(content: str) -> str:
 
     # Reconstruct the final content
     final_lines = header_lines
-    for extinf_line, url_line in final_channel_entries:
+    for extinf_line, entry_lines in final_channel_entries:
         final_lines.append(extinf_line)
-        final_lines.append(url_line)
+        final_lines.extend(entry_lines)
 
     return '\n'.join(final_lines)
 
@@ -398,6 +424,48 @@ def normalize_channel_name_for_comparison(channel_name: str) -> str:
     return normalized
 
 
+def add_tvg_ids_to_playlist(content: str, epg_name_to_id_map: dict) -> str:
+    """
+    Add tvg-id attributes to M3U channels by matching channel names against EPG display names.
+
+    Only adds tvg-id to channels that don't already have one.
+
+    Args:
+        content (str): M3U playlist content
+        epg_name_to_id_map (dict): Mapping from lowercase display-name to channel ID
+
+    Returns:
+        str: M3U content with tvg-id attributes added
+    """
+    lines = content.split('\n')
+    added_count = 0
+
+    for i, line in enumerate(lines):
+        if line.strip().startswith('#EXTINF:'):
+            # Check if this line already has a tvg-id
+            if re.search(r'tvg-id="[^"]*"', line, re.IGNORECASE):
+                continue
+
+            # Extract channel name (after the last comma)
+            parts = line.rsplit(',', 1)
+            if len(parts) > 1:
+                channel_name = parts[1].strip()
+                normalized_name = channel_name.lower()
+
+                # Look up in EPG map
+                if normalized_name in epg_name_to_id_map:
+                    tvg_id = epg_name_to_id_map[normalized_name]
+                    # Insert tvg-id before the channel name (before the last comma)
+                    extinf_part = parts[0]
+                    lines[i] = f'{extinf_part} tvg-id="{tvg_id}",{parts[1]}'
+                    added_count += 1
+
+    if added_count > 0:
+        logger.info(f"Added tvg-id to {added_count} channels")
+
+    return '\n'.join(lines)
+
+
 def remove_duplicates_and_apply_hd_preference(content: str) -> str:
     """
     Remove duplicate channels based on tvg-id and channel name, keeping only the best version.
@@ -411,32 +479,13 @@ def remove_duplicates_and_apply_hd_preference(content: str) -> str:
     """
     lines = content.split('\n')
 
-    # Separate header lines from channel entries
-    header_lines: List[str] = []
-    channel_entries: List[Tuple[str, str]] = []
-
-    i = 0
-    while i < len(lines):
-        line = lines[i]
-
-        if line.strip().startswith('#EXTINF:'):
-            # This is an EXTINF line, get the corresponding URL
-            if i + 1 < len(lines):
-                url_line = lines[i + 1]
-                channel_entries.append((line, url_line))
-                i += 2  # Skip the next line since we've already processed it
-            else:
-                header_lines.append(line)
-                i += 1
-        else:
-            # This is not an EXTINF line, add it to headers
-            header_lines.append(line)
-            i += 1
+    # Separate header lines from channel entries (handles #EXTVLCOPT lines)
+    header_lines, channel_entries = parse_channel_entries(lines)
 
     # Create a dictionary to track unique channels based on normalized name
     unique_channels: dict = {}
 
-    for extinf_line, url_line in channel_entries:
+    for extinf_line, entry_lines in channel_entries:
         # Extract tvg-id from the EXTINF line
         tvg_id_match = re.search(r'tvg-id="([^"]*)"', extinf_line)
         tvg_id = tvg_id_match.group(1) if tvg_id_match else ""
@@ -460,22 +509,22 @@ def remove_duplicates_and_apply_hd_preference(content: str) -> str:
             unique_channels[key] = []
 
         # Add this variant to the list
-        unique_channels[key].append((extinf_line, url_line))
+        unique_channels[key].append((extinf_line, entry_lines))
 
     # For each group of channels, decide which version(s) to keep
-    final_channel_entries: List[Tuple[str, str]] = []
+    final_channel_entries: List[Tuple[str, List[str]]] = []
     for key, variants in unique_channels.items():
         # Separate HD and non-HD versions
         hd_variants = []
         non_hd_variants = []
 
-        for extinf, url in variants:
+        for extinf, entry_lines in variants:
             channel_name = extinf.rsplit(',', 1)[1].strip()
             # Check if the channel name contains ' hd' anywhere (case insensitive)
             if ' hd' in channel_name.lower():
-                hd_variants.append((extinf, url))
+                hd_variants.append((extinf, entry_lines))
             else:
-                non_hd_variants.append((extinf, url))
+                non_hd_variants.append((extinf, entry_lines))
 
         # If both HD and non-HD versions exist, only consider HD versions
         if hd_variants and non_hd_variants:
@@ -506,8 +555,8 @@ def remove_duplicates_and_apply_hd_preference(content: str) -> str:
 
     # Reconstruct the final content
     final_lines = header_lines
-    for extinf_line, url_line in final_channel_entries:
+    for extinf_line, entry_lines in final_channel_entries:
         final_lines.append(extinf_line)
-        final_lines.append(url_line)
+        final_lines.extend(entry_lines)
 
     return '\n'.join(final_lines)

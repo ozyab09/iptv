@@ -13,8 +13,8 @@ import logging
 from typing import NoReturn
 
 from .config import Config
-from .m3u_processor import download_m3u, filter_m3u_content
-from .epg_processor import download_epg, extract_channel_info_from_playlist, filter_epg_content, save_filtered_epg_locally
+from .epg_processor import download_epg, extract_channel_info_from_playlist, filter_epg_content, save_filtered_epg_locally, build_epg_name_to_id_map
+from .m3u_processor import download_m3u, filter_m3u_content, add_tvg_ids_to_playlist
 from .s3_operations import upload_to_s3, upload_file_to_s3
 from .utils import SanitizedLogger
 
@@ -115,15 +115,25 @@ def main() -> int:
             # Download original EPG
             epg_content = download_epg(epg_url, config)
 
-            # Extract channel IDs and categories from the filtered M3U playlist
-            channel_ids, channel_categories = extract_channel_info_from_playlist(filtered_content)
+            # Build EPG name-to-ID map for adding tvg-id to playlist
+            epg_name_to_id_map = build_epg_name_to_id_map(epg_content)
+
+            # Add tvg-id to filtered playlist channels that don't have one
+            filtered_content = add_tvg_ids_to_playlist(filtered_content, epg_name_to_id_map)
+
+            # Re-save the updated playlist
+            save_filtered_m3u_locally(filtered_content, config.LOCAL_FILTERED_PLAYLIST_PATH, config)
+
+            # Extract channel IDs, categories, and channel names from the updated M3U playlist (now with tvg-id)
+            channel_ids, channel_categories, channel_names, channel_name_categories = extract_channel_info_from_playlist(filtered_content)
 
             # Get excluded categories and channel IDs from config
             excluded_categories = config.get_epg_excluded_categories()
             excluded_channel_ids = config.get_epg_excluded_channel_ids()
 
             # Filter EPG content to only include programs for channels in the filtered playlist, excluding specified categories and channel IDs
-            filtered_epg_content = filter_epg_content(epg_content, channel_ids, channel_categories, excluded_categories, excluded_channel_ids)
+            # Uses both tvg-id matching and channel name fallback matching
+            filtered_epg_content = filter_epg_content(epg_content, channel_ids, channel_categories, excluded_categories, excluded_channel_ids, channel_names, channel_name_categories)
 
             # Save filtered EPG locally
             save_filtered_epg_locally(filtered_epg_content, config.LOCAL_FILTERED_EPG_PATH, config)
