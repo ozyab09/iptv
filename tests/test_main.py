@@ -80,7 +80,8 @@ class TestMain(unittest.TestCase):
     @patch('src.m3u_simple_filter.main.filter_m3u_content')
     @patch('src.m3u_simple_filter.main.upload_to_s3')
     @patch('src.m3u_simple_filter.main.upload_file_to_s3')
-    def test_main_normal_mode(self, mock_upload_file, mock_upload, mock_filter, mock_download_epg, mock_download):
+    @patch('src.m3u_simple_filter.main.upload_archive_to_s3')
+    def test_main_normal_mode(self, mock_upload_archive, mock_upload_file, mock_upload, mock_filter, mock_download_epg, mock_download):
         """Test main function in normal mode."""
         # Ensure dry-run mode is disabled
         if 'DRY_RUN' in os.environ:
@@ -105,6 +106,8 @@ class TestMain(unittest.TestCase):
         mock_download.assert_called_once()
         mock_download_epg.assert_called_once()
         mock_filter.assert_called_once()
+        # upload_archive_to_s3 should be called 3 times (filtered playlist, all categories, EPG)
+        self.assertEqual(mock_upload_archive.call_count, 3)
         # upload_to_s3 should be called twice (for filtered playlist and all categories playlist)
         self.assertEqual(mock_upload.call_count, 2)
         # upload_file_to_s3 should be called once (for filtered EPG)

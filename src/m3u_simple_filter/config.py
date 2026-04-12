@@ -209,6 +209,12 @@ class Config:
         """Output directory for saving processed files"""
         return os.getenv('OUTPUT_DIR', 'output')
 
+    @property
+    def CATEGORIES_FILE_PATH(self) -> Optional[str]:
+        """Path to categories.txt file for channel metadata (group-title, tvg-id)"""
+        path = os.getenv('CATEGORIES_FILE_PATH', '')
+        return path if path else None
+
     @classmethod
     def get_categories_to_keep(cls) -> List[str]:
         """Return the list of categories to keep"""
@@ -245,9 +251,17 @@ class Config:
         config_instance = cls()
         errors = []
 
-        # Validate M3U source URL
-        if not config_instance.M3U_SOURCE_URL or not config_instance.M3U_SOURCE_URL.startswith(('http://', 'https://')):
-            errors.append("M3U_SOURCE_URL must be a valid HTTP/HTTPS URL")
+        # Validate M3U source URL (can be comma-separated)
+        if not config_instance.M3U_SOURCE_URL:
+            errors.append("M3U_SOURCE_URL must be specified")
+        else:
+            m3u_urls = [url.strip() for url in config_instance.M3U_SOURCE_URL.split(',') if url.strip()]
+            if not m3u_urls:
+                errors.append("M3U_SOURCE_URL must contain at least one valid HTTP/HTTPS URL")
+            else:
+                for url in m3u_urls:
+                    if not url.startswith(('http://', 'https://')):
+                        errors.append(f"M3U_SOURCE_URL contains invalid URL: {url}")
 
         # Validate EPG source URL
         if not config_instance.EPG_SOURCE_URL or not config_instance.EPG_SOURCE_URL.startswith(('http://', 'https://')):
