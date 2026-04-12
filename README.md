@@ -31,7 +31,10 @@ CATEGORIES_TO_KEEP: List[str] = [
 ]
 ```
 
-The current default categories (45 categories, excluding `🔺 INFO 🔺`) are:
+The current default categories (70 categories across 3 M3U sources, excluding `🔺 INFO 🔺`) are:
+
+<details>
+<summary>Source 1: Provider/ISP categories (45)</summary>
 
 - ↕️ Торрент ТВ ↕️
 - Современные сетевые технологии (VPN)
@@ -78,6 +81,45 @@ The current default categories (45 categories, excluding `🔺 INFO 🔺`) are:
 - Voka
 - Webhost (VPN 🇷🇺)
 - Wink (VPN 🇷🇺)
+
+</details>
+
+<details>
+<summary>Source 2: International categories (20)</summary>
+
+- Объединенные Арабские Эмираты 🇦🇪
+- Новая Зеландия 🇳🇿
+- Саудовская Аравия 🇸🇦
+- Северная Македония 🇲🇰
+- Доминиканская Республика 🇩🇴
+- Грузия 🇬🇪 (GEO)
+- Таджикистан 🇹🇯 (GEO)
+- США 🇺🇸
+- Ирак 🇮🇶
+- Алжир 🇩🇿
+- Греция 🇬🇷
+- Австрия 🇦🇹
+- Беларусь 🇧🇾
+- Австралия 🇦🇺
+- Афганистан 🇦🇫
+- Азербайджан 🇦🇿
+- Туркменистан 🇹🇲
+- Великобритания 🇬🇧
+- Шри-Ланка 🇱🇰
+- Коста-Рика 🇨🇷
+
+</details>
+
+<details>
+<summary>Source 3: Content categories (5)</summary>
+
+- Кино
+- Общие
+- Знания
+- Новости
+- Развлечение
+
+</details>
 
 ## 🚀 Features
 
