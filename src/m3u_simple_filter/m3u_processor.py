@@ -514,6 +514,14 @@ def remove_duplicates_and_apply_hd_preference(content: str) -> str:
     # For each group of channels, decide which version(s) to keep
     final_channel_entries: List[Tuple[str, List[str]]] = []
     for key, variants in unique_channels.items():
+        # Special case: keep all variants for configured channels (e.g., TLC)
+        channels_keep_all = [c.lower() for c in Config.get_channels_keep_all_variants()]
+        if key in channels_keep_all:
+            final_channel_entries.extend(variants)
+            if len(variants) > 1:
+                logger.debug(f"Keeping all {len(variants)} variants for '{key}' (configured to keep all): {[ext.rsplit(',', 1)[1].strip() for ext, _ in variants]}")
+            continue
+
         # Separate HD and non-HD versions
         hd_variants = []
         non_hd_variants = []
