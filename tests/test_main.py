@@ -20,6 +20,13 @@ class TestMain(unittest.TestCase):
             'AWS_ACCESS_KEY_ID': os.environ.get('AWS_ACCESS_KEY_ID'),
             'AWS_SECRET_ACCESS_KEY': os.environ.get('AWS_SECRET_ACCESS_KEY'),
             'S3_BUCKET_NAME': os.environ.get('S3_BUCKET_NAME'),
+            'M3U_SOURCE_URL': os.environ.get('M3U_SOURCE_URL'),
+            'EPG_SOURCE_URL': os.environ.get('EPG_SOURCE_URL'),
+            'S3_OBJECT_KEY': os.environ.get('S3_OBJECT_KEY'),
+            'S3_ENDPOINT_URL': os.environ.get('S3_ENDPOINT_URL'),
+            'S3_REGION': os.environ.get('S3_REGION'),
+            'S3_EPG_KEY': os.environ.get('S3_EPG_KEY'),
+            'LOCAL_EPG_PATH': os.environ.get('LOCAL_EPG_PATH'),
         }
 
     def tearDown(self):
@@ -57,6 +64,10 @@ class TestMain(unittest.TestCase):
         # Set dry-run mode
         os.environ['DRY_RUN'] = 'true'
 
+        # Set a single M3U URL for this test to ensure predictable mock behavior
+        os.environ['M3U_SOURCE_URL'] = 'https://example.com/playlist.m3u'
+        os.environ['EPG_SOURCE_URL'] = 'https://example.com/epg.xml.gz'
+
         # Mock return values
         mock_download.return_value = "#EXTM3U\n#EXTINF:-1,Test Channel\nhttp://example.com"
         mock_download_epg.return_value = "<?xml version='1.0'?><tv></tv>"
@@ -67,8 +78,8 @@ class TestMain(unittest.TestCase):
         # Verify the function executed successfully
         self.assertEqual(result, 0)
 
-        # Verify download and filter were called
-        mock_download.assert_called_once()
+        # Verify download and filter were called (once per M3U URL)
+        mock_download.assert_called_once_with('https://example.com/playlist.m3u')
         mock_download_epg.assert_called_once()
         mock_filter.assert_called_once()
 
@@ -92,6 +103,10 @@ class TestMain(unittest.TestCase):
         os.environ['AWS_SECRET_ACCESS_KEY'] = 'test_secret_key'
         os.environ['S3_BUCKET_NAME'] = 'test-bucket'
 
+        # Set a single M3U URL for this test to ensure predictable mock behavior
+        os.environ['M3U_SOURCE_URL'] = 'https://example.com/playlist.m3u'
+        os.environ['EPG_SOURCE_URL'] = 'https://example.com/epg.xml.gz'
+
         # Mock return values
         mock_download.return_value = "#EXTM3U\n#EXTINF:-1,Test Channel\nhttp://example.com"
         mock_download_epg.return_value = "<?xml version='1.0'?><tv><channel id='test'><display-name>Test</display-name></channel></tv>"
@@ -102,8 +117,8 @@ class TestMain(unittest.TestCase):
         # Verify the function executed successfully
         self.assertEqual(result, 0)
 
-        # Verify download, filter, and upload were called
-        mock_download.assert_called_once()
+        # Verify download, filter, and upload were called (once per M3U URL)
+        mock_download.assert_called_once_with('https://example.com/playlist.m3u')
         mock_download_epg.assert_called_once()
         mock_filter.assert_called_once()
         # upload_archive_to_s3 should be called 3 times (filtered playlist, all categories, EPG)

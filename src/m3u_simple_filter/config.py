@@ -102,6 +102,7 @@ class Config:
 
     # Categories to keep (for initial config file creation)
     CATEGORIES_TO_KEEP: List[str] = [
+        # Source 1: Dimonovich/TV/FREE/TV — Provider/ISP categories
         "↕️ Торрент ТВ ↕️",
         "Современные сетевые технологии (VPN)",
         "С сайтов (VPN)",
@@ -146,7 +147,36 @@ class Config:
         "Turon Media",
         "Voka",
         "Webhost (VPN 🇷🇺)",
-        "Wink (VPN 🇷🇺)"
+        "Wink (VPN 🇷🇺)",
+
+        # Source 2: Dimonovich/TV/FREE/ZARUB — International categories
+        "Объединенные Арабские Эмираты 🇦🇪",
+        "Новая Зеландия 🇳🇿",
+        "Саудовская Аравия 🇸🇦",
+        "Северная Македония 🇲🇰",
+        "Доминиканская Республика 🇩🇴",
+        "Грузия 🇬🇪 (GEO)",
+        "Таджикистан 🇹🇯 (GEO)",
+        "США 🇺🇸",
+        "Ирак 🇮🇶",
+        "Алжир 🇩🇿",
+        "Греция 🇬🇷",
+        "Австрия 🇦🇹",
+        "Беларусь 🇧🇾",
+        "Австралия 🇦🇺",
+        "Афганистан 🇦🇫",
+        "Азербайджан 🇦🇿",
+        "Туркменистан 🇹🇲",
+        "Великобритания 🇬🇧",
+        "Шри-Ланка 🇱🇰",
+        "Коста-Рика 🇨🇷",
+
+        # Source 3: loganettv — Content categories
+        "Кино",
+        "Общие",
+        "Знания",
+        "Новости",
+        "Развлечение",
     ]
 
     # Channel names to exclude (for initial config file creation)
