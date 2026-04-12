@@ -424,6 +424,108 @@ def normalize_channel_name_for_comparison(channel_name: str) -> str:
     return normalized
 
 
+def parse_categories_file(file_path: str) -> dict:
+    """
+    Parse categories.txt file to build a mapping of channel names to their
+    group-title and tvg-id.
+
+    Args:
+        file_path (str): Path to categories.txt file
+
+    Returns:
+        dict: Mapping from lowercase channel name to {'group': str, 'tvg_id': str}
+    """
+    mapping = {}
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+
+        pattern = r'group-title="([^"]+)".*?tvg-id="([^"]+)".+?,(.+)'
+        for m in re.finditer(pattern, content):
+            group = m.group(1)
+            tvg_id = m.group(2)
+            name = m.group(3).strip()
+            name_lower = name.lower()
+            if name_lower not in mapping:
+                mapping[name_lower] = {'group': group, 'tvg_id': tvg_id}
+
+        logger.info(f"Parsed categories file: {len(mapping)} unique channel mappings")
+    except FileNotFoundError:
+        logger.warning(f"Categories file not found: {file_path}")
+    except Exception as e:
+        logger.warning(f"Error parsing categories file: {e}")
+
+    return mapping
+
+
+def apply_channel_metadata(content: str, categories_mapping: dict) -> str:
+    """
+    Apply group-title and tvg-id from categories mapping to M3U channels.
+
+    For channels that match the mapping:
+    - Replace existing group-title with the one from mapping
+    - Add tvg-id if not present or replace existing one
+
+    Args:
+        content (str): M3U playlist content
+        categories_mapping (dict): Mapping from lowercase channel name to metadata
+
+    Returns:
+        str: M3U content with updated metadata
+    """
+    lines = content.split('\n')
+    updated_group = 0
+    updated_tvg_id = 0
+
+    for i, line in enumerate(lines):
+        if line.strip().startswith('#EXTINF:'):
+            # Extract channel name (after the last comma)
+            parts = line.rsplit(',', 1)
+            if len(parts) < 2:
+                continue
+
+            channel_name = parts[1].strip()
+            name_lower = channel_name.lower()
+
+            if name_lower not in categories_mapping:
+                continue
+
+            meta = categories_mapping[name_lower]
+            extinf_part = parts[0]
+
+            # Update or add group-title
+            if 'group-title=' in extinf_part.lower():
+                extinf_part = re.sub(
+                    r'group-title="[^"]*"',
+                    f'group-title="{meta["group"]}"',
+                    extinf_part,
+                    flags=re.IGNORECASE
+                )
+                updated_group += 1
+            else:
+                extinf_part += f' group-title="{meta["group"]}"'
+                updated_group += 1
+
+            # Update or add tvg-id
+            if 'tvg-id=' in extinf_part.lower():
+                extinf_part = re.sub(
+                    r'tvg-id="[^"]*"',
+                    f'tvg-id="{meta["tvg_id"]}"',
+                    extinf_part,
+                    flags=re.IGNORECASE
+                )
+            else:
+                extinf_part += f' tvg-id="{meta["tvg_id"]}"'
+            updated_tvg_id += 1
+
+            lines[i] = f'{extinf_part},{parts[1]}'
+
+    if updated_group > 0 or updated_tvg_id > 0:
+        logger.info(f"Updated metadata: {updated_group} group-title, {updated_tvg_id} tvg-id from categories file")
+
+    return '\n'.join(lines)
+
+
 def add_tvg_ids_to_playlist(content: str, epg_name_to_id_map: dict) -> str:
     """
     Add tvg-id attributes to M3U channels by matching channel names against EPG display names.

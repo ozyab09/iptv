@@ -7,9 +7,11 @@ This module handles uploading files to S3-compatible storage.
 import os
 import logging
 import time
+import gzip
 import boto3
 from typing import Any
 from botocore.exceptions import ClientError
+from datetime import datetime, timezone
 
 from .utils import SanitizedLogger
 
@@ -134,4 +136,72 @@ def upload_file_to_s3(file_path: str, bucket_name: str, object_key: str, config:
         raise
     except Exception as e:
         logger.error(f"Unexpected error uploading file to S3-compatible storage: {e}")
+        raise
+
+
+def upload_archive_to_s3(content: str, bucket_name: str, base_object_key: str, config: Any, content_type: str = 'application/x-mpegurl') -> str:
+    """
+    Upload a gzipped archive of the content to S3 under archive/YYYY-MM-DD/HH-MM-SS.gz
+
+    Args:
+        content (str): Content to archive and upload
+        bucket_name (str): S3 bucket name
+        base_object_key (str): Base object key (used for archive naming, e.g. 'playlist.m3u')
+        config: Configuration object with S3 settings
+        content_type (str): Content type for the archived object
+
+    Returns:
+        str: The archive object key path
+    """
+    # Generate archive path: archive/YYYY-MM-DD/HH-MM-SS.gz
+    now = datetime.now(timezone.utc)
+    date_str = now.strftime('%Y-%m-%d')
+    time_str = now.strftime('%H-%M-%S')
+
+    # Extract base name without extension for the archive
+    base_name = os.path.splitext(os.path.basename(base_object_key))[0]
+    archive_key = f"archive/{date_str}/{time_str}_{base_name}.gz"
+
+    logger.info(f"Uploading archive to S3: s3://{bucket_name}/{archive_key}")
+
+    # Validate S3 endpoint URL before initializing client
+    endpoint_url = config.S3_COMPATIBLE_CONFIG['endpoint_url']
+    if not endpoint_url or not isinstance(endpoint_url, str) or not endpoint_url.startswith(('http://', 'https://')):
+        raise ValueError(f"Invalid S3 endpoint URL: {endpoint_url}. Must be a valid HTTP/HTTPS URL.")
+
+    # Initialize S3 client
+    s3_client = boto3.client(
+        's3',
+        endpoint_url=endpoint_url,
+        aws_access_key_id=os.environ.get('AWS_ACCESS_KEY_ID'),
+        aws_secret_access_key=os.environ.get('AWS_SECRET_ACCESS_KEY'),
+        region_name=config.S3_COMPATIBLE_CONFIG['region']
+    )
+
+    try:
+        # Compress content to gz format
+        compressed_content = gzip.compress(content.encode('utf-8'))
+        original_size_kb = len(content.encode('utf-8')) / 1024
+        compressed_size_kb = len(compressed_content) / 1024
+
+        # Upload the archive
+        s3_client.put_object(
+            Bucket=bucket_name,
+            Key=archive_key,
+            Body=compressed_content,
+            ContentType='application/gzip',
+            Metadata={
+                'uploaded-by': 'm3u-simple-filter-script',
+                'upload-timestamp': str(int(time.time())),
+                'original-size-kb': f'{original_size_kb:.2f}',
+                'compressed-size-kb': f'{compressed_size_kb:.2f}'
+            }
+        )
+        logger.info(f"Archive upload completed: {archive_key} ({compressed_size_kb:.2f} KB, original: {original_size_kb:.2f} KB)")
+        return archive_key
+    except ClientError as e:
+        logger.error(f"Error uploading archive to S3: {e}")
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error uploading archive to S3: {e}")
         raise

@@ -83,26 +83,13 @@ iptv/
 
 ## Inverse Filter Categories
 
-The following categories are kept by default (all others are removed):
-- Россия | Russia
-- Общие
-- Развлекательные
-- Новостные
-- Познавательные
-- Детские
-- Музыка
-- Региональные
-- Европа | Europe
-- Австралия | Australia
-- Беларусь | Беларускія
-- Великобритания | United Kingdom
-- Канада | Canada
-- США | USA
-- Германия | Germany
-- Индия | India
-- Казахстан | Қазақстан
-- Кино
-- Спорт
+The following 70 categories across 3 M3U sources are kept by default (all others are removed, excluding `🔺 INFO 🔺`):
+
+**Source 1: Provider/ISP (45 categories):** `↕️ Торрент ТВ ↕️`, `Современные сетевые технологии (VPN)`, `С сайтов (VPN)`, `Большое ТВ (VPN)`, `С сайтов`, `Датагруп 🇺🇦`, `Скай Телеком`, `Музыкальные 🎶`, `Узбектелеком 🇺🇿`, `Сайт (VPN)`, `АСАРТА (VPN)`, `ТаймВэб (VPN)`, `Виктория (VPN)`, `Оргтехсервис (VPN)`, `Телевизор 24 (VPN)`, `📺 Usba TV`, `Квант-Телеком (VPN 🇷🇺)`, `Цитадель-Крым (VPN)`, `ОБИТ`, `Сириус`, `Казахтелеком`, `4K VIDEO (VPN)`, `AgroNet (VPN)`, `Catcast TV 🐈 Not 24/7`, `CloudFlare Inc (VPN 🇷🇺)`, `Cloudflare_Inc!`, `Cloudflare_Inc`, `Hetzner Online GmbH`, `Interhost`, `Internet42 LLC`, `Itv.uz (🇺🇿)`, `IZONE`, `KazTransCom`, `Lime (VPN 🇷🇺)`, `Peers (VPN)`, `RELAX`, `Rutube (VPN)`, `StarNet (VPN 🇳🇱)`, `TEST ⓵`, `TEST (VPN)`, `Tricolor (VPN 🇷🇺)`, `Turon Media`, `Voka`, `Webhost (VPN 🇷🇺)`, `Wink (VPN 🇷🇺)`
+
+**Source 2: International (20 categories):** `Объединенные Арабские Эмираты 🇦🇪`, `Новая Зеландия 🇳🇿`, `Саудовская Аравия 🇸🇦`, `Северная Македония 🇲🇰`, `Доминиканская Республика 🇩🇴`, `Грузия 🇬🇪 (GEO)`, `Таджикистан 🇹🇯 (GEO)`, `США 🇺🇸`, `Ирак 🇮🇶`, `Алжир 🇩🇿`, `Греция 🇬🇷`, `Австрия 🇦🇹`, `Беларусь 🇧🇾`, `Австралия 🇦🇺`, `Афганистан 🇦🇫`, `Азербайджан 🇦🇿`, `Туркменистан 🇹🇲`, `Великобритания 🇬🇧`, `Шри-Ланка 🇱🇰`, `Коста-Рика 🇨🇷`
+
+**Source 3: Content (5 categories):** `Кино`, `Общие`, `Знания`, `Новости`, `Развлечение`
 
 These can be modified in the `CATEGORIES_TO_KEEP` list in `m3u_simple_filter/config.py`.
 
