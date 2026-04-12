@@ -459,10 +459,10 @@ def filter_epg_content(epg_content: str, channel_ids: Set[str], channel_categori
                         stop_datetime = datetime(stop_year, stop_month, stop_day, stop_hour, stop_min, stop_sec)
 
                         # Apply time-based filtering:
-                        # Include programs that either:
-                        # 1. Haven't ended yet (stop time >= current time), OR
-                        # 2. Will start within the configured retention period (start time <= retention days from now)
-                        if stop_datetime >= current_time or start_datetime <= retention_period_later:
+                        # Include programs that:
+                        # 1. Ended recently or are still airing (stop >= one_hour_ago), AND
+                        # 2. Start within the configured retention period (start <= retention days from now)
+                        if stop_datetime >= one_hour_ago and start_datetime <= retention_period_later:
                             # Create a new program element with only essential elements
                             new_program_elem = ET.Element("programme")
                             # Copy attributes
