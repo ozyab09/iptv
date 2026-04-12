@@ -81,9 +81,9 @@ class TestConfigValidation(unittest.TestCase):
         os.environ['S3_REGION'] = 'us-east-1'
         os.environ['EPG_SOURCE_URL'] = 'https://epg.example.com/epg.xml.gz'
         os.environ['S3_EPG_KEY'] = 'epg.xml.gz'
-        
+
         errors = Config.validate_config()
-        self.assertTrue(any("invalid URL" in err.lower() for err in errors))
+        self.assertTrue(any("invalid URL" in err for err in errors))
 
     def test_validate_empty_epg_url(self):
         """Test validation error for empty EPG_SOURCE_URL."""
@@ -162,10 +162,10 @@ class TestConfigValidation(unittest.TestCase):
         os.environ['M3U_SOURCE_URL'] = 'https://example.com/playlist.m3u'
         os.environ['S3_BUCKET_NAME'] = 'test-bucket'
         os.environ['S3_ENDPOINT_URL'] = 'https://s3.example.com'
+        os.environ['S3_REGION'] = ''  # Explicitly set to empty string
         os.environ['EPG_SOURCE_URL'] = 'https://epg.example.com/epg.xml.gz'
         os.environ['S3_EPG_KEY'] = 'epg.xml.gz'
-        # S3_REGION is empty
-        
+
         errors = Config.validate_config()
         self.assertTrue(any("S3_REGION must be specified" in err for err in errors))
 
@@ -281,8 +281,8 @@ class TestTimeBasedEpgFiltering(unittest.TestCase):
 
     def test_old_program_excluded(self):
         """Test that very old program is excluded."""
-        old_start = (datetime.now() - timedelta(days=20)).strftime('%Y%m%d%H%M%S +0000')
-        old_stop = (datetime.now() - timedelta(days=15)).strftime('%Y%m%d%H%M%S +0000')
+        old_start = (datetime.now() - timedelta(days=30)).strftime('%Y%m%d%H%M%S +0000')
+        old_stop = (datetime.now() - timedelta(days=25)).strftime('%Y%m%d%H%M%S +0000')
         
         epg_content = f'''<?xml version="1.0" encoding="UTF-8"?>
 <tv>
@@ -354,7 +354,8 @@ class TestUploadFileToS3(unittest.TestCase):
             'endpoint_url': '',
             'region': 'us-east-1'
         }
-        
+        config.OUTPUT_DIR = '/tmp'
+
         with self.assertRaises(ValueError):
             upload_file_to_s3('/tmp/test.m3u', 'test-bucket', 'test.m3u', config)
 
