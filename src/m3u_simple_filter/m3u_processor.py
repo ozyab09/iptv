@@ -12,7 +12,7 @@ from urllib.request import urlopen
 from urllib.error import URLError
 
 from .config import Config
-from .utils import SanitizedLogger
+from .utils import SanitizedLogger, retry
 
 
 # Configure logging
@@ -23,6 +23,7 @@ logging.basicConfig(
 logger = SanitizedLogger(logging.getLogger(__name__))
 
 
+@retry(max_attempts=3, delay=2.0, backoff=2.0, exceptions=(URLError, ConnectionError, TimeoutError))
 def download_m3u(url: str) -> str:
     """
     Download M3U file from the provided URL with security checks
@@ -397,8 +398,6 @@ def normalize_channel_name_for_comparison(channel_name: str) -> str:
     Returns:
         str: Normalized channel name for comparison
     """
-    import re
-
     # Convert to lowercase for case-insensitive comparison
     normalized = channel_name.lower()
 

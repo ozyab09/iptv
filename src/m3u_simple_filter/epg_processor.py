@@ -12,12 +12,13 @@ from xml.dom import minidom
 from typing import Set, List
 from urllib.request import urlopen
 from urllib.error import URLError
+from urllib.parse import urlparse
 from io import BytesIO
 import gzip
 import zipfile
 
 from .config import Config
-from .utils import SanitizedLogger
+from .utils import SanitizedLogger, retry
 
 
 # Configure logging
@@ -55,6 +56,7 @@ def copy_element_with_children(element):
     return new_element
 
 
+@retry(max_attempts=3, delay=2.0, backoff=2.0, exceptions=(URLError, ConnectionError, TimeoutError))
 def download_epg(url: str, config=None) -> str:
     """
     Download EPG file from the provided URL with security checks
@@ -101,12 +103,9 @@ def download_epg(url: str, config=None) -> str:
 
         # Create output directory if it doesn't exist
         output_dir = config.OUTPUT_DIR
-        import os
         os.makedirs(output_dir, exist_ok=True)
 
         # Save the original downloaded content to a file in the output directory
-        import tempfile
-        from urllib.parse import urlparse
         parsed_url = urlparse(url)
         filename = os.path.basename(parsed_url.path)
         if not filename:
@@ -250,8 +249,6 @@ def build_epg_name_to_id_map(epg_content: str) -> dict:
     Returns:
         dict: Mapping from lowercase display-name to channel ID
     """
-    import xml.etree.ElementTree as ET
-
     name_to_id = {}
     try:
         root = ET.fromstring(epg_content)
@@ -293,13 +290,11 @@ def filter_epg_content(epg_content: str, channel_ids: Set[str], channel_categori
 
     # Initialize excluded categories if not provided
     if excluded_categories is None:
-        from .config import Config
         config_obj = Config()
         excluded_categories = config_obj.get_epg_excluded_categories()
 
     # Initialize excluded channel IDs if not provided
     if excluded_channel_ids is None:
-        from .config import Config
         config_obj = Config()
         excluded_channel_ids = config_obj.get_epg_excluded_channel_ids()
 
@@ -429,14 +424,12 @@ def filter_epg_content(epg_content: str, channel_ids: Set[str], channel_categori
 
         # Third pass: copy programs for channels we're keeping, with time-based filtering
         from datetime import datetime, timedelta
-        import re
 
         # Calculate time thresholds
         current_time = datetime.now()
         one_hour_ago = current_time - timedelta(hours=1)
 
         # Use retention days from config
-        from .config import Config
         config_obj = Config()
         retention_days = config_obj.EPG_RETENTION_DAYS
         retention_period_later = current_time + timedelta(days=retention_days)
@@ -510,7 +503,7 @@ def filter_epg_content(epg_content: str, channel_ids: Set[str], channel_categori
 
                     # Copy child elements (keeping all elements including icons, descriptions, ratings, and categories)
                     for child in program_elem:
-                            # Recursively copy the entire element with all sub-elements and attributes
+                        # Recursively copy the entire element with all sub-elements and attributes
                         new_child = copy_element_with_children(child)
                         new_program_elem.append(new_child)
 
@@ -548,9 +541,6 @@ def save_filtered_epg_locally(content: str, filename: str, config=None) -> None:
         filename (str): Filename to save to
         config: Configuration object with output directory setting
     """
-    import os
-    from .config import Config
-
     # Use config if provided, otherwise create a new instance
     if config is None:
         config = Config()
@@ -563,7 +553,6 @@ def save_filtered_epg_locally(content: str, filename: str, config=None) -> None:
     filepath = os.path.join(output_dir, filename)
 
     if filename.endswith('.gz'):
-        import gzip
         # Compress content and save to .gz file
         # Encode the string content to bytes before compressing
         content_bytes = content.encode('utf-8')
