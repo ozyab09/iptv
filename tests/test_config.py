@@ -138,6 +138,14 @@ class TestConfig(unittest.TestCase):
         self.assertEqual(config.get_channel_names_to_exclude(), expected_exclusions)
         self.assertEqual(config.CHANNEL_NAMES_TO_EXCLUDE, expected_exclusions)
 
+    def test_channels_keep_all_variants(self):
+        """Test channels to keep all variants configuration."""
+        config = Config()
+        expected = ["tlc"]
+
+        self.assertEqual(config.get_channels_keep_all_variants(), expected)
+        self.assertEqual(config.CHANNELS_KEEP_ALL_VARIANTS, expected)
+
     def test_epg_retention_days_default(self):
         """Test that EPG retention days defaults to 10."""
         config = Config()

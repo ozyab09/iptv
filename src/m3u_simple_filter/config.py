@@ -159,6 +159,12 @@ class Config:
         "Sports"
     ]
 
+    # Channels to keep all variants (no deduplication applied)
+    # Use lowercase channel names (matched against normalized name)
+    CHANNELS_KEEP_ALL_VARIANTS: List[str] = [
+        "tlc"
+    ]
+
     # Categories for which EPG should NOT be saved (for initial config file creation)
     EPG_EXCLUDED_CATEGORIES: List[str] = [
         "Кино"  # Exclude EPG for movie channels
@@ -212,6 +218,11 @@ class Config:
     def get_channel_names_to_exclude(cls) -> List[str]:
         """Return the list of channel names to exclude"""
         return cls.CHANNEL_NAMES_TO_EXCLUDE
+
+    @classmethod
+    def get_channels_keep_all_variants(cls) -> List[str]:
+        """Return the list of channels to keep all variants (no deduplication)"""
+        return cls.CHANNELS_KEEP_ALL_VARIANTS
 
     @classmethod
     def get_epg_excluded_categories(cls) -> List[str]:
