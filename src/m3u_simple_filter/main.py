@@ -36,7 +36,6 @@ def save_filtered_m3u_locally(content: str, filename: str, config=None) -> None:
         filename (str): Filename to save to
         config: Configuration object with output directory setting
     """
-    import os
     from .config import Config
 
     # Use config if provided, otherwise create a new instance
@@ -109,14 +108,29 @@ def main() -> int:
             channel_names_to_exclude = config.get_channel_names_to_exclude()
 
             # Construct the custom EPG URL based on S3 configuration
-            # Extract the host part from the endpoint URL properly
+            # Support both virtual-hosted-style (bucket.endpoint.com) and path-style (endpoint.com/bucket) URLs
             endpoint_url = config.S3_ENDPOINT_URL
-            if '://' in endpoint_url:
-                host_part = endpoint_url.split('://', 1)[1]  # Take everything after the protocol
-            else:
-                host_part = endpoint_url  # Assume it's just the host if no protocol
+            bucket_name = config.S3_DEFAULT_BUCKET_NAME
+            epg_key = config.S3_EPG_KEY
 
-            custom_epg_url = f"https://{config.S3_DEFAULT_BUCKET_NAME}.{host_part}/{config.S3_EPG_KEY}"
+            try:
+                from urllib.parse import urlparse, urlunparse
+                parsed_endpoint = urlparse(endpoint_url)
+
+                # Check if endpoint uses path-style (has a path that could be a bucket name)
+                # Path-style: https://s3.amazonaws.com/bucket/key
+                # Virtual-hosted: https://bucket.s3.amazonaws.com/key
+                if parsed_endpoint.path and parsed_endpoint.path != '/':
+                    # Path-style URL: append bucket and key to path
+                    custom_epg_url = f"{parsed_endpoint.scheme}://{parsed_endpoint.netloc}{parsed_endpoint.path.rstrip('/')}/{bucket_name}/{epg_key}"
+                else:
+                    # Virtual-hosted-style URL: prepend bucket to host
+                    custom_epg_url = f"{parsed_endpoint.scheme}://{bucket_name}.{parsed_endpoint.netloc}/{epg_key}"
+            except Exception as e:
+                # Fallback to virtual-hosted-style if URL parsing fails
+                logger.warning(f"Could not parse endpoint URL: {e}, using virtual-hosted-style")
+                host_part = endpoint_url.split('://', 1)[1] if '://' in endpoint_url else endpoint_url
+                custom_epg_url = f"https://{bucket_name}.{host_part}/{epg_key}"
             filtered_content = filter_m3u_content(m3u_content, categories_to_keep, channel_names_to_exclude, custom_epg_url)
             all_filtered_parts.append(filtered_content)
 
@@ -197,8 +211,6 @@ def main() -> int:
             save_filtered_epg_locally(filtered_epg_content, config.LOCAL_FILTERED_EPG_PATH, config)
 
             if not dry_run:
-                # Upload archive of filtered EPG before main upload
-                upload_archive_to_s3(filtered_epg_content, s3_bucket, s3_epg_key, config, content_type='application/gzip')
                 # Upload the compressed EPG file to S3
                 upload_file_to_s3(config.LOCAL_FILTERED_EPG_PATH, s3_bucket, s3_epg_key, config, content_type='application/gzip')
 

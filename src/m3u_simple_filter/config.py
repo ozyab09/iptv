@@ -15,13 +15,13 @@ class Config:
 
     @property
     def M3U_SOURCE_URL(self) -> str:
-        """M3U source URL from environment variable or default"""
-        return os.getenv('M3U_SOURCE_URL', 'https://your-provider.com/playlist.m3u')
+        """M3U source URL from environment variable or empty string"""
+        return os.getenv('M3U_SOURCE_URL', '')
 
     @property
     def S3_DEFAULT_BUCKET_NAME(self) -> str:
-        """S3 default bucket name from environment variable or default"""
-        return os.getenv('S3_BUCKET_NAME', 'your-bucket-name')
+        """S3 default bucket name from environment variable or empty string"""
+        return os.getenv('S3_BUCKET_NAME', '')
 
     @property
     def S3_FILTERED_PLAYLIST_KEY(self) -> str:
@@ -35,8 +35,8 @@ class Config:
 
     @property
     def S3_ENDPOINT_URL(self) -> str:
-        """S3 endpoint URL from environment variable or default"""
-        return os.getenv('S3_ENDPOINT_URL', 'https://s3.amazonaws.com')
+        """S3 endpoint URL from environment variable or empty string"""
+        return os.getenv('S3_ENDPOINT_URL', '')
 
     @property
     def S3_REGION(self) -> str:
@@ -77,13 +77,13 @@ class Config:
 
     @property
     def EPG_SOURCE_URL(self) -> str:
-        """EPG source URL from environment variable or default"""
-        return os.getenv('EPG_SOURCE_URL', 'https://your-epg-provider.com/epg.xml.gz')
+        """EPG source URL from environment variable or empty string"""
+        return os.getenv('EPG_SOURCE_URL', '')
 
     @property
     def S3_EPG_KEY(self) -> str:
-        """S3 EPG key from environment variable or default"""
-        return os.getenv('S3_EPG_KEY', 'epg.xml.gz')
+        """S3 EPG key from environment variable or empty string"""
+        return os.getenv('S3_EPG_KEY', '')
 
     @property
     def LOCAL_EPG_PATH(self) -> str:
@@ -281,11 +281,17 @@ class Config:
         config_instance = cls()
         errors = []
 
+        # Placeholder patterns that indicate unset configuration
+        placeholder_patterns = ['your-', 'your_provider', 'your-epg-provider']
+
         # Validate M3U source URL (can be comma-separated)
-        if not config_instance.M3U_SOURCE_URL:
+        m3u_url = config_instance.M3U_SOURCE_URL
+        if not m3u_url:
             errors.append("M3U_SOURCE_URL must be specified")
+        elif any(pattern in m3u_url.lower() for pattern in placeholder_patterns):
+            errors.append("M3U_SOURCE_URL appears to be a placeholder. Please set a valid URL")
         else:
-            m3u_urls = [url.strip() for url in config_instance.M3U_SOURCE_URL.split(',') if url.strip()]
+            m3u_urls = [url.strip() for url in m3u_url.split(',') if url.strip()]
             if not m3u_urls:
                 errors.append("M3U_SOURCE_URL must contain at least one valid HTTP/HTTPS URL")
             else:
@@ -294,31 +300,46 @@ class Config:
                         errors.append(f"M3U_SOURCE_URL contains invalid URL: {url}")
 
         # Validate EPG source URL
-        if not config_instance.EPG_SOURCE_URL or not config_instance.EPG_SOURCE_URL.startswith(('http://', 'https://')):
+        epg_url = config_instance.EPG_SOURCE_URL
+        if not epg_url:
+            errors.append("EPG_SOURCE_URL must be specified")
+        elif any(pattern in epg_url.lower() for pattern in placeholder_patterns):
+            errors.append("EPG_SOURCE_URL appears to be a placeholder. Please set a valid URL")
+        elif not epg_url.startswith(('http://', 'https://')):
             errors.append("EPG_SOURCE_URL must be a valid HTTP/HTTPS URL")
 
         # Validate S3 bucket name
-        if not config_instance.S3_DEFAULT_BUCKET_NAME or len(config_instance.S3_DEFAULT_BUCKET_NAME) < 3 or len(config_instance.S3_DEFAULT_BUCKET_NAME) > 63:
-            errors.append("S3_DEFAULT_BUCKET_NAME must be between 3 and 63 characters")
+        bucket_name = config_instance.S3_DEFAULT_BUCKET_NAME
+        if not bucket_name:
+            errors.append("S3_BUCKET_NAME must be specified")
+        elif len(bucket_name) < 3 or len(bucket_name) > 63:
+            errors.append("S3_BUCKET_NAME must be between 3 and 63 characters")
 
         # Validate S3 object key
-        if not config_instance.S3_FILTERED_PLAYLIST_KEY or '..' in config_instance.S3_FILTERED_PLAYLIST_KEY or config_instance.S3_FILTERED_PLAYLIST_KEY.startswith('/'):
+        playlist_key = config_instance.S3_FILTERED_PLAYLIST_KEY
+        if not playlist_key or '..' in playlist_key or playlist_key.startswith('/'):
             errors.append("S3_OBJECT_KEY must not contain '..' or start with '/'")
 
         # Validate S3 EPG key
-        if not config_instance.S3_EPG_KEY or '..' in config_instance.S3_EPG_KEY or config_instance.S3_EPG_KEY.startswith('/'):
+        epg_key = config_instance.S3_EPG_KEY
+        if not epg_key or '..' in epg_key or epg_key.startswith('/'):
             errors.append("S3_EPG_KEY must not contain '..' or start with '/'")
 
         # Validate S3 endpoint URL
-        if not config_instance.S3_ENDPOINT_URL or not config_instance.S3_ENDPOINT_URL.startswith(('http://', 'https://')):
-            errors.append("S3_ENDPOINT_URL must be a valid HTTP/HTTPS URL")
-
-        # Additional validation to check for common malformed endpoint patterns
         endpoint_url = config_instance.S3_ENDPOINT_URL
-        if endpoint_url and len(endpoint_url) > 10:  # Basic length check
-            # Check if the URL looks like it has credentials embedded or is malformed
-            if '@' in endpoint_url.split('/')[2] if len(endpoint_url.split('/')) > 2 else False:
-                errors.append("S3_ENDPOINT_URL should not contain credentials in the URL")
+        if not endpoint_url:
+            errors.append("S3_ENDPOINT_URL must be specified")
+        elif not endpoint_url.startswith(('http://', 'https://')):
+            errors.append("S3_ENDPOINT_URL must be a valid HTTP/HTTPS URL")
+        else:
+            # Check if the URL looks like it has credentials embedded
+            try:
+                from urllib.parse import urlparse
+                parsed = urlparse(endpoint_url)
+                if '@' in parsed.netloc:
+                    errors.append("S3_ENDPOINT_URL should not contain credentials in the URL")
+            except Exception:
+                pass  # If URL parsing fails, skip this validation
 
         # Validate S3 region
         if not config_instance.S3_REGION:

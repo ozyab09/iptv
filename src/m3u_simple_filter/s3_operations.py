@@ -8,12 +8,14 @@ import os
 import logging
 import time
 import gzip
+import uuid
 import boto3
 from typing import Any
 from botocore.exceptions import ClientError
+from botocore.exceptions import BotoCoreError
 from datetime import datetime, timezone
 
-from .utils import SanitizedLogger
+from .utils import SanitizedLogger, retry
 
 
 # Configure logging
@@ -24,6 +26,7 @@ logging.basicConfig(
 logger = SanitizedLogger(logging.getLogger(__name__))
 
 
+@retry(max_attempts=3, delay=2.0, backoff=2.0, exceptions=(ClientError, BotoCoreError, ConnectionError))
 def upload_to_s3(content: str, bucket_name: str, object_key: str, config: Any, content_type: str = 'application/x-mpegurl') -> None:
     """
     Upload content to S3-compatible storage
@@ -74,6 +77,7 @@ def upload_to_s3(content: str, bucket_name: str, object_key: str, config: Any, c
         raise
 
 
+@retry(max_attempts=3, delay=2.0, backoff=2.0, exceptions=(ClientError, BotoCoreError, ConnectionError, FileNotFoundError))
 def upload_file_to_s3(file_path: str, bucket_name: str, object_key: str, config: Any, content_type: str = 'application/x-mpegurl') -> None:
     """
     Upload a local file to S3-compatible storage
@@ -85,7 +89,6 @@ def upload_file_to_s3(file_path: str, bucket_name: str, object_key: str, config:
         config: Configuration object with S3 settings
         content_type (str): Content type for the uploaded object (default: 'application/x-mpegurl')
     """
-    import os
     from .config import Config as ConfigClass
 
     # If config is available and file doesn't exist at the given path, try looking in output directory
@@ -139,6 +142,7 @@ def upload_file_to_s3(file_path: str, bucket_name: str, object_key: str, config:
         raise
 
 
+@retry(max_attempts=3, delay=2.0, backoff=2.0, exceptions=(ClientError, BotoCoreError, ConnectionError))
 def upload_archive_to_s3(content: str, bucket_name: str, base_object_key: str, config: Any, content_type: str = 'application/x-mpegurl') -> str:
     """
     Upload a gzipped archive of the content to S3 under archive/YYYY-MM-DD/HH-MM-SS.gz
@@ -153,14 +157,15 @@ def upload_archive_to_s3(content: str, bucket_name: str, base_object_key: str, c
     Returns:
         str: The archive object key path
     """
-    # Generate archive path: archive/YYYY-MM-DD/HH-MM-SS.gz
+    # Generate archive path: archive/YYYY-MM-DD/HH-MM-SS-UUID_base.gz
     now = datetime.now(timezone.utc)
     date_str = now.strftime('%Y-%m-%d')
     time_str = now.strftime('%H-%M-%S')
+    unique_id = str(uuid.uuid4())[:8]  # Short UUID to prevent collisions
 
     # Extract base name without extension for the archive
     base_name = os.path.splitext(os.path.basename(base_object_key))[0]
-    archive_key = f"archive/{date_str}/{time_str}_{base_name}.gz"
+    archive_key = f"archive/{date_str}/{time_str}-{unique_id}_{base_name}.gz"
 
     logger.info(f"Uploading archive to S3: s3://{bucket_name}/{archive_key}")
 
