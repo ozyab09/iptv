@@ -141,8 +141,9 @@ The issue should include:
 - **Root Cause**: Technical explanation of why it happened
 - **Impact**: What was affected
 
-### 2. Commit Changes
+### 2. Create Branch and Commit Changes
 ```bash
+git checkout -b <type-feature>
 git add <modified files>
 git commit -m "<type>: <descriptive message>
 

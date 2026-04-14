@@ -633,9 +633,20 @@ def remove_duplicates_and_apply_hd_preference(content: str) -> str:
         # Special case: keep all variants for configured channels (e.g., TLC)
         channels_keep_all = [c.lower() for c in Config.get_channels_keep_all_variants()]
         if key in channels_keep_all:
-            final_channel_entries.extend(variants)
-            if len(variants) > 1:
-                logger.debug(f"Keeping all {len(variants)} variants for '{key}' (configured to keep all): {[ext.rsplit(',', 1)[1].strip() for ext, _ in variants]}")
+            # Add numeric suffix to differentiate channels with same name
+            for idx, (extinf_line, entry_lines) in enumerate(variants, start=1):
+                # Extract channel name and add suffix
+                parts = extinf_line.rsplit(',', 1)
+                if len(parts) > 1:
+                    channel_name = parts[1].strip()
+                    new_channel_name = f"{channel_name} #{idx}"
+                    # Update the EXTINF line with new channel name
+                    new_extinf_line = f"{parts[0]},{new_channel_name}"
+                    final_channel_entries.append((new_extinf_line, entry_lines))
+                    logger.debug(f"Added suffix to channel '{channel_name}' -> '{new_channel_name}'")
+                else:
+                    final_channel_entries.append((extinf_line, entry_lines))
+            logger.info(f"Kept all {len(variants)} variants for '{key}' with numeric suffixes")
             continue
 
         # Separate HD and non-HD versions
