@@ -121,7 +121,7 @@ class TestConfig(unittest.TestCase):
     def test_channels_keep_all_variants(self):
         """Test channels to keep all variants configuration."""
         config = Config()
-        expected = ["tlc", "москва 24"]
+        expected = ["tlc", "москва 24", "москва-24"]
 
         self.assertEqual(config.get_channels_keep_all_variants(), expected)
         self.assertEqual(config.CHANNELS_KEEP_ALL_VARIANTS, expected)

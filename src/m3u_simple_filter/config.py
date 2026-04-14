@@ -192,8 +192,9 @@ class Config:
     # Channels to keep all variants (no deduplication applied)
     # Use lowercase channel names (matched against normalized name)
     CHANNELS_KEEP_ALL_VARIANTS: List[str] = [
-        "tlc", 
-        "москва 24"
+        "tlc",
+        "москва 24",
+        "москва-24"
     ]
 
     # Categories for which EPG should NOT be saved (for initial config file creation)
