@@ -126,3 +126,62 @@ python src/run_filter.py
 - Check logs for detailed information about the filtering process
 - The local filenames are derived from the S3_OBJECT_KEY environment variable
 - Only one "Filtering complete" message is shown with both line and channel counts
+
+## Workflow: Closing Issues with Code Fixes
+
+When the user says **"закрывай проблему"** (close the issue), follow this workflow:
+
+### 1. Create GitHub Issue
+```bash
+gh issue create --title "<descriptive title>" --body "<detailed description>"
+```
+
+The issue should include:
+- **Problem**: Clear description of what went wrong
+- **Root Cause**: Technical explanation of why it happened
+- **Impact**: What was affected
+
+### 2. Commit Changes
+```bash
+git add <modified files>
+git commit -m "<type>: <descriptive message>
+
+<blank line>
+
+<Detailed explanation of what was changed and why>
+<Reference to the issue being fixed>"
+```
+
+Commit message guidelines:
+- Use conventional commit prefixes: `fix:`, `feat:`, `docs:`, `refactor:`, `test:`, `chore:`
+- First line: concise summary (50 chars max)
+- Body: explain **why** not just **what**
+
+### 3. Push Branch and Create MR
+```bash
+git push origin <branch-name>
+gh pr create --title "<title>" --body "<description>" --base main
+```
+
+The PR body should include:
+- **Changes**: Bullet list of what was modified
+- **Problem Fixed**: Explanation of the bug
+- **Result**: What the fix achieves
+- Link to the issue with `Closes #<number>`
+
+### Example
+```bash
+gh issue create --title "Channel X excluded by filter Y" --body "## Problem..."
+git add src/module.py tests/test_module.py
+git commit -m "fix: preserve Channel X variants from filter Y
+
+- Exempt CHANNELS_KEEP_ALL_VARIANTS from number filter
+- Add channel variant to config
+- Update tests
+
+Fixes issue where Channel X was excluded..."
+git push origin fix-channel-x
+gh pr create --title "fix: preserve Channel X variants" --body "## Changes...
+
+Closes #49" --base main
+```
