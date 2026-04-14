@@ -6,9 +6,10 @@ This module handles downloading, parsing, and filtering M3U playlist files.
 
 import os
 import re
+import ssl
 import logging
 from typing import List, Tuple
-from urllib.request import urlopen
+from urllib.request import urlopen, Request
 from urllib.error import URLError
 
 from .config import Config
@@ -21,6 +22,11 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 logger = SanitizedLogger(logging.getLogger(__name__))
+
+# Create SSL context that doesn't verify certificates (for local development)
+_ssl_context = ssl.create_default_context()
+_ssl_context.check_hostname = False
+_ssl_context.verify_mode = ssl.CERT_NONE
 
 
 @retry(max_attempts=3, delay=2.0, backoff=2.0, exceptions=(URLError, ConnectionError, TimeoutError))
@@ -42,7 +48,9 @@ def download_m3u(url: str) -> str:
     logger.info(f"Downloading M3U file from: {url}")
 
     try:
-        response = urlopen(url)
+        # Create request object to pass SSL context
+        req = Request(url)
+        response = urlopen(req, context=_ssl_context)
 
         # Read content in chunks to prevent memory issues with large files
         content_chunks = []
@@ -211,9 +219,16 @@ def filter_m3u_content(content: str, categories_to_keep: List[str], channel_name
 
                     # Check for channels ending with numbers like "HD 50", "50", etc.
                     # Only match when there's a space before 2+ digit number (not single digits that might be part of channel names)
-                    if re.search(r'\s\d{2,}$', channel_name):
-                        include_entry = False
-                        logger.debug(f"Excluding channel ending with numbers: {channel_name} in line: {line[:100]}...")
+                    # Exception: channels in CHANNELS_KEEP_ALL_VARIANTS are exempt from this rule
+                    if include_entry and re.search(r'\s\d{2,}$', channel_name):
+                        # Check if this channel should keep all variants (exempt from number exclusion)
+                        channels_keep_all = [c.lower() for c in Config.get_channels_keep_all_variants()]
+                        normalized_channel = normalize_channel_name_for_comparison(channel_name)
+                        if normalized_channel not in channels_keep_all:
+                            include_entry = False
+                            logger.debug(f"Excluding channel ending with numbers: {channel_name} in line: {line[:100]}...")
+                        else:
+                            logger.debug(f"Keeping channel ending with numbers (in keep-all list): {channel_name}")
 
             if include_entry:
                 # Remove 'orig' suffix from the channel name

@@ -6,11 +6,12 @@ This module handles downloading, parsing, and filtering EPG (Electronic Program 
 
 import os
 import re
+import ssl
 import logging
 import xml.etree.ElementTree as ET
 from xml.dom import minidom
 from typing import Set, List
-from urllib.request import urlopen
+from urllib.request import urlopen, Request
 from urllib.error import URLError
 from urllib.parse import urlparse
 from io import BytesIO
@@ -18,6 +19,11 @@ import gzip
 import zipfile
 
 from .config import Config
+
+# Create SSL context that doesn't verify certificates (for local development)
+_ssl_context = ssl.create_default_context()
+_ssl_context.check_hostname = False
+_ssl_context.verify_mode = ssl.CERT_NONE
 from .utils import SanitizedLogger, retry
 
 
@@ -76,7 +82,9 @@ def download_epg(url: str, config=None) -> str:
     logger.info(f"Downloading EPG file from: {url}")
 
     try:
-        response = urlopen(url)
+        # Create request object to pass SSL context
+        req = Request(url)
+        response = urlopen(req, context=_ssl_context)
 
         # Read content in chunks to prevent memory issues with large files
         content_chunks = []
