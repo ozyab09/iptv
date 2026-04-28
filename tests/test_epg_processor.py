@@ -69,13 +69,13 @@ http://example.com/5"""
   <channel id="channel3">
     <display-name lang="en">Channel 3</display-name>
   </channel>
-  <programme start="20260415202013 +0000" stop="20260415212013 +0000" channel="channel1">
+  <programme start="20260428090000 +0000" stop="20260428100000 +0000" channel="channel1">
     <title lang="en">Show 1</title>
   </programme>
-  <programme start="20260415202013 +0000" stop="20260415212013 +0000" channel="channel2">
+  <programme start="20260428090000 +0000" stop="20260428100000 +0000" channel="channel2">
     <title lang="en">Show 2</title>
   </programme>
-  <programme start="20260415202013 +0000" stop="20260415212013 +0000" channel="channel3">
+  <programme start="20260428090000 +0000" stop="20260428100000 +0000" channel="channel3">
     <title lang="en">Show 3</title>
   </programme>
 </tv>"""
@@ -106,7 +106,7 @@ http://example.com/5"""
   <channel id="channel1">
     <display-name lang="en">Channel 1</display-name>
   </channel>
-  <programme start="20260415202013 +0000" stop="20260415212013 +0000" channel="channel1">
+  <programme start="20260428000000 +0000" stop="20260428010000 +0000" channel="channel1">
     <title lang="en">Show 1</title>
   </programme>
 </tv>"""
@@ -198,13 +198,13 @@ http://example.com/5"""
   <channel id="channel3">
     <display-name lang="en">Channel 3</display-name>
   </channel>
-  <programme start="20260415202013 +0000" stop="20260415212013 +0000" channel="channel1">
+  <programme start="20260428090000 +0000" stop="20260428100000 +0000" channel="channel1">
     <title lang="en">Show 1</title>
   </programme>
-  <programme start="20260415202013 +0000" stop="20260415212013 +0000" channel="channel2">
+  <programme start="20260428090000 +0000" stop="20260428100000 +0000" channel="channel2">
     <title lang="en">Show 2</title>
   </programme>
-  <programme start="20260415202013 +0000" stop="20260415212013 +0000" channel="channel3">
+  <programme start="20260428090000 +0000" stop="20260428100000 +0000" channel="channel3">
     <title lang="en">Show 3</title>
   </programme>
 </tv>"""
@@ -245,13 +245,13 @@ http://example.com/5"""
   <channel id="epg300">
     <display-name lang="ru">НТВ</display-name>
   </channel>
-  <programme start="20260415202013 +0000" stop="20260415212013 +0000" channel="epg100">
+  <programme start="20260428090000 +0000" stop="20260428100000 +0000" channel="epg100">
     <title lang="ru">Show 1</title>
   </programme>
-  <programme start="20260415202013 +0000" stop="20260415212013 +0000" channel="epg200">
+  <programme start="20260428090000 +0000" stop="20260428100000 +0000" channel="epg200">
     <title lang="ru">Show 2</title>
   </programme>
-  <programme start="20260415202013 +0000" stop="20260415212013 +0000" channel="epg300">
+  <programme start="20260428090000 +0000" stop="20260428100000 +0000" channel="epg300">
     <title lang="ru">Show 3</title>
   </programme>
 </tv>"""
@@ -293,13 +293,13 @@ http://example.com/5"""
   <channel id="epg-excluded">
     <display-name lang="ru">Excluded Channel</display-name>
   </channel>
-  <programme start="20260415202013 +0000" stop="20260415212013 +0000" channel="tvg-id-1">
+  <programme start="20260428090000 +0000" stop="20260428100000 +0000" channel="tvg-id-1">
     <title lang="ru">Show 1</title>
   </programme>
-  <programme start="20260415202013 +0000" stop="20260415212013 +0000" channel="epg-no-tvg">
+  <programme start="20260428090000 +0000" stop="20260428100000 +0000" channel="epg-no-tvg">
     <title lang="ru">Show 2</title>
   </programme>
-  <programme start="20260415202013 +0000" stop="20260415212013 +0000" channel="epg-excluded">
+  <programme start="20260428090000 +0000" stop="20260428100000 +0000" channel="epg-excluded">
     <title lang="ru">Show 3</title>
   </programme>
 </tv>"""

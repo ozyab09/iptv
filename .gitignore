@@ -42,3 +42,7 @@ epg2.xml-filtered
 output/
 run_with_env.sh
 src/iptv_m3u_filter.egg-info/
+
+# Claude
+CLAUDE.md
+.claude
