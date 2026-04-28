@@ -170,19 +170,14 @@ class Config:
         "Развлечение",
 
         # Source 4: allway.tv — новые категории
-        "Австралия | Australia",
-        "Беларусь | Беларускія",
-        "Великобритания | United Kingdom",
         "Детские",
         "Европа | Europe",
         "Канада | Canada",
         "Музыка",
         "Новостные",
-        "Общие",
         "Познавательные",
         "Развлекательные",
         "Региональные",
-        "США | USA",
     ]
 
     # Channel names to exclude (for initial config file creation)

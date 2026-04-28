@@ -82,7 +82,7 @@ class TestConfig(unittest.TestCase):
             "Wink (VPN 🇷🇺)",
         ]
 
-        # Source 2: International categories (20 categories)
+        # Source 2: International categories (11 categories)
         source_2_categories = [
             "США 🇺🇸",
             "Великобритания 🇬🇧",
@@ -100,8 +100,8 @@ class TestConfig(unittest.TestCase):
         for cat in source_1_categories + source_2_categories + source_3_categories:
             self.assertIn(cat, categories, f"Expected '{cat}' to be in CATEGORIES_TO_KEEP")
 
-        # Total: 45 + 20 + 5 = 70 categories
-        self.assertEqual(len(categories), 70)
+        # Total: 45 + 11 + 5 + 8 = 69 categories
+        self.assertEqual(len(categories), 69)
 
     def test_channel_names_to_exclude(self):
         """Test channel names to exclude configuration."""
