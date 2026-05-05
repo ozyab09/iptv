@@ -4,13 +4,24 @@ Unit tests for EPG processor module.
 
 import unittest
 import xml.etree.ElementTree as ET
-from unittest.mock import patch, mock_open
+from unittest.mock import patch, mock_open, MagicMock
+from datetime import datetime
 from src.m3u_simple_filter.epg_processor import (
     download_epg,
     extract_channel_info_from_playlist,
     filter_epg_content,
     is_gzipped
 )
+
+# Fixed reference time for tests - used to generate relative timestamps
+FIXED_TEST_TIME = datetime(2026, 5, 5, 12, 0, 0)  # 2026-05-05 12:00:00 UTC
+
+
+def get_test_time_str(offset_hours=0):
+    """Generate EPG time string (YYYYMMDDHHMMSS +0000) relative to fixed test time."""
+    from datetime import timedelta
+    target_time = FIXED_TEST_TIME + timedelta(hours=offset_hours)
+    return target_time.strftime('%Y%m%d%H%M%S') + ' +0000'
 
 
 class TestEPGProcessor(unittest.TestCase):
@@ -56,9 +67,19 @@ http://example.com/5"""
         self.assertEqual(channel_name_categories.get("Channel 1"), "Россия | Russia")
         self.assertEqual(channel_name_categories.get("Channel 5"), "No ID")
 
-    def test_filter_epg_content_basic(self):
+    @patch('datetime.datetime')
+    def test_filter_epg_content_basic(self, mock_datetime):
         """Test filtering EPG content to keep only specified channels."""
-        epg_content = """<?xml version="1.0" encoding="UTF-8"?>
+        # Mock datetime.now() to return fixed test time
+        mock_datetime.now.return_value = FIXED_TEST_TIME
+        # Preserve other datetime functionality
+        mock_datetime.side_effect = lambda *args, **kw: datetime(*args, **kw)
+        
+        # Use relative times: programs from +9h to +10h (future, within retention)
+        t_start = get_test_time_str(9)
+        t_stop = get_test_time_str(10)
+        
+        epg_content = f"""<?xml version="1.0" encoding="UTF-8"?>
 <tv>
   <channel id="channel1">
     <display-name lang="en">Channel 1</display-name>
@@ -69,13 +90,13 @@ http://example.com/5"""
   <channel id="channel3">
     <display-name lang="en">Channel 3</display-name>
   </channel>
-  <programme start="20260428090000 +0000" stop="20260428100000 +0000" channel="channel1">
+  <programme start="{t_start}" stop="{t_stop}" channel="channel1">
     <title lang="en">Show 1</title>
   </programme>
-  <programme start="20260428090000 +0000" stop="20260428100000 +0000" channel="channel2">
+  <programme start="{t_start}" stop="{t_stop}" channel="channel2">
     <title lang="en">Show 2</title>
   </programme>
-  <programme start="20260428090000 +0000" stop="20260428100000 +0000" channel="channel3">
+  <programme start="{t_start}" stop="{t_stop}" channel="channel3">
     <title lang="en">Show 3</title>
   </programme>
 </tv>"""
@@ -101,12 +122,15 @@ http://example.com/5"""
 
     def test_filter_epg_content_empty_channel_ids(self):
         """Test filtering EPG content when no channel IDs are provided."""
-        epg_content = """<?xml version="1.0" encoding="UTF-8"?>
+        t_start = get_test_time_str(9)
+        t_stop = get_test_time_str(10)
+        
+        epg_content = f"""<?xml version="1.0" encoding="UTF-8"?>
 <tv>
   <channel id="channel1">
     <display-name lang="en">Channel 1</display-name>
   </channel>
-  <programme start="20260428000000 +0000" stop="20260428010000 +0000" channel="channel1">
+  <programme start="{t_start}" stop="{t_stop}" channel="channel1">
     <title lang="en">Show 1</title>
   </programme>
 </tv>"""
@@ -185,9 +209,17 @@ http://example.com/5"""
         self.assertIn("names", source)
         self.assertIn("channels after category and ID exclusions", source)
 
-    def test_filter_epg_content_excludes_specific_channel_ids(self):
+    @patch('datetime.datetime')
+    def test_filter_epg_content_excludes_specific_channel_ids(self, mock_datetime):
         """Test that EPG filtering excludes channels by specific IDs."""
-        epg_content = """<?xml version="1.0" encoding="UTF-8"?>
+        # Mock datetime.now() to return fixed test time
+        mock_datetime.now.return_value = FIXED_TEST_TIME
+        mock_datetime.side_effect = lambda *args, **kw: datetime(*args, **kw)
+        
+        t_start = get_test_time_str(9)
+        t_stop = get_test_time_str(10)
+        
+        epg_content = f"""<?xml version="1.0" encoding="UTF-8"?>
 <tv>
   <channel id="channel1">
     <display-name lang="en">Channel 1</display-name>
@@ -198,13 +230,13 @@ http://example.com/5"""
   <channel id="channel3">
     <display-name lang="en">Channel 3</display-name>
   </channel>
-  <programme start="20260428090000 +0000" stop="20260428100000 +0000" channel="channel1">
+  <programme start="{t_start}" stop="{t_stop}" channel="channel1">
     <title lang="en">Show 1</title>
   </programme>
-  <programme start="20260428090000 +0000" stop="20260428100000 +0000" channel="channel2">
+  <programme start="{t_start}" stop="{t_stop}" channel="channel2">
     <title lang="en">Show 2</title>
   </programme>
-  <programme start="20260428090000 +0000" stop="20260428100000 +0000" channel="channel3">
+  <programme start="{t_start}" stop="{t_stop}" channel="channel3">
     <title lang="en">Show 3</title>
   </programme>
 </tv>"""
@@ -232,9 +264,17 @@ http://example.com/5"""
         programme_channels = {prog.get('channel') for prog in programmes}
         self.assertEqual(programme_channels, {"channel1", "channel3"})
 
-    def test_filter_epg_content_matches_by_channel_name(self):
+    @patch('datetime.datetime')
+    def test_filter_epg_content_matches_by_channel_name(self, mock_datetime):
         """Test that EPG filtering matches channels by display-name when tvg-id is not present."""
-        epg_content = """<?xml version="1.0" encoding="UTF-8"?>
+        # Mock datetime.now() to return fixed test time
+        mock_datetime.now.return_value = FIXED_TEST_TIME
+        mock_datetime.side_effect = lambda *args, **kw: datetime(*args, **kw)
+        
+        t_start = get_test_time_str(9)
+        t_stop = get_test_time_str(10)
+        
+        epg_content = f"""<?xml version="1.0" encoding="UTF-8"?>
 <tv>
   <channel id="epg100">
     <display-name lang="ru">Первый канал</display-name>
@@ -245,13 +285,13 @@ http://example.com/5"""
   <channel id="epg300">
     <display-name lang="ru">НТВ</display-name>
   </channel>
-  <programme start="20260428090000 +0000" stop="20260428100000 +0000" channel="epg100">
+  <programme start="{t_start}" stop="{t_stop}" channel="epg100">
     <title lang="ru">Show 1</title>
   </programme>
-  <programme start="20260428090000 +0000" stop="20260428100000 +0000" channel="epg200">
+  <programme start="{t_start}" stop="{t_stop}" channel="epg200">
     <title lang="ru">Show 2</title>
   </programme>
-  <programme start="20260428090000 +0000" stop="20260428100000 +0000" channel="epg300">
+  <programme start="{t_start}" stop="{t_stop}" channel="epg300">
     <title lang="ru">Show 3</title>
   </programme>
 </tv>"""
@@ -280,9 +320,17 @@ http://example.com/5"""
         programme_channels = {prog.get('channel') for prog in programmes}
         self.assertEqual(programme_channels, {"epg100", "epg300"})
 
-    def test_filter_epg_content_matches_by_name_and_id_combined(self):
+    @patch('datetime.datetime')
+    def test_filter_epg_content_matches_by_name_and_id_combined(self, mock_datetime):
         """Test that EPG filtering matches channels by both tvg-id and channel name."""
-        epg_content = """<?xml version="1.0" encoding="UTF-8"?>
+        # Mock datetime.now() to return fixed test time
+        mock_datetime.now.return_value = FIXED_TEST_TIME
+        mock_datetime.side_effect = lambda *args, **kw: datetime(*args, **kw)
+        
+        t_start = get_test_time_str(9)
+        t_stop = get_test_time_str(10)
+        
+        epg_content = f"""<?xml version="1.0" encoding="UTF-8"?>
 <tv>
   <channel id="tvg-id-1">
     <display-name lang="ru">Channel By ID</display-name>
@@ -293,13 +341,13 @@ http://example.com/5"""
   <channel id="epg-excluded">
     <display-name lang="ru">Excluded Channel</display-name>
   </channel>
-  <programme start="20260428090000 +0000" stop="20260428100000 +0000" channel="tvg-id-1">
+  <programme start="{t_start}" stop="{t_stop}" channel="tvg-id-1">
     <title lang="ru">Show 1</title>
   </programme>
-  <programme start="20260428090000 +0000" stop="20260428100000 +0000" channel="epg-no-tvg">
+  <programme start="{t_start}" stop="{t_stop}" channel="epg-no-tvg">
     <title lang="ru">Show 2</title>
   </programme>
-  <programme start="20260428090000 +0000" stop="20260428100000 +0000" channel="epg-excluded">
+  <programme start="{t_start}" stop="{t_stop}" channel="epg-excluded">
     <title lang="ru">Show 3</title>
   </programme>
 </tv>"""
