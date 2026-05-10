@@ -67,6 +67,12 @@ class TestMain(unittest.TestCase):
         # Set a single M3U URL for this test to ensure predictable mock behavior
         os.environ['M3U_SOURCE_URL'] = 'https://example.com/playlist.m3u'
         os.environ['EPG_SOURCE_URL'] = 'https://example.com/epg.xml.gz'
+        # Set required S3 configuration for validation to pass
+        os.environ['S3_BUCKET_NAME'] = 'test-bucket'
+        os.environ['S3_OBJECT_KEY'] = 'playlist.m3u'
+        os.environ['S3_ENDPOINT_URL'] = 'https://storage.example.com'
+        os.environ['S3_REGION'] = 'us-east-1'
+        os.environ['S3_EPG_KEY'] = 'epg.xml.gz'
 
         # Mock return values
         mock_download.return_value = "#EXTM3U\n#EXTINF:-1,Test Channel\nhttp://example.com"

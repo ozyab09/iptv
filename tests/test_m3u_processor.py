@@ -117,21 +117,21 @@ http://example.com/2high"""
         self.assertNotIn("tvg-rec=\"0\"", result)  # Lower tvg-rec version should be removed
 
     def test_filter_m3u_content_with_categories(self):
-        """Test filtering M3U content based on categories."""
+        """Test filtering M3U content based on categories to remove."""
         content = """#EXTM3U
+#EXTINF:-1 group-title="Взрослые",Adult Channel
+http://example.com/adult
 #EXTINF:-1 group-title="Россия | Russia",Channel 1
 http://example.com/1
-#EXTINF:-1 group-title="News",Channel 2
-http://example.com/2
-#EXTINF:-1 group-title="Развлекательные",Channel 3
-http://example.com/3"""
+#EXTINF:-1 group-title="Развлекательные",Channel 2
+http://example.com/2"""
         
-        categories_to_keep = ["Россия | Russia", "Развлекательные"]
-        result = filter_m3u_content(content, categories_to_keep)
+        categories_to_remove = ["Взрослые"]
+        result = filter_m3u_content(content, categories_to_remove)
         
+        self.assertNotIn("Adult Channel", result)  # Взрослые category should be filtered out
         self.assertIn("Channel 1", result)  # Russia category should be kept
-        self.assertNotIn("Channel 2", result)  # News category should be filtered out
-        self.assertIn("Channel 3", result)  # Развлекательные category should be kept
+        self.assertIn("Channel 2", result)  # Развлекательные category should be kept
 
     def test_filter_m3u_content_removes_orig_suffix(self):
         """Test that filtering also removes 'orig' suffix from channel names."""
@@ -141,8 +141,8 @@ http://example.com/1
 #EXTINF:-1 group-title="Развлекательные",Channel 2 orig
 http://example.com/2"""
         
-        categories_to_keep = ["Россия | Russia", "Развлекательные"]
-        result = filter_m3u_content(content, categories_to_keep)
+        categories_to_remove = []  # Keep all categories except those we want to remove
+        result = filter_m3u_content(content, categories_to_remove)
         
         self.assertIn("Channel 1", result)  # 'orig' suffix should be removed
         self.assertIn("Channel 2", result)  # 'orig' suffix should be removed
@@ -173,9 +173,10 @@ http://example.com/50
 http://example.com/25
 #EXTINF:-1 group-title="Россия | Russia",Normal Channel
 http://example.com/normal"""
-
-        categories_to_keep = ["Россия | Russia"]
-        result = filter_m3u_content(content, categories_to_keep)
+        
+        # Remove nothing (empty list) - should keep all channels
+        categories_to_remove = []
+        result = filter_m3u_content(content, categories_to_remove)
 
         self.assertIn("Channel 1", result)  # Regular channel should be kept
         self.assertNotIn("Channel +1 (Приволжье)", result)  # Regional channel should be excluded
@@ -188,6 +189,22 @@ http://example.com/normal"""
         self.assertNotIn("Channel HD 50", result)  # Channel ending with numbers should be excluded
         self.assertNotIn("Channel 25", result)  # Channel ending with numbers should be excluded
         self.assertIn("Normal Channel", result)  # Normal channel should be kept
+
+        # Test removing a specific category
+        content_with_mixed_categories = """#EXTM3U
+#EXTINF:-1 group-title="Взрослые",Adult Channel
+http://example.com/adult
+#EXTINF:-1 group-title="Россия | Russia",Channel 1
+http://example.com/1
+#EXTINF:-1 group-title="Развлекательные",Channel 2
+http://example.com/2"""
+        
+        categories_to_remove = ["Взрослые"]
+        result = filter_m3u_content(content_with_mixed_categories, categories_to_remove)
+        
+        self.assertNotIn("Adult Channel", result)  # Взрослые category should be filtered out
+        self.assertIn("Channel 1", result)  # Russia category should be kept
+        self.assertIn("Channel 2", result)  # Развлекательные category should be kept
 
     def test_filter_m3u_content_excludes_channels_by_name(self):
         """Test that channels with names containing excluded patterns are filtered out."""
@@ -202,10 +219,11 @@ http://example.com/fashion3
 http://example.com/news
 #EXTINF:-1 group-title="Россия | Russia",Sports Channel
 http://example.com/sports"""
-
-        categories_to_keep = ["Россия | Russia"]
+        
+        # Keep all categories (empty remove list) to test channel name filtering
+        categories_to_remove = []
         channel_names_to_exclude = ["Fashion"]
-        result = filter_m3u_content(content, categories_to_keep, channel_names_to_exclude)
+        result = filter_m3u_content(content, categories_to_remove, channel_names_to_exclude)
 
         # Channels with "Fashion" in the name should be excluded
         self.assertNotIn("Fashion TV", result)
@@ -227,10 +245,11 @@ http://example.com/fashion2
 http://example.com/fashion3
 #EXTINF:-1 group-title="Россия | Russia",Regular Channel
 http://example.com/regular"""
-
-        categories_to_keep = ["Россия | Russia"]
+        
+        # Keep all categories (empty remove list) to test channel name filtering
+        categories_to_remove = []
         channel_names_to_exclude = ["Fashion"]
-        result = filter_m3u_content(content, categories_to_keep, channel_names_to_exclude)
+        result = filter_m3u_content(content, categories_to_remove, channel_names_to_exclude)
 
         # All variations of "Fashion" should be excluded
         self.assertNotIn("FASHION TV", result)
@@ -251,10 +270,11 @@ http://example.com/adult
 http://example.com/gambling
 #EXTINF:-1 group-title="Россия | Russia",Regular Channel
 http://example.com/regular"""
-
-        categories_to_keep = ["Россия | Russia"]
+        
+        # Keep all categories (empty remove list) to test channel name filtering
+        categories_to_remove = []
         channel_names_to_exclude = ["Fashion", "Adult", "Gambling"]
-        result = filter_m3u_content(content, categories_to_keep, channel_names_to_exclude)
+        result = filter_m3u_content(content, categories_to_remove, channel_names_to_exclude)
 
         # All channels with excluded patterns should be filtered out
         self.assertNotIn("Fashion TV", result)

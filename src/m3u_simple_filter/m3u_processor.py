@@ -124,13 +124,13 @@ def get_base_channel_name(channel_name: str) -> str:
     return temp_name
 
 
-def filter_m3u_content(content: str, categories_to_keep: List[str], channel_names_to_exclude: List[str] = None, custom_epg_url: str = None) -> str:
+def filter_m3u_content(content: str, categories_to_remove: List[str], channel_names_to_exclude: List[str] = None, custom_epg_url: str = None) -> str:
     """
-    Filter M3U content to keep only specified categories and apply channel name rules
+    Filter M3U content to remove specified categories and apply channel name rules
 
     Args:
         content (str): Original M3U content
-        categories_to_keep (list): List of categories to keep
+        categories_to_remove (list): List of categories to remove
         channel_names_to_exclude (list): List of channel name patterns to exclude
         custom_epg_url (str): Custom EPG URL to replace in the header (optional)
 
@@ -140,7 +140,7 @@ def filter_m3u_content(content: str, categories_to_keep: List[str], channel_name
     logger.info("Starting filtering process")
 
     # Convert categories to lowercase for comparison
-    categories_lower = [cat.lower() for cat in categories_to_keep] if categories_to_keep else []
+    categories_lower = [cat.lower() for cat in categories_to_remove] if categories_to_remove else []
 
     # Convert channel names to exclude to lowercase for comparison
     channel_names_to_exclude_lower = [name.lower() for name in channel_names_to_exclude] if channel_names_to_exclude else []
@@ -185,13 +185,17 @@ def filter_m3u_content(content: str, categories_to_keep: List[str], channel_name
             group_title_match = re.search(r'group-title="([^"]*)"', line, re.IGNORECASE)
             if group_title_match:
                 group_title = group_title_match.group(1).lower()
+                # Check if this category should be removed
                 for cat in categories_lower:
                     if cat == group_title:  # Exact match for group-title only
-                        include_entry = True
-                        logger.debug(f"Including entry with category '{cat}': {line[:100]}...")
+                        include_entry = False  # Exclude this entry
+                        logger.debug(f"Excluding entry with category '{cat}': {line[:100]}...")
                         break
+                else:
+                    # If category not found in removal list, include the entry
+                    include_entry = True
 
-            # If no categories to keep are specified, include all entries
+            # If no categories to remove are specified, include all entries
             if not categories_lower:
                 include_entry = True
 

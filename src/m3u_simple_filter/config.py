@@ -100,84 +100,9 @@ class Config:
         else:
             return f"{s3_epg_key}-filtered"
 
-    # Categories to keep (for initial config file creation)
-    CATEGORIES_TO_KEEP: List[str] = [
-        # Source 1: Dimonovich/TV/FREE/TV — Provider/ISP categories
-        "↕️ Торрент ТВ ↕️",
-        "Современные сетевые технологии (VPN)",
-        "С сайтов (VPN)",
-        "Большое ТВ (VPN)",
-        "С сайтов",
-        "Датагруп 🇺🇦",
-        "Скай Телеком",
-        "Музыкальные 🎶",
-        "Узбектелеком 🇺🇿",
-        "Сайт (VPN)",
-        "АСАРТА (VPN)",
-        "ТаймВэб (VPN)",
-        "Виктория (VPN)",
-        "Оргтехсервис (VPN)",
-        "Телевизор 24 (VPN)",
-        "📺 Usba TV",
-        "Квант-Телеком (VPN 🇷🇺)",
-        "Цитадель-Крым (VPN)",
-        "ОБИТ",
-        "Сириус",
-        "Казахтелеком",
-        "4K VIDEO (VPN)",
-        "AgroNet (VPN)",
-        "Catcast TV 🐈 Not 24/7",
-        "CloudFlare Inc (VPN 🇷🇺)",
-        "Cloudflare_Inc!",
-        "Cloudflare_Inc",
-        "Hetzner Online GmbH",
-        "Interhost",
-        "Internet42 LLC",
-        "Itv.uz (🇺🇿)",
-        "IZONE",
-        "KazTransCom",
-        "Lime (VPN 🇷🇺)",
-        "Peers (VPN)",
-        "RELAX",
-        "Rutube (VPN)",
-        "StarNet (VPN 🇳🇱)",
-        "TEST ⓵",
-        "TEST (VPN)",
-        "Tricolor (VPN 🇷🇺)",
-        "Turon Media",
-        "Voka",
-        "Webhost (VPN 🇷🇺)",
-        "Wink (VPN 🇷🇺)",
-
-        # Source 2: Dimonovich/TV/FREE/ZARUB — International categories
-        "Объединенные Арабские Эмираты 🇦🇪",
-        "Новая Зеландия 🇳🇿",
-        "Саудовская Аравия 🇸🇦",
-        "Северная Македония 🇲🇰",
-        "Доминиканская Республика 🇩🇴",
-        "Грузия 🇬🇪 (GEO)",
-        "Таджикистан 🇹🇯 (GEO)",
-        "США 🇺🇸",
-        "Беларусь 🇧🇾",
-        "Австралия 🇦🇺",
-        "Великобритания 🇬🇧",
-
-        # Source 3: loganettv — Content categories
-        "Кино",
-        "Общие",
-        "Знания",
-        "Новости",
-        "Развлечение",
-
-        # Source 4: allway.tv — новые категории
-        "Детские",
-        "Европа | Europe",
-        "Канада | Canada",
-        "Музыка",
-        "Новостные",
-        "Познавательные",
-        "Развлекательные",
-        "Региональные",
+    # Categories to remove (for initial config file creation)
+    CATEGORIES_TO_REMOVE: List[str] = [
+        "Взрослые"
     ]
 
     # Channel names to exclude (for initial config file creation)
@@ -249,9 +174,9 @@ class Config:
         return path if path else None
 
     @classmethod
-    def get_categories_to_keep(cls) -> List[str]:
-        """Return the list of categories to keep"""
-        return cls.CATEGORIES_TO_KEEP
+    def get_categories_to_remove(cls) -> List[str]:
+        """Return the list of categories to remove"""
+        return cls.CATEGORIES_TO_REMOVE
 
     @classmethod
     def get_channel_names_to_exclude(cls) -> List[str]:
