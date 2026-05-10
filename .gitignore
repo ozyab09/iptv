@@ -18,6 +18,7 @@ nosetests.xml
 coverage.xml
 *.cover
 *.log
+venv314
 
 # Local config files
 playlist.m3u

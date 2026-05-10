@@ -18,7 +18,7 @@ http://example.com/7.m3u8
 http://example.com/8.m3u8"""
 
         # Filter with no categories specified (should keep all entries)
-        result = filter_m3u_content(content, categories_to_keep=[], custom_epg_url="https://test-bucket.storage.test-cloud.com/epg.xml.gz")
+        result = filter_m3u_content(content, categories_to_remove=[], custom_epg_url="https://test-bucket.storage.test-cloud.com/epg.xml.gz")
 
         # Check that the header is updated with the custom EPG URL
         self.assertIn('https://test-bucket.storage.test-cloud.com/epg.xml.gz', result)
@@ -36,7 +36,7 @@ http://example.com/5.m3u8
 http://example.com/6.m3u8"""
 
         custom_epg_url = "https://test-bucket.storage.test-cloud.com/epg.xml.gz"
-        result = filter_m3u_content(content, categories_to_keep=[], custom_epg_url=custom_epg_url)
+        result = filter_m3u_content(content, categories_to_remove=[], custom_epg_url=custom_epg_url)
 
         # Check that the custom EPG URL is in the header
         self.assertIn(custom_epg_url, result)
