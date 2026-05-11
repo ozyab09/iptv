@@ -70,38 +70,13 @@ class TestConfig(unittest.TestCase):
         self.assertEqual(config.LOCAL_ALL_CATEGORIES_PLAYLIST_PATH, 'custom-all')
 
     def test_categories_to_keep(self):
-        """Test categories to keep configuration includes all sources."""
+        """Test categories to remove configuration includes only 'Взрослые'."""
         config = Config()
-        categories = config.get_categories_to_keep()
+        categories = config.get_categories_to_remove()
 
-        # Source 1: Provider/ISP categories (45 categories)
-        source_1_categories = [
-            "↕️ Торрент ТВ ↕️",
-            "TEST ⓵",
-            "CloudFlare Inc (VPN 🇷🇺)",
-            "Wink (VPN 🇷🇺)",
-        ]
-
-        # Source 2: International categories (11 categories)
-        source_2_categories = [
-            "США 🇺🇸",
-            "Великобритания 🇬🇧",
-            "Грузия 🇬🇪 (GEO)",
-            "Австралия 🇦🇺",
-        ]
-
-        # Source 3: Content categories (5 categories)
-        source_3_categories = [
-            "Кино",
-            "Общие",
-            "Новости",
-        ]
-
-        for cat in source_1_categories + source_2_categories + source_3_categories:
-            self.assertIn(cat, categories, f"Expected '{cat}' to be in CATEGORIES_TO_KEEP")
-
-        # Total: 45 + 11 + 5 + 8 = 69 categories
-        self.assertEqual(len(categories), 69)
+        # Should only contain "Взрослые"
+        self.assertEqual(len(categories), 1)
+        self.assertIn("Взрослые", categories)
 
     def test_channel_names_to_exclude(self):
         """Test channel names to exclude configuration."""

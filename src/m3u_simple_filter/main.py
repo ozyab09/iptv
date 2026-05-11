@@ -79,7 +79,7 @@ def main() -> int:
     s3_filtered_key = config.S3_FILTERED_PLAYLIST_KEY
     s3_all_categories_key = config.S3_ALL_CATEGORIES_PLAYLIST_KEY
     s3_epg_key = config.S3_EPG_KEY
-    categories_to_keep = config.get_categories_to_keep()
+    categories_to_remove = config.get_categories_to_remove()
 
     # Check for dry-run mode
     dry_run = os.environ.get('DRY_RUN', '').lower() in ('true', '1', 'yes', 'on')
@@ -131,7 +131,7 @@ def main() -> int:
                 logger.warning(f"Could not parse endpoint URL: {e}, using virtual-hosted-style")
                 host_part = endpoint_url.split('://', 1)[1] if '://' in endpoint_url else endpoint_url
                 custom_epg_url = f"https://{bucket_name}.{host_part}/{epg_key}"
-            filtered_content = filter_m3u_content(m3u_content, categories_to_keep, channel_names_to_exclude, custom_epg_url)
+            filtered_content = filter_m3u_content(m3u_content, categories_to_remove, channel_names_to_exclude, custom_epg_url)
             all_filtered_parts.append(filtered_content)
 
         # Merge all filtered playlists
