@@ -348,62 +348,7 @@ def parse_channel_entries(lines: List[str]) -> Tuple[List[str], List[Tuple[str, 
     return header_lines, channel_entries
 
 
-def apply_hd_preference(content: str) -> str:
-    """
-    Apply HD preference rule: if both HD and non-HD versions exist, keep only HD
 
-    Args:
-        content (str): M3U content after initial filtering
-
-    Returns:
-        str: M3U content with HD preference applied
-    """
-    lines = content.split('\n')
-
-    # Separate header lines from channel entries
-    header_lines, channel_entries = parse_channel_entries(lines)
-
-    # Group channels by base name (without 'hd' suffix)
-    channel_groups: dict = {}
-    for extinf_line, entry_lines in channel_entries:
-        parts = extinf_line.rsplit(',', 1)
-        if len(parts) > 1:
-            channel_name = parts[1].strip()
-            base_name = get_base_channel_name(channel_name)
-
-            if base_name not in channel_groups:
-                channel_groups[base_name] = []
-            channel_groups[base_name].append((extinf_line, entry_lines))
-
-    # For each group, decide which version(s) to keep
-    final_channel_entries: List[Tuple[str, List[str]]] = []
-    for base_name, variants in channel_groups.items():
-        # Check if any variant is an HD version
-        has_hd_version = any(extinf.rsplit(',', 1)[1].strip().lower().endswith(' hd')
-                             for extinf, _ in variants)
-
-        if has_hd_version:
-            # Get only HD versions
-            hd_variants = [(extinf, el) for extinf, el in variants
-                           if extinf.rsplit(',', 1)[1].strip().lower().endswith(' hd')]
-            final_channel_entries.extend(hd_variants)
-
-            # Log which non-HD versions were removed
-            non_hd_variants = [(extinf, el) for extinf, el in variants
-                               if not extinf.rsplit(',', 1)[1].strip().lower().endswith(' hd')]
-            if non_hd_variants:
-                logger.debug(f"Removed non-HD versions for '{base_name}': {[ext.rsplit(',', 1)[1].strip() for ext, _ in non_hd_variants]}")
-        else:
-            # No HD version exists, keep all non-HD versions
-            final_channel_entries.extend(variants)
-
-    # Reconstruct the final content
-    final_lines = header_lines
-    for extinf_line, entry_lines in final_channel_entries:
-        final_lines.append(extinf_line)
-        final_lines.extend(entry_lines)
-
-    return '\n'.join(final_lines)
 
 
 def normalize_channel_name_for_comparison(channel_name: str) -> str:
