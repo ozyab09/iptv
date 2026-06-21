@@ -75,7 +75,7 @@ http://example.com/2"""
         self.assertIn("Channel 2", result)
 
     def test_remove_duplicates_and_apply_hd_preference_with_tvg_id(self):
-        """Test duplicate removal based on tvg-id and HD preference."""
+        """Test that all channel variants are kept with numeric suffixes."""
         content = """#EXTM3U
 #EXTINF:-1 tvg-id="711",Channel 1
 http://example.com/1
@@ -87,16 +87,15 @@ http://example.com/2
 http://example.com/2duplicate"""
 
         result = remove_duplicates_and_apply_hd_preference(content)
-        # Should keep only the HD version of Channel 1 and one version of Channel 2
-        self.assertIn("Channel 1 HD", result)  # HD version should be kept
-        self.assertNotIn("Channel 1\n", result)  # Non-HD version should be removed
-        self.assertIn("Channel 2", result)  # Should have one version of Channel 2
-        # Count occurrences of Channel 2 entries
-        channel_2_count = result.count("Channel 2")
-        self.assertEqual(channel_2_count, 1)  # Only one version should remain
+        # Both Channel 1 variants should be kept (no HD preference dedup)
+        self.assertIn("Channel 1", result)
+        self.assertIn("Channel 1 HD", result)
+        # Both Channel 2 variants should be kept with #1, #2 suffixes
+        self.assertIn("Channel 2 #1", result)
+        self.assertIn("Channel 2 #2", result)
 
     def test_remove_duplicates_with_tvg_rec_preference(self):
-        """Test duplicate removal keeping the version with higher tvg-rec."""
+        """Test that all channel variants are kept regardless of tvg-rec."""
         content = """#EXTM3U
 #EXTINF:-1 tvg-id="711" tvg-rec="3",Channel 1
 http://example.com/1low
@@ -108,13 +107,15 @@ http://example.com/2low
 http://example.com/2high"""
 
         result = remove_duplicates_and_apply_hd_preference(content)
-        # Should keep only the version with higher tvg-rec
-        self.assertIn("Channel 1", result)
-        self.assertIn("tvg-rec=\"7\"", result)  # Higher tvg-rec version should be kept
-        self.assertNotIn("tvg-rec=\"3\"", result)  # Lower tvg-rec version should be removed
-        self.assertIn("Channel 2", result)
-        self.assertIn("tvg-rec=\"5\"", result)  # Higher tvg-rec version should be kept
-        self.assertNotIn("tvg-rec=\"0\"", result)  # Lower tvg-rec version should be removed
+        # Both variants of each channel should be kept with #1, #2 suffixes
+        self.assertIn("Channel 1 #1", result)
+        self.assertIn("Channel 1 #2", result)
+        self.assertIn("tvg-rec=\"3\"", result)
+        self.assertIn("tvg-rec=\"7\"", result)
+        self.assertIn("Channel 2 #1", result)
+        self.assertIn("Channel 2 #2", result)
+        self.assertIn("tvg-rec=\"0\"", result)
+        self.assertIn("tvg-rec=\"5\"", result)
 
     def test_filter_m3u_content_with_categories(self):
         """Test filtering M3U content based on categories to remove."""

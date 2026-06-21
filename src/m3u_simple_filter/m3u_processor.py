@@ -588,14 +588,14 @@ def add_tvg_ids_to_playlist(content: str, epg_name_to_id_map: dict) -> str:
 
 def remove_duplicates_and_apply_hd_preference(content: str) -> str:
     """
-    Remove duplicate channels based on tvg-id and channel name, keeping only the best version.
-    Also applies HD preference rule: if both HD and non-HD versions exist, keep only HD.
+    Keep all channel variants, adding numeric suffixes to differentiate
+    channels with the same normalized name.
 
     Args:
         content (str): M3U content after initial filtering
 
     Returns:
-        str: M3U content with duplicates removed and HD preference applied
+        str: M3U content with all channel variants preserved
     """
     lines = content.split('\n')
 
@@ -606,10 +606,6 @@ def remove_duplicates_and_apply_hd_preference(content: str) -> str:
     unique_channels: dict = {}
 
     for extinf_line, entry_lines in channel_entries:
-        # Extract tvg-id from the EXTINF line
-        tvg_id_match = re.search(r'tvg-id="([^"]*)"', extinf_line)
-        tvg_id = tvg_id_match.group(1) if tvg_id_match else ""
-
         # Extract channel name from the EXTINF line
         parts = extinf_line.rsplit(',', 1)
         if len(parts) > 1:
@@ -631,66 +627,23 @@ def remove_duplicates_and_apply_hd_preference(content: str) -> str:
         # Add this variant to the list
         unique_channels[key].append((extinf_line, entry_lines))
 
-    # For each group of channels, decide which version(s) to keep
+    # Keep all variants, add numeric suffixes when multiple variants share the same normalized name
     final_channel_entries: List[Tuple[str, List[str]]] = []
     for key, variants in unique_channels.items():
-        # Special case: keep all variants for configured channels (e.g., TLC)
-        channels_keep_all = [c.lower() for c in Config.get_channels_keep_all_variants()]
-        if key in channels_keep_all:
-            # Add numeric suffix to differentiate channels with same name
+        if len(variants) > 1:
             for idx, (extinf_line, entry_lines) in enumerate(variants, start=1):
-                # Extract channel name and add suffix
                 parts = extinf_line.rsplit(',', 1)
                 if len(parts) > 1:
                     channel_name = parts[1].strip()
                     new_channel_name = f"{channel_name} #{idx}"
-                    # Update the EXTINF line with new channel name
                     new_extinf_line = f"{parts[0]},{new_channel_name}"
                     final_channel_entries.append((new_extinf_line, entry_lines))
                     logger.debug(f"Added suffix to channel '{channel_name}' -> '{new_channel_name}'")
                 else:
                     final_channel_entries.append((extinf_line, entry_lines))
             logger.info(f"Kept all {len(variants)} variants for '{key}' with numeric suffixes")
-            continue
-
-        # Separate HD and non-HD versions
-        hd_variants = []
-        non_hd_variants = []
-
-        for extinf, entry_lines in variants:
-            channel_name = extinf.rsplit(',', 1)[1].strip()
-            # Check if the channel name contains ' hd' anywhere (case insensitive)
-            if ' hd' in channel_name.lower():
-                hd_variants.append((extinf, entry_lines))
-            else:
-                non_hd_variants.append((extinf, entry_lines))
-
-        # If both HD and non-HD versions exist, only consider HD versions
-        if hd_variants and non_hd_variants:
-            variants_to_process = hd_variants
-            # Log which non-HD versions were removed
-            removed_channels = [ext.rsplit(',', 1)[1].strip() for ext, _ in non_hd_variants]
-            logger.debug(f"Removed non-HD versions for '{key}': {removed_channels}")
         else:
-            # Otherwise, consider all variants for duplicate removal
-            variants_to_process = variants
-
-        # If there are multiple variants to process, apply tvg-rec preference
-        if len(variants_to_process) > 1:
-            # Sort by tvg-rec value (if present) in descending order
-            sorted_variants = sorted(variants_to_process,
-                                    key=lambda x: int(re.search(r'tvg-rec="(\d+)"', x[0]).group(1)) if re.search(r'tvg-rec="(\d+)"', x[0]) else 0,
-                                    reverse=True)
-            # Keep only the first one (highest tvg-rec)
-            final_channel_entries.append(sorted_variants[0])
-
-            # Log which duplicates were removed
-            if len(sorted_variants) > 1:
-                removed_channels = [ext.rsplit(',', 1)[1].strip() for ext, _ in sorted_variants[1:]]
-                logger.debug(f"Removed duplicate versions for '{key}': {removed_channels}")
-        else:
-            # Only one variant, add it directly
-            final_channel_entries.extend(variants_to_process)
+            final_channel_entries.extend(variants)
 
     # Reconstruct the final content
     final_lines = header_lines

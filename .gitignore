@@ -47,3 +47,6 @@ src/iptv_m3u_filter.egg-info/
 # Claude
 CLAUDE.md
 .claude
+
+# Legacy instruction file (replaced by AGENTS.md)
+AGENT.md
