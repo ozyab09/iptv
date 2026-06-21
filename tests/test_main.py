@@ -64,6 +64,14 @@ class TestMain(unittest.TestCase):
         # Set dry-run mode
         os.environ['DRY_RUN'] = 'true'
 
+        # Set required environment variables for config validation
+        os.environ['AWS_ACCESS_KEY_ID'] = 'test_access_key'
+        os.environ['AWS_SECRET_ACCESS_KEY'] = 'test_secret_key'
+        os.environ['S3_BUCKET_NAME'] = 'test-bucket'
+        os.environ['S3_EPG_KEY'] = 'epg.xml.gz'
+        os.environ['S3_ENDPOINT_URL'] = 'https://s3.amazonaws.com'
+        os.environ['S3_OBJECT_KEY'] = 'playlist.m3u'
+
         # Set a single M3U URL for this test to ensure predictable mock behavior
         os.environ['M3U_SOURCE_URL'] = 'https://example.com/playlist.m3u'
         os.environ['EPG_SOURCE_URL'] = 'https://example.com/epg.xml.gz'
