@@ -10,7 +10,6 @@ from src.m3u_simple_filter.m3u_processor import (
     get_base_channel_name,
     filter_m3u_content,
     count_channels,
-    apply_hd_preference,
     remove_duplicates_and_apply_hd_preference
 )
 
@@ -45,34 +44,6 @@ http://example.com/2
 #EXTINF:-1,Channel 3 orig
 http://example.com/3"""
         self.assertEqual(count_channels(content), 3)
-
-    def test_apply_hd_preference_with_hd_and_non_hd(self):
-        """Test HD preference rule: keep only HD when both versions exist."""
-        content = """#EXTM3U
-#EXTINF:-1,Channel 1
-http://example.com/1
-#EXTINF:-1,Channel 2
-http://example.com/2
-#EXTINF:-1,Channel 2 HD
-http://example.com/2hd"""
-        
-        result = apply_hd_preference(content)
-        # Should only contain the HD version of Channel 2
-        self.assertIn("#EXTINF:-1,Channel 2 HD", result)  # HD version should be kept
-        self.assertNotIn("#EXTINF:-1,Channel 2\n", result)  # Non-HD version should be removed
-        self.assertIn("Channel 1", result)  # Non-duplicate channel should remain
-
-    def test_apply_hd_preference_without_hd(self):
-        """Test HD preference rule: keep all when no HD versions exist."""
-        content = """#EXTM3U
-#EXTINF:-1,Channel 1
-http://example.com/1
-#EXTINF:-1,Channel 2
-http://example.com/2"""
-
-        result = apply_hd_preference(content)
-        self.assertIn("Channel 1", result)
-        self.assertIn("Channel 2", result)
 
     def test_remove_duplicates_and_apply_hd_preference_with_tvg_id(self):
         """Test that all channel variants are kept with numeric suffixes."""
