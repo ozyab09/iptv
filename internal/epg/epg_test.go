@@ -103,7 +103,7 @@ func TestFilterEPGContentBasic(t *testing.T) {
 	channelIDs := map[string]string{"channel1": "", "channel3": ""}
 	channelNames := map[string]string{}
 
-	filtered, err := FilterEPGContent(epgContent, channelIDs, nil, nil, channelNames)
+	filtered, err := FilterEPGContent(epgContent, channelIDs, nil, nil, channelNames, 10)
 	if err != nil {
 		t.Fatalf("FilterEPGContent failed: %v", err)
 	}
@@ -139,7 +139,7 @@ func TestFilterEPGContentBasic(t *testing.T) {
 func TestFilterEPGContentEmptyChannelIDs(t *testing.T) {
 	channelIDs := map[string]string{}
 	channelNames := map[string]string{}
-	filtered, err := FilterEPGContent("<tv></tv>", channelIDs, nil, nil, channelNames)
+	filtered, err := FilterEPGContent("<tv></tv>", channelIDs, nil, nil, channelNames, 10)
 	if err != nil {
 		t.Fatalf("FilterEPGContent failed: %v", err)
 	}
@@ -197,7 +197,7 @@ func TestFilterEPGContentExcludesSpecificChannelIDs(t *testing.T) {
 	channelIDs := map[string]string{"channel1": "", "channel2": "", "channel3": ""}
 	excludedIDs := []string{"channel2"}
 
-	filtered, err := FilterEPGContent(epgContent, channelIDs, nil, excludedIDs, nil)
+	filtered, err := FilterEPGContent(epgContent, channelIDs, nil, excludedIDs, nil, 10)
 	if err != nil {
 		t.Fatalf("FilterEPGContent failed: %v", err)
 	}
@@ -251,7 +251,7 @@ func TestFilterEPGContentMatchesByChannelName(t *testing.T) {
 		"НТВ":          "Общие",
 	}
 
-	filtered, err := FilterEPGContent(epgContent, channelIDs, nil, nil, channelNames)
+	filtered, err := FilterEPGContent(epgContent, channelIDs, nil, nil, channelNames, 10)
 	if err != nil {
 		t.Fatalf("FilterEPGContent failed: %v", err)
 	}
@@ -302,7 +302,7 @@ func TestFilterEPGContentMatchesByNameAndIDCombined(t *testing.T) {
 	channelIDs := map[string]string{"tvg-id-1": ""}
 	channelNames := map[string]string{"Channel By Name": "Общие"}
 
-	filtered, err := FilterEPGContent(epgContent, channelIDs, nil, nil, channelNames)
+	filtered, err := FilterEPGContent(epgContent, channelIDs, nil, nil, channelNames, 10)
 	if err != nil {
 		t.Fatalf("FilterEPGContent failed: %v", err)
 	}

@@ -6,7 +6,6 @@ import (
 	"net/url"
 	"os"
 	"regexp"
-	"strings"
 )
 
 type SanitizedWriter struct {
@@ -75,43 +74,4 @@ func maskURL(rawURL string) string {
 		return "https://****/****"
 	}
 	return parsed.Scheme + "://****/****"
-}
-
-func isPotentiallySensitive(text string) bool {
-	sensitivePatterns := []string{
-		`.*[Ss]ecret.*`,
-		`.*[Tt]oken.*`,
-		`.*[Kk]ey.*`,
-		`.*[Cc]redential.*`,
-		`.*[Pp]assword.*`,
-		`.*[Cc]ode.*`,
-		`.*[Aa]uth.*`,
-		`.*[Ss]ession.*`,
-	}
-	for _, p := range sensitivePatterns {
-		if matched, _ := regexp.MatchString(p, text); matched {
-			return true
-		}
-	}
-	if len(text) >= 20 {
-		if matched, _ := regexp.MatchString(`^[A-Za-z0-9_-]{20,}$`, text); matched {
-			return true
-		}
-	}
-	return false
-}
-
-func isPotentiallySensitiveParam(name string) bool {
-	sensitiveParams := []string{
-		"token", "key", "secret", "password", "auth", "session",
-		"code", "access_token", "refresh_token", "api_key",
-		"client_secret", "credential", "signature",
-	}
-	lower := strings.ToLower(name)
-	for _, p := range sensitiveParams {
-		if lower == p {
-			return true
-		}
-	}
-	return false
 }

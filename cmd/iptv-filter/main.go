@@ -18,15 +18,44 @@ import (
 var log = utils.NewSanitizedLoggerWithPrefix("[main]")
 
 func saveFilteredM3ULocally(content, filename string, cfg *config.Config) {
-	outputDir := cfg.OUTPUT_DIR()
-	os.MkdirAll(outputDir, 0755)
+	outputDir := cfg.OutputDir()
+	if err := os.MkdirAll(outputDir, 0755); err != nil {
+		log.Error("Failed to create output directory: %v", err)
+		return
+	}
 	filepath := path.Join(outputDir, filename)
 	if err := os.WriteFile(filepath, []byte(content), 0644); err != nil {
 		log.Error("Failed to save M3U file: %v", err)
 		return
 	}
-	fi, _ := os.Stat(filepath)
-	log.Info("M3U saved locally as %s (size: %.2f KB)", filepath, float64(fi.Size())/1024)
+	if fi, err := os.Stat(filepath); err == nil {
+		log.Info("M3U saved locally as %s (size: %.2f KB)", filepath, float64(fi.Size())/1024)
+	}
+}
+
+func mergeParts(parts []string) string {
+	if len(parts) == 0 {
+		return ""
+	}
+	if len(parts) == 1 {
+		return parts[0]
+	}
+	var mergedLines []string
+	for idx, part := range parts {
+		lines := strings.Split(part, "\n")
+		for _, line := range lines {
+			if strings.HasPrefix(strings.TrimSpace(line), "#EXTM3U") {
+				if idx == 0 && len(mergedLines) == 0 {
+					mergedLines = append(mergedLines, line)
+				}
+				continue
+			}
+			if strings.TrimSpace(line) != "" {
+				mergedLines = append(mergedLines, line)
+			}
+		}
+	}
+	return strings.Join(mergedLines, "\n")
 }
 
 func buildCustomEPGURL(endpointURL, bucketName, epgKey string) string {
@@ -74,12 +103,8 @@ func run() int {
 	m3uURLs = validURLs
 	log.Info("Processing %d M3U source(s)", len(m3uURLs))
 
-	endpointURL := cfg.S3EndpointURL()
-	bucketName := cfg.S3DefaultBucketName()
-	epgKey := cfg.S3EPGKey()
-	region := cfg.S3Region()
-	s3Endpoint := endpointURL
-	customEPGURL := buildCustomEPGURL(endpointURL, bucketName, epgKey)
+	s3Endpoint := cfg.S3EndpointURL()
+	customEPGURL := buildCustomEPGURL(s3Endpoint, s3Bucket, s3EPGKey)
 
 	var allFiltered []string
 	var allOriginal []string
@@ -108,27 +133,7 @@ func run() int {
 		allFiltered = append(allFiltered, filtered)
 	}
 
-	var filteredContent string
-	if len(allFiltered) > 1 {
-		var mergedLines []string
-		for idx, part := range allFiltered {
-			lines := strings.Split(part, "\n")
-			for _, line := range lines {
-				if strings.HasPrefix(strings.TrimSpace(line), "#EXTM3U") {
-					if idx == 0 && len(mergedLines) == 0 {
-						mergedLines = append(mergedLines, line)
-					}
-					continue
-				}
-				if strings.TrimSpace(line) != "" {
-					mergedLines = append(mergedLines, line)
-				}
-			}
-		}
-		filteredContent = strings.Join(mergedLines, "\n")
-	} else if len(allFiltered) == 1 {
-		filteredContent = allFiltered[0]
-	}
+	filteredContent := mergeParts(allFiltered)
 
 	categoriesFilePath := cfg.CategoriesFilePath()
 	if categoriesFilePath != "" {
@@ -139,27 +144,7 @@ func run() int {
 		}
 	}
 
-	var originalContent string
-	if len(allOriginal) > 1 {
-		var mergedLines []string
-		for idx, part := range allOriginal {
-			lines := strings.Split(part, "\n")
-			for _, line := range lines {
-				if strings.HasPrefix(strings.TrimSpace(line), "#EXTM3U") {
-					if idx == 0 && len(mergedLines) == 0 {
-						mergedLines = append(mergedLines, line)
-					}
-					continue
-				}
-				if strings.TrimSpace(line) != "" {
-					mergedLines = append(mergedLines, line)
-				}
-			}
-		}
-		originalContent = strings.Join(mergedLines, "\n")
-	} else if len(allOriginal) == 1 {
-		originalContent = allOriginal[0]
-	}
+	originalContent := mergeParts(allOriginal)
 
 	saveFilteredM3ULocally(filteredContent, cfg.LocalFilteredPlaylistPath(), cfg)
 	saveFilteredM3ULocally(originalContent, cfg.LocalAllCategoriesPlaylistPath(), cfg)
@@ -183,17 +168,18 @@ func run() int {
 			chIDs, chNames := epg.ExtractChannelInfoFromPlaylist(filteredContent)
 			excludedCategories := config.EPGExcludedCategories
 			excludedChannelIDs := config.EPGExcludedChannelIDs
+			retentionDays := cfg.EPGRetentionDays()
 
-			filteredEPG, err := epg.FilterEPGContent(epgContent, chIDs, excludedCategories, excludedChannelIDs, chNames)
+			filteredEPG, err := epg.FilterEPGContent(epgContent, chIDs, excludedCategories, excludedChannelIDs, chNames, retentionDays)
 			if err != nil {
 				log.Error("Failed to filter EPG: %v", err)
 			} else {
 				epg.SaveFilteredEPGLocally(filteredEPG, cfg.LocalFilteredEPGPath(), cfg)
 
 				if !dryRun {
-					outputDir := cfg.OUTPUT_DIR()
+					outputDir := cfg.OutputDir()
 					utils.Retry(3, 2*time.Second, 2.0, func() error {
-						return s3.UploadFileToS3(cfg.LocalFilteredEPGPath(), s3Bucket, s3EPGKey, outputDir, s3Endpoint, region, "application/gzip")
+						return s3.UploadFileToS3(cfg.LocalFilteredEPGPath(), s3Bucket, s3EPGKey, outputDir, s3Endpoint, cfg.S3Region(), "application/gzip")
 					})
 				}
 			}
@@ -216,18 +202,18 @@ func run() int {
 	}
 
 	utils.Retry(3, 2*time.Second, 2.0, func() error {
-		_, err := s3.UploadArchiveToS3(filteredContent, s3Bucket, s3FilteredKey, s3Endpoint, region)
+		_, err := s3.UploadArchiveToS3(filteredContent, s3Bucket, s3FilteredKey, s3Endpoint, cfg.S3Region())
 		return err
 	})
 	utils.Retry(3, 2*time.Second, 2.0, func() error {
-		_, err := s3.UploadArchiveToS3(originalContent, s3Bucket, s3AllKey, s3Endpoint, region)
+		_, err := s3.UploadArchiveToS3(originalContent, s3Bucket, s3AllKey, s3Endpoint, cfg.S3Region())
 		return err
 	})
 	utils.Retry(3, 2*time.Second, 2.0, func() error {
-		return s3.UploadToS3(filteredContent, s3Bucket, s3FilteredKey, s3Endpoint, region, "")
+		return s3.UploadToS3(filteredContent, s3Bucket, s3FilteredKey, s3Endpoint, cfg.S3Region(), "")
 	})
 	utils.Retry(3, 2*time.Second, 2.0, func() error {
-		return s3.UploadToS3(originalContent, s3Bucket, s3AllKey, s3Endpoint, region, "")
+		return s3.UploadToS3(originalContent, s3Bucket, s3AllKey, s3Endpoint, cfg.S3Region(), "")
 	})
 
 	log.Info("Process completed successfully")

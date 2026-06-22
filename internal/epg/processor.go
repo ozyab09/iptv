@@ -4,15 +4,14 @@ import (
 	"archive/zip"
 	"bytes"
 	"compress/gzip"
-	"crypto/tls"
 	"encoding/xml"
 	"fmt"
 	"io"
-	"net/http"
 	"net/url"
 	"os"
 	"path"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -21,13 +20,6 @@ import (
 )
 
 var logger = utils.NewSanitizedLoggerWithPrefix("[epg]")
-
-var httpClient = &http.Client{
-	Transport: &http.Transport{
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-	},
-	Timeout: 30 * time.Minute,
-}
 
 type TV struct {
 	XMLName    xml.Name  `xml:"tv"`
@@ -87,12 +79,7 @@ type Rating struct {
 func DownloadEPG(urlStr string, cfg *config.Config) (string, error) {
 	logger.Info("Downloading EPG file from: %s", urlStr)
 
-	req, err := http.NewRequest("GET", urlStr, nil)
-	if err != nil {
-		return "", err
-	}
-
-	resp, err := httpClient.Do(req)
+	resp, err := utils.HTTPClient.Get(urlStr)
 	if err != nil {
 		logger.Error("Error downloading EPG file: %v", err)
 		return "", err
@@ -123,7 +110,7 @@ func DownloadEPG(urlStr string, cfg *config.Config) (string, error) {
 
 	rawContent := chunks
 
-	outputDir := cfg.OUTPUT_DIR()
+	outputDir := cfg.OutputDir()
 	os.MkdirAll(outputDir, 0755)
 
 	parsedURL, _ := url.Parse(urlStr)
@@ -136,9 +123,12 @@ func DownloadEPG(urlStr string, cfg *config.Config) (string, error) {
 	var data []byte
 	if strings.HasSuffix(urlStr, ".gz") || isGzipped(rawContent) {
 		logger.Info("Detected gzipped EPG file, decompressing...")
-		os.WriteFile(originalFilePath, rawContent, 0644)
-		fi, _ := os.Stat(originalFilePath)
-		logger.Info("Original compressed EPG file saved as: %s (size: %.2f KB)", originalFilePath, float64(fi.Size())/1024)
+		if err := os.WriteFile(originalFilePath, rawContent, 0644); err != nil {
+			return "", fmt.Errorf("failed to save original EPG: %w", err)
+		}
+		if fi, err := os.Stat(originalFilePath); err == nil {
+			logger.Info("Original compressed EPG file saved as: %s (size: %.2f KB)", originalFilePath, float64(fi.Size())/1024)
+		}
 
 		gr, err := gzip.NewReader(bytes.NewReader(rawContent))
 		if err != nil {
@@ -151,9 +141,12 @@ func DownloadEPG(urlStr string, cfg *config.Config) (string, error) {
 		}
 	} else if strings.HasSuffix(urlStr, ".zip") {
 		logger.Info("Detected zipped EPG file, extracting...")
-		os.WriteFile(originalFilePath, rawContent, 0644)
-		fi, _ := os.Stat(originalFilePath)
-		logger.Info("Original zipped EPG file saved as: %s (size: %.2f KB)", originalFilePath, float64(fi.Size())/1024)
+		if err := os.WriteFile(originalFilePath, rawContent, 0644); err != nil {
+			return "", fmt.Errorf("failed to save original EPG: %w", err)
+		}
+		if fi, err := os.Stat(originalFilePath); err == nil {
+			logger.Info("Original zipped EPG file saved as: %s (size: %.2f KB)", originalFilePath, float64(fi.Size())/1024)
+		}
 
 		zr, err := zip.NewReader(bytes.NewReader(rawContent), int64(len(rawContent)))
 		if err != nil {
@@ -172,9 +165,12 @@ func DownloadEPG(urlStr string, cfg *config.Config) (string, error) {
 			return "", fmt.Errorf("failed to read zip entry: %w", err)
 		}
 	} else {
-		os.WriteFile(originalFilePath, rawContent, 0644)
-		fi, _ := os.Stat(originalFilePath)
-		logger.Info("Original EPG file saved as: %s (size: %.2f KB)", originalFilePath, float64(fi.Size())/1024)
+		if err := os.WriteFile(originalFilePath, rawContent, 0644); err != nil {
+			return "", fmt.Errorf("failed to save original EPG: %w", err)
+		}
+		if fi, err := os.Stat(originalFilePath); err == nil {
+			logger.Info("Original EPG file saved as: %s (size: %.2f KB)", originalFilePath, float64(fi.Size())/1024)
+		}
 		data = rawContent
 	}
 
@@ -250,7 +246,7 @@ func BuildEPGNameToIDMap(epgContent string) map[string]string {
 
 var epgTimeRegex = regexp.MustCompile(`(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})\s+(\S+)`)
 
-func FilterEPGContent(epgContent string, channelIDs map[string]string, excludedCategories, excludedChannelIDs []string, channelNames map[string]string) (string, error) {
+func FilterEPGContent(epgContent string, channelIDs map[string]string, excludedCategories, excludedChannelIDs []string, channelNames map[string]string, retentionDays int) (string, error) {
 	logger.Info("Filtering EPG content for %d channel IDs and %d channel names", len(channelIDs), len(channelNames))
 
 	if len(channelIDs) == 0 && len(channelNames) == 0 {
@@ -360,21 +356,13 @@ func FilterEPGContent(epgContent string, channelIDs map[string]string, excludedC
 				Value: ch.DisplayName[0].Value,
 			}}
 		}
-		for _, child := range ch.DisplayName[1:] {
-			_ = child
-		}
-		for _, icon := range ch.Icon {
-			_ = icon
-		}
 		result.Channels = append(result.Channels, newCh)
 	}
 
 	now := time.Now()
 	oneHourAgo := now.Add(-1 * time.Hour)
-	retentionDays := 10
-	cfg := config.New()
-	if rd := cfg.EPGRetentionDays(); rd > 0 {
-		retentionDays = rd
+	if retentionDays < 1 {
+		retentionDays = 10
 	}
 	retentionLater := now.AddDate(0, 0, retentionDays)
 
@@ -419,20 +407,31 @@ func FilterEPGContent(epgContent string, channelIDs map[string]string, excludedC
 }
 
 func parseEPGTime(match []string) (time.Time, error) {
-	year := match[1]
-	month := match[2]
-	day := match[3]
-	hour := match[4]
-	min := match[5]
-	sec := match[6]
+	loc := time.UTC
+	tz := match[7]
+	if len(tz) >= 5 && (tz[0] == '+' || tz[0] == '-') {
+		hours, _ := strconv.Atoi(tz[1:3])
+		mins, _ := strconv.Atoi(tz[3:5])
+		offset := hours*3600 + mins*60
+		if tz[0] == '-' {
+			offset = -offset
+		}
+		loc = time.FixedZone(tz, offset)
+	}
 
-	return time.Parse("2006-01-02 15:04:05",
-		fmt.Sprintf("%s-%s-%s %s:%s:%s", year, month, day, hour, min, sec))
+	t, err := time.ParseInLocation("2006-01-02 15:04:05",
+		fmt.Sprintf("%s-%s-%s %s:%s:%s", match[1], match[2], match[3], match[4], match[5], match[6]), loc)
+	if err != nil {
+		return time.Time{}, err
+	}
+	return t.UTC(), nil
 }
 
 func SaveFilteredEPGLocally(content, filename string, cfg *config.Config) error {
-	outputDir := cfg.OUTPUT_DIR()
-	os.MkdirAll(outputDir, 0755)
+	outputDir := cfg.OutputDir()
+	if err := os.MkdirAll(outputDir, 0755); err != nil {
+		return fmt.Errorf("failed to create output directory: %w", err)
+	}
 
 	filepath := path.Join(outputDir, filename)
 
@@ -440,23 +439,27 @@ func SaveFilteredEPGLocally(content, filename string, cfg *config.Config) error 
 		var buf bytes.Buffer
 		gw := gzip.NewWriter(&buf)
 		if _, err := gw.Write([]byte(content)); err != nil {
-			return err
+			return fmt.Errorf("failed to compress EPG: %w", err)
 		}
-		gw.Close()
+		if err := gw.Close(); err != nil {
+			return fmt.Errorf("failed to finalize gzip: %w", err)
+		}
 
 		if err := os.WriteFile(filepath, buf.Bytes(), 0644); err != nil {
-			return err
+			return fmt.Errorf("failed to write EPG file: %w", err)
 		}
 
-		fi, _ := os.Stat(filepath)
-		logger.Info("EPG saved locally as compressed file: %s (compressed: %.2f KB, original: %.2f KB)",
-			filepath, float64(fi.Size())/1024, float64(len(content))/1024)
+		if fi, err := os.Stat(filepath); err == nil {
+			logger.Info("EPG saved locally as compressed file: %s (compressed: %.2f KB, original: %.2f KB)",
+				filepath, float64(fi.Size())/1024, float64(len(content))/1024)
+		}
 	} else {
 		if err := os.WriteFile(filepath, []byte(content), 0644); err != nil {
-			return err
+			return fmt.Errorf("failed to write EPG file: %w", err)
 		}
-		fi, _ := os.Stat(filepath)
-		logger.Info("EPG saved locally as %s (size: %.2f KB)", filepath, float64(fi.Size())/1024)
+		if fi, err := os.Stat(filepath); err == nil {
+			logger.Info("EPG saved locally as %s (size: %.2f KB)", filepath, float64(fi.Size())/1024)
+		}
 	}
 
 	return nil

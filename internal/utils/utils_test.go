@@ -69,33 +69,6 @@ func TestSanitizeLogMessageAWSCreds(t *testing.T) {
 	}
 }
 
-func TestIsPotentiallySensitive(t *testing.T) {
-	if !isPotentiallySensitive("my_secret_key") {
-		t.Error("expected 'my_secret_key' to be sensitive")
-	}
-	if !isPotentiallySensitive("some_token_here") {
-		t.Error("expected 'some_token_here' to be sensitive")
-	}
-	if !isPotentiallySensitive("abcdefghijklmnopqrstuvwxyz1234567890") {
-		t.Error("expected long alphanumeric to be sensitive")
-	}
-	if isPotentiallySensitive("hello") {
-		t.Error("expected 'hello' to not be sensitive")
-	}
-}
-
-func TestIsPotentiallySensitiveParam(t *testing.T) {
-	if !isPotentiallySensitiveParam("token") {
-		t.Error("expected 'token' to be sensitive param")
-	}
-	if !isPotentiallySensitiveParam("api_key") {
-		t.Error("expected 'api_key' to be sensitive param")
-	}
-	if isPotentiallySensitiveParam("name") {
-		t.Error("expected 'name' to not be sensitive param")
-	}
-}
-
 func TestMaskURL(t *testing.T) {
 	masked := maskURL("https://storage.yandexcloud.net/bucket/key")
 	if masked != "https://****/****" {

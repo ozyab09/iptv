@@ -1,7 +1,6 @@
 package utils
 
 import (
-	"log"
 	"time"
 )
 
@@ -18,11 +17,11 @@ func Retry(maxAttempts int, delay time.Duration, backoff float64, fn RetryableFu
 		}
 		lastErr = err
 		if attempt < maxAttempts {
-			log.Printf("Attempt %d/%d failed: %v. Retrying in %.1fs...", attempt, maxAttempts, err, currentDelay.Seconds())
+			NewSanitizedLoggerWithPrefix("[retry]").Warning("Attempt %d/%d failed: %v. Retrying in %.1fs...", attempt, maxAttempts, err, currentDelay.Seconds())
 			time.Sleep(currentDelay)
 			currentDelay = time.Duration(float64(currentDelay) * backoff)
 		} else {
-			log.Printf("All %d attempts failed: %v", maxAttempts, err)
+			NewSanitizedLoggerWithPrefix("[retry]").Error("All %d attempts failed: %v", maxAttempts, err)
 		}
 	}
 	return lastErr

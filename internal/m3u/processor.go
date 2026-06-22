@@ -1,14 +1,11 @@
 package m3u
 
 import (
-	"crypto/tls"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
 	"regexp"
 	"strings"
-	"time"
 
 	"github.com/ozyab/iptv/internal/config"
 	"github.com/ozyab/iptv/internal/utils"
@@ -16,22 +13,10 @@ import (
 
 var logger = utils.NewSanitizedLoggerWithPrefix("[m3u]")
 
-var httpClient = &http.Client{
-	Transport: &http.Transport{
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-	},
-	Timeout: 30 * time.Minute,
-}
-
 func DownloadM3U(url string) (string, error) {
 	logger.Info("Downloading M3U file from: %s", url)
 
-	req, err := http.NewRequest("GET", url, nil)
-	if err != nil {
-		return "", err
-	}
-
-	resp, err := httpClient.Do(req)
+	resp, err := utils.HTTPClient.Get(url)
 	if err != nil {
 		logger.Error("Error downloading M3U file: %v", err)
 		return "", err
@@ -96,7 +81,6 @@ var regNumberSuffix = regexp.MustCompile(`\s\d{2,}$`)
 var regGroupTitle = regexp.MustCompile(`group-title="([^"]*)"`)
 var regTvgID = regexp.MustCompile(`tvg-id="([^"]*)"`)
 var regURLTVG = regexp.MustCompile(`url-tvg="[^"]*"`)
-var regEXTINF = regexp.MustCompile(`#EXTINF:`)
 
 func FilterContent(content string, categoriesToRemove, channelNamesToExclude []string, customEPGURL string) string {
 	logger.Info("Starting filtering process")

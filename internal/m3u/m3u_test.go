@@ -1,6 +1,7 @@
 package m3u
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -68,16 +69,16 @@ http://example.com/2
 http://example.com/2duplicate`
 
 	result := RemoveDuplicatesAndApplyHDPref(content)
-	if !contains(result, "Channel 1") {
+	if !strings.Contains(result, "Channel 1") {
 		t.Error("expected 'Channel 1' in result")
 	}
-	if !contains(result, "Channel 1 HD") {
+	if !strings.Contains(result, "Channel 1 HD") {
 		t.Error("expected 'Channel 1 HD' in result")
 	}
-	if !contains(result, "Channel 2 #1") {
+	if !strings.Contains(result, "Channel 2 #1") {
 		t.Error("expected 'Channel 2 #1' in result")
 	}
-	if !contains(result, "Channel 2 #2") {
+	if !strings.Contains(result, "Channel 2 #2") {
 		t.Error("expected 'Channel 2 #2' in result")
 	}
 }
@@ -94,28 +95,28 @@ http://example.com/2low
 http://example.com/2high`
 
 	result := RemoveDuplicatesAndApplyHDPref(content)
-	if !contains(result, "Channel 1 #1") {
+	if !strings.Contains(result, "Channel 1 #1") {
 		t.Error("expected 'Channel 1 #1' in result")
 	}
-	if !contains(result, "Channel 1 #2") {
+	if !strings.Contains(result, "Channel 1 #2") {
 		t.Error("expected 'Channel 1 #2' in result")
 	}
-	if !contains(result, `tvg-rec="3"`) {
+	if !strings.Contains(result, `tvg-rec="3"`) {
 		t.Error("expected tvg-rec=3 in result")
 	}
-	if !contains(result, `tvg-rec="7"`) {
+	if !strings.Contains(result, `tvg-rec="7"`) {
 		t.Error("expected tvg-rec=7 in result")
 	}
-	if !contains(result, "Channel 2 #1") {
+	if !strings.Contains(result, "Channel 2 #1") {
 		t.Error("expected 'Channel 2 #1' in result")
 	}
-	if !contains(result, "Channel 2 #2") {
+	if !strings.Contains(result, "Channel 2 #2") {
 		t.Error("expected 'Channel 2 #2' in result")
 	}
-	if !contains(result, `tvg-rec="0"`) {
+	if !strings.Contains(result, `tvg-rec="0"`) {
 		t.Error("expected tvg-rec=0 in result")
 	}
-	if !contains(result, `tvg-rec="5"`) {
+	if !strings.Contains(result, `tvg-rec="5"`) {
 		t.Error("expected tvg-rec=5 in result")
 	}
 }
@@ -131,13 +132,13 @@ http://example.com/2`
 
 	result := FilterContent(content, []string{"Взрослые"}, nil, "")
 
-	if contains(result, "Adult Channel") {
+	if strings.Contains(result, "Adult Channel") {
 		t.Error("expected Adult Channel to be filtered out")
 	}
-	if !contains(result, "Channel 1") {
+	if !strings.Contains(result, "Channel 1") {
 		t.Error("expected Channel 1 to be kept")
 	}
-	if !contains(result, "Channel 2") {
+	if !strings.Contains(result, "Channel 2") {
 		t.Error("expected Channel 2 to be kept")
 	}
 }
@@ -151,13 +152,13 @@ http://example.com/2`
 
 	result := FilterContent(content, nil, nil, "")
 
-	if !contains(result, "Channel 1") {
+	if !strings.Contains(result, "Channel 1") {
 		t.Error("expected 'Channel 1' in result")
 	}
-	if !contains(result, "Channel 2") {
+	if !strings.Contains(result, "Channel 2") {
 		t.Error("expected 'Channel 2' in result")
 	}
-	if contains(result, "orig") {
+	if strings.Contains(result, "orig") {
 		t.Error("expected no 'orig' suffix in result")
 	}
 }
@@ -183,28 +184,28 @@ http://example.com/normal`
 
 	result := FilterContent(content, nil, nil, "")
 
-	if !contains(result, "Channel 1") {
+	if !strings.Contains(result, "Channel 1") {
 		t.Error("expected 'Channel 1' in result")
 	}
-	if contains(result, "+1 (Приволжье)") {
+	if strings.Contains(result, "+1 (Приволжье)") {
 		t.Error("expected regional channel +1 to be excluded")
 	}
-	if contains(result, "+4 (Алтай)") {
+	if strings.Contains(result, "+4 (Алтай)") {
 		t.Error("expected regional channel +4 to be excluded")
 	}
-	if contains(result, "+5 HD") {
+	if strings.Contains(result, "+5 HD") {
 		t.Error("expected regional channel +5 HD to be excluded")
 	}
-	if !contains(result, "Channel +7 not regional") {
+	if !strings.Contains(result, "Channel +7 not regional") {
 		t.Error("expected '+7 not regional' to be kept")
 	}
-	if contains(result, "HD 50") {
+	if strings.Contains(result, "HD 50") {
 		t.Error("expected 'HD 50' to be excluded")
 	}
-	if contains(result, "Channel 25") {
+	if strings.Contains(result, "Channel 25") {
 		t.Error("expected 'Channel 25' to be excluded")
 	}
-	if !contains(result, "Normal Channel") {
+	if !strings.Contains(result, "Normal Channel") {
 		t.Error("expected 'Normal Channel' to be kept")
 	}
 }
@@ -222,16 +223,16 @@ http://example.com/sports`
 
 	result := FilterContent(content, nil, []string{"Fashion"}, "")
 
-	if contains(result, "Fashion TV") {
+	if strings.Contains(result, "Fashion TV") {
 		t.Error("expected 'Fashion TV' to be excluded")
 	}
-	if contains(result, "Russian Fashion") {
+	if strings.Contains(result, "Russian Fashion") {
 		t.Error("expected 'Russian Fashion' to be excluded")
 	}
-	if !contains(result, "News Channel") {
+	if !strings.Contains(result, "News Channel") {
 		t.Error("expected 'News Channel' to be kept")
 	}
-	if !contains(result, "Sports Channel") {
+	if !strings.Contains(result, "Sports Channel") {
 		t.Error("expected 'Sports Channel' to be kept")
 	}
 }
@@ -249,16 +250,16 @@ http://example.com/regular`
 
 	result := FilterContent(content, nil, []string{"Fashion"}, "")
 
-	if contains(result, "FASHION TV") {
+	if strings.Contains(result, "FASHION TV") {
 		t.Error("expected 'FASHION TV' to be excluded")
 	}
-	if contains(result, "fashion news") {
+	if strings.Contains(result, "fashion news") {
 		t.Error("expected 'fashion news' to be excluded")
 	}
-	if contains(result, "FaShIoN Channel") {
+	if strings.Contains(result, "FaShIoN Channel") {
 		t.Error("expected 'FaShIoN Channel' to be excluded")
 	}
-	if !contains(result, "Regular Channel") {
+	if !strings.Contains(result, "Regular Channel") {
 		t.Error("expected 'Regular Channel' to be kept")
 	}
 }
@@ -276,29 +277,16 @@ http://example.com/regular`
 
 	result := FilterContent(content, nil, []string{"Fashion", "Adult", "Gambling"}, "")
 
-	if contains(result, "Fashion TV") {
+	if strings.Contains(result, "Fashion TV") {
 		t.Error("expected 'Fashion TV' to be excluded")
 	}
-	if contains(result, "Adult Channel") {
+	if strings.Contains(result, "Adult Channel") {
 		t.Error("expected 'Adult Channel' to be excluded")
 	}
-	if contains(result, "Gambling Network") {
+	if strings.Contains(result, "Gambling Network") {
 		t.Error("expected 'Gambling Network' to be excluded")
 	}
-	if !contains(result, "Regular Channel") {
+	if !strings.Contains(result, "Regular Channel") {
 		t.Error("expected 'Regular Channel' to be kept")
 	}
-}
-
-func contains(s, substr string) bool {
-	return len(s) > 0 && len(substr) > 0 && searchString(s, substr)
-}
-
-func searchString(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
 }

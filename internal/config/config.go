@@ -134,7 +134,7 @@ var EPGExcludedChannelIDs = []string{
 	"810", "6419",
 }
 
-func (c *Config) OUTPUT_DIR() string {
+func (c *Config) OutputDir() string {
 	if v := os.Getenv("OUTPUT_DIR"); v != "" {
 		return v
 	}
