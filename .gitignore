@@ -1,24 +1,14 @@
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
-*$pyc
-*$pyo
-.Python
-env/
-venv/
-.venv/
-pip-log.txt
-pip-delete-this-directory.txt
-.tox/
-.coverage
-.coverage.*
-.cache
-nosetests.xml
-coverage.xml
-*.cover
-*.log
-venv314
+# Go
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+go.work
+go.work.sum
+vendor/
 
 # Local config files
 playlist.m3u
@@ -42,7 +32,6 @@ epg2.xml-filtered
 .env
 output/
 run_with_env.sh
-src/iptv_m3u_filter.egg-info/
 
 # Claude
 CLAUDE.md
