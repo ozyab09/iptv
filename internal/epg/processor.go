@@ -1,12 +1,10 @@
 package epg
 
 import (
-	"archive/zip"
 	"bytes"
 	"compress/gzip"
 	"encoding/xml"
 	"fmt"
-	"io"
 	"net/url"
 	"os"
 	"path"
@@ -19,7 +17,17 @@ import (
 	"github.com/ozyab/iptv/internal/utils"
 )
 
+// Package-level logger with sanitized output.
 var logger = utils.NewSanitizedLoggerWithPrefix("[epg]")
+
+// Pre-compiled regexps for EPG processing.
+var (
+	epgGTRegex  = regexp.MustCompile(`group-title="([^"]*)"`) // group-title attribute
+	epgTvgRegex = regexp.MustCompile(`tvg-id="([^"]*)"`)      // tvg-id attribute
+	epgTimeRegex = regexp.MustCompile(`(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})\s+(\S+)`) // EPG timestamp
+)
+
+// XML structs for EPG (Electronic Program Guide) in XMLTV format.
 
 type TV struct {
 	XMLName    xml.Name  `xml:"tv"`
@@ -76,43 +84,19 @@ type Rating struct {
 	Value  string `xml:"value"`
 }
 
+// DownloadEPG downloads, decompresses (gz/zip), and returns EPG XML content as a string.
 func DownloadEPG(urlStr string, cfg *config.Config) (string, error) {
 	logger.Info("Downloading EPG file from: %s", urlStr)
 
-	resp, err := utils.HTTPClient.Get(urlStr)
+	rawContent, err := utils.DownloadFile(urlStr, config.MaxEPGFileSize)
 	if err != nil {
 		logger.Error("Error downloading EPG file: %v", err)
 		return "", err
 	}
-	defer resp.Body.Close()
 
-	var chunks []byte
-	totalSize := 0
-	buf := make([]byte, 8192)
-
-	for {
-		n, err := resp.Body.Read(buf)
-		if n > 0 {
-			totalSize += n
-			if totalSize > config.MaxEPGFileSize {
-				return "", fmt.Errorf("EPG file exceeds maximum allowed size of %d bytes", config.MaxEPGFileSize)
-			}
-			chunks = append(chunks, buf[:n]...)
-		}
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			logger.Error("Error downloading EPG file: %v", err)
-			return "", err
-		}
-	}
-
-	rawContent := chunks
-
+	// Save original compressed file for debugging, then decompress.
 	outputDir := cfg.OutputDir()
 	os.MkdirAll(outputDir, 0755)
-
 	parsedURL, _ := url.Parse(urlStr)
 	fname := path.Base(parsedURL.Path)
 	if fname == "" {
@@ -120,77 +104,47 @@ func DownloadEPG(urlStr string, cfg *config.Config) (string, error) {
 	}
 	originalFilePath := path.Join(outputDir, "original_"+fname)
 
-	var data []byte
-	if strings.HasSuffix(urlStr, ".gz") || isGzipped(rawContent) {
-		logger.Info("Detected gzipped EPG file, decompressing...")
-		if err := os.WriteFile(originalFilePath, rawContent, 0644); err != nil {
-			return "", fmt.Errorf("failed to save original EPG: %w", err)
-		}
-		if fi, err := os.Stat(originalFilePath); err == nil {
-			logger.Info("Original compressed EPG file saved as: %s (size: %.2f KB)", originalFilePath, float64(fi.Size())/1024)
-		}
+	// Save original file for debugging, then decompress.
+	if err := os.WriteFile(originalFilePath, rawContent, 0644); err != nil {
+		return "", fmt.Errorf("failed to save original EPG: %w", err)
+	}
+	if fi, err := os.Stat(originalFilePath); err == nil {
+		logger.Info("Original EPG file saved as: %s (size: %.2f KB)", originalFilePath, float64(fi.Size())/1024)
+	}
 
-		gr, err := gzip.NewReader(bytes.NewReader(rawContent))
+	var decompressed []byte
+	switch {
+	case strings.HasSuffix(urlStr, ".gz") || utils.IsGzipped(rawContent):
+		logger.Info("Detected gzipped EPG file, decompressing...")
+		decompressed, err = utils.DecompressGZip(rawContent)
 		if err != nil {
 			return "", fmt.Errorf("failed to decompress gzip: %w", err)
 		}
-		data, err = io.ReadAll(gr)
-		gr.Close()
-		if err != nil {
-			return "", fmt.Errorf("failed to read decompressed data: %w", err)
-		}
-	} else if strings.HasSuffix(urlStr, ".zip") {
+	case strings.HasSuffix(urlStr, ".zip"):
 		logger.Info("Detected zipped EPG file, extracting...")
-		if err := os.WriteFile(originalFilePath, rawContent, 0644); err != nil {
-			return "", fmt.Errorf("failed to save original EPG: %w", err)
-		}
-		if fi, err := os.Stat(originalFilePath); err == nil {
-			logger.Info("Original zipped EPG file saved as: %s (size: %.2f KB)", originalFilePath, float64(fi.Size())/1024)
-		}
-
-		zr, err := zip.NewReader(bytes.NewReader(rawContent), int64(len(rawContent)))
+		decompressed, err = utils.DecompressZip(rawContent)
 		if err != nil {
-			return "", fmt.Errorf("failed to read zip: %w", err)
+			return "", fmt.Errorf("failed to decompress zip: %w", err)
 		}
-		if len(zr.File) == 0 {
-			return "", fmt.Errorf("ZIP archive is empty")
-		}
-		f, err := zr.File[0].Open()
-		if err != nil {
-			return "", fmt.Errorf("failed to open first file in zip: %w", err)
-		}
-		data, err = io.ReadAll(f)
-		f.Close()
-		if err != nil {
-			return "", fmt.Errorf("failed to read zip entry: %w", err)
-		}
-	} else {
-		if err := os.WriteFile(originalFilePath, rawContent, 0644); err != nil {
-			return "", fmt.Errorf("failed to save original EPG: %w", err)
-		}
-		if fi, err := os.Stat(originalFilePath); err == nil {
-			logger.Info("Original EPG file saved as: %s (size: %.2f KB)", originalFilePath, float64(fi.Size())/1024)
-		}
-		data = rawContent
+	default:
+		decompressed = rawContent
 	}
 
-	content := string(data)
-	logger.Info("EPG file downloaded successfully, size: %.2f KB", float64(len(data))/1024)
+	content := string(decompressed)
+	logger.Info("EPG file downloaded successfully, size: %.2f KB", float64(len(decompressed))/1024)
 	return content, nil
 }
 
-func isGzipped(data []byte) bool {
-	return len(data) >= 2 && data[0] == 0x1f && data[1] == 0x8b
-}
-
+// ExtractChannelInfoFromPlaylist parses M3U EXTINF lines and returns:
+//   - channelIDs:   tvg-id → category (for EPG matching by ID)
+//   - channelNames: channel name → category (for EPG matching by name)
 func ExtractChannelInfoFromPlaylist(playlistContent string) (map[string]string, map[string]string) {
 	logger.Info("Extracting channel IDs and categories from playlist")
 
 	channelIDs := make(map[string]string)
 	channelNames := make(map[string]string)
 
-	gtRegex := regexp.MustCompile(`group-title="([^"]*)"`)
-	tvgRegex := regexp.MustCompile(`tvg-id="([^"]*)"`)
+	// Use pre-compiled package-level regexps.
 
 	for _, line := range strings.Split(playlistContent, "\n") {
 		trimmed := strings.TrimSpace(line)
@@ -199,11 +153,11 @@ func ExtractChannelInfoFromPlaylist(playlistContent string) (map[string]string, 
 		}
 
 		var category string
-		if m := gtRegex.FindStringSubmatch(line); m != nil {
+		if m := epgGTRegex.FindStringSubmatch(line); m != nil {
 			category = strings.TrimSpace(m[1])
 		}
 
-		if m := tvgRegex.FindStringSubmatch(line); m != nil {
+		if m := epgTvgRegex.FindStringSubmatch(line); m != nil {
 			tvgID := strings.TrimSpace(m[1])
 			if tvgID != "" {
 				channelIDs[tvgID] = category
@@ -223,6 +177,8 @@ func ExtractChannelInfoFromPlaylist(playlistContent string) (map[string]string, 
 	return channelIDs, channelNames
 }
 
+// BuildEPGNameToIDMap creates a lowercase display-name → channel-id map from EPG XML.
+// Used to add tvg-id attributes to M3U channels that lack them.
 func BuildEPGNameToIDMap(epgContent string) map[string]string {
 	nameToID := make(map[string]string)
 
@@ -243,8 +199,6 @@ func BuildEPGNameToIDMap(epgContent string) map[string]string {
 	logger.Info("Built EPG name-to-id map with %d entries", len(nameToID))
 	return nameToID
 }
-
-var epgTimeRegex = regexp.MustCompile(`(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})\s+(\S+)`)
 
 func FilterEPGContent(epgContent string, channelIDs map[string]string, excludedCategories, excludedChannelIDs []string, channelNames map[string]string, retentionDays int) (string, error) {
 	logger.Info("Filtering EPG content for %d channel IDs and %d channel names", len(channelIDs), len(channelNames))
@@ -406,6 +360,7 @@ func FilterEPGContent(epgContent string, channelIDs map[string]string, excludedC
 	return xmlStr, nil
 }
 
+// parseEPGTime converts EPG timestamp (e.g. "20250101000000 +0300") to UTC time.Time.
 func parseEPGTime(match []string) (time.Time, error) {
 	loc := time.UTC
 	tz := match[7]
@@ -427,6 +382,7 @@ func parseEPGTime(match []string) (time.Time, error) {
 	return t.UTC(), nil
 }
 
+// SaveFilteredEPGLocally writes EPG content to disk, optionally gzip-compressed if filename ends with .gz.
 func SaveFilteredEPGLocally(content, filename string, cfg *config.Config) error {
 	outputDir := cfg.OutputDir()
 	if err := os.MkdirAll(outputDir, 0755); err != nil {

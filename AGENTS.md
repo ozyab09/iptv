@@ -12,7 +12,6 @@ Rewritten from Python to Go. Runs via `go run ./cmd/iptv-filter/` — no binary 
 
 - `cmd/iptv-filter/main.go` — script entry point
 - `go run ./cmd/iptv-filter/` — run directly (compiles to temp, executes)
-- `go run ./cmd/iptv-filter/` — console equivalent of `iptv-filter`
 
 ## Commands
 
@@ -22,30 +21,89 @@ go run ./cmd/iptv-filter/           # run (requires .env or export vars)
 DRY_RUN=true go run ./cmd/iptv-filter/  # dry-run (no S3 upload)
 ```
 
-## Key architecture
+## Development conventions
 
-- `internal/config/` — `Config` struct reading env vars, validation
-- `internal/m3u/` — M3U download, filtering, normalization, deduplication
-- `internal/epg/` — EPG download (gzip/zip), XML filtering, time-based retention
-- `internal/s3/` — S3 upload (content, file, archive) via AWS SDK v2
-- `internal/utils/` — Retry helper, sanitized logger
-- `cmd/iptv-filter/main.go` — orchestration
+- Go standard project layout (`cmd/`, `internal/`)
+- AWS SDK v2 for S3 operations
+- Standard library `net/http` for HTTP (with `InsecureSkipVerify: true` for local dev)
+- `encoding/xml` for EPG XML parsing
+- `compress/gzip` and `archive/zip` for compression
+- Environment-based config via `internal/config/` (stateless, reads env vars)
+- Sanitized logging via `internal/utils/logger.go` (masks URLs and credentials)
 
-Config via `Config` struct in `internal/config/` — reads env vars, validates before processing.
+## Architecture
 
-`DRY_RUN=true` env var skips S3 upload (files still saved locally in `output/`).
+```
+iptv/
+├── cmd/iptv-filter/main.go        # Entry point (go run)
+├── internal/
+│   ├── config/config.go           # Configuration from env vars with validation
+│   ├── m3u/processor.go           # M3U download, filtering, normalization
+│   ├── epg/processor.go           # EPG download (gzip/zip), XML filtering
+│   ├── s3/upload.go               # S3 upload via AWS SDK v2
+│   └── utils/
+│       ├── http.go                # Shared HTTP client and DownloadFile utility
+│       ├── logger.go              # Sanitized logger
+│       └── retry.go               # Retry with exponential backoff
+├── .github/workflows/filter-m3u.yml
+├── go.mod / go.sum
+├── categories.txt                 # Channel metadata (group-title/tvg-id overrides)
+└── README.md
+```
 
-Multiple M3U URLs can be comma-separated in `M3U_SOURCE_URL`.
+## Module descriptions
+
+### internal/config/config.go
+
+Config struct reading env vars with validation. Includes:
+- `CategoriesToRemove` — deny-list of categories (default: `["Взрослые"]`)
+- `ChannelNamesToExclude` — channels to exclude by name substring
+- `EPGExcludedCategories` / `EPGExcludedChannelIDs`
+- `BuildCustomEPGURL()` — constructs public URL for EPG file in S3
+- `Validate()` — validates all required env vars before processing
+
+### internal/m3u/processor.go
+
+M3U download, filtering, parsing, normalization. Key functions:
+- `DownloadM3U()` — HTTP download with size check (100MB)
+- `FilterContent()` — line-by-line filter: category deny-list, channel name exclusion, regional `+N` exclusion, number suffix exclusion, `orig` removal
+- `RemoveOrigSuffix()` — strips trailing " orig"
+- `NormalizeNameForComparison()` — strips HD/orig/SD/4K/UHD/FHD suffixes
+- `ParseCategoriesFile()` — parses categories.txt for metadata overrides
+- `ApplyChannelMetadata()` — applies group-title/tvg-id from categories file
+- `AddTvgIDsToPlaylist()` — adds tvg-id from EPG name-to-id map
+- `RemoveDuplicatesAndApplyHDPref()` — groups by normalized name, adds `#1`/`#2` suffixes
+
+### internal/epg/processor.go
+
+EPG download and XML filtering. Key functions:
+- `DownloadEPG()` — downloads with gzip/zip decompression, 500MB limit
+- `ExtractChannelInfoFromPlaylist()` — extracts tvg-ids and channel names from M3U
+- `BuildEPGNameToIDMap()` — builds lowercase display-name → channel-id map from EPG XML
+- `FilterEPGContent()` — filters EPG by channel IDs/names, excludes categories/IDs, time-based retention
+- `SaveFilteredEPGLocally()` — saves with gzip compression
+
+### internal/s3/upload.go
+
+S3 upload via AWS SDK v2. Functions:
+- `UploadToS3()` — string content → S3
+- `UploadFileToS3()` — local file → S3 (with output dir fallback)
+- `UploadArchiveToS3()` — gzip-compressed → archive/YYYY-MM-DD/HH-MM-SS-UUID_key.gz
+
+### internal/utils/
+
+- `DownloadFile()` — shared HTTP download with size limit enforcement
+- `Retry()` — utility function with exponential backoff (3 attempts, 2s delay, 2x backoff)
+- `SanitizedWriter` — log wrapper that masks URLs and AWS keys in output
 
 ## Filtering logic (internal/m3u/)
 
 - **Category filter**: deny-list approach — `CategoriesToRemove` (default: just `["Взрослые"]`). Everything else is kept.
-- **Channel exclusions**: `ChannelNamesToExclude` — matched case-insensitively as substring
+- **Channel exclusions**: `ChannelNamesToExclude` — matched case-insensitively as substring (default: `Fashion`, `СПАС`, `Три ангела`, `ЛДПР`, `UA`, `Sports`)
 - **Regional exclusion**: channels ending with `+N` (e.g. `+1`, `+4 HD`, `+2 (Приволжье)`) are removed
-- **Number suffix exclusion**: channels ending with `2+` digits (e.g. `HD 50`, `50`) removed, unless in `ChannelsKeepAllVariants`
+- **Number suffix exclusion**: channels ending with `2+` digits (e.g. `HD 50`, `50`) are removed — all channels excluded uniformly, no exemptions
 - **Name processing**: `orig` suffix removed from channel names
 - **No deduplication**: all channel variants kept. When multiple channels share the same normalized name, suffixes `#1`, `#2` etc. are appended
-- `ChannelsKeepAllVariants` config still exempts channels from number-suffix exclusion
 - **Optional metadata**: `categories.txt` can supply `group-title`/`tvg-id` overrides via `CATEGORIES_FILE_PATH` env var (matched by lowercase name)
 - **EPG-based tvg-id**: channels without `tvg-id` get one matched by name against EPG display-names
 
@@ -53,7 +111,8 @@ Multiple M3U URLs can be comma-separated in `M3U_SOURCE_URL`.
 
 - Downloads from `EPG_SOURCE_URL` (supports `.gz` and `.zip`)
 - `EPG_RETENTION_DAYS` (default: 10) — discards programmes outside this window
-- `EPGExcludedCategories` / `EPGExcludedChannelIDs` — categories and specific channel IDs excluded from EPG
+- `EPGExcludedCategories` — categories excluded from EPG (default: `Кино`)
+- `EPGExcludedChannelIDs` — specific channel IDs excluded from EPG (30+ IDs)
 - Output saved as `.gz` compressed
 
 ## S3 upload (internal/s3/)
@@ -63,6 +122,15 @@ Uploads: filtered playlist, all-categories playlist, EPG file, plus `.gz` archiv
 - `UploadFileToS3` — local file → S3
 - `UploadArchiveToS3` — gzip-compressed content → S3
 - Uses `Retry` helper (3 attempts, exponential backoff)
+- Default content type: `application/x-mpegurl`
+
+## Security features
+
+- **Input Validation**: Validates URLs and config before processing
+- **Size Limiting**: 100MB for M3U, 500MB for EPG
+- **Log Sanitization**: Masks URLs (`https://****/****`) and AWS keys (`YCAJ****abcd`)
+- **Credential Handling**: Uses env vars for sensitive data
+- **SSL**: InsecureSkipVerify enabled for local dev
 
 ## CI (GitHub Actions)
 

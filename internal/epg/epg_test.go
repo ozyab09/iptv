@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/ozyab/iptv/internal/config"
+	"github.com/ozyab/iptv/internal/utils"
 )
 
 func getRelativeTimeStr(hoursFromNow int) string {
@@ -157,13 +158,13 @@ func TestFilterEPGContentEmptyChannelIDs(t *testing.T) {
 }
 
 func TestIsGzipped(t *testing.T) {
-	if !isGzipped([]byte{0x1f, 0x8b, 0x08, 0x00}) {
+	if !utils.IsGzipped([]byte{0x1f, 0x8b, 0x08, 0x00}) {
 		t.Error("expected gzip detection to be true")
 	}
-	if isGzipped([]byte("hello world")) {
+	if utils.IsGzipped([]byte("hello world")) {
 		t.Error("expected gzip detection to be false")
 	}
-	if isGzipped([]byte{0x1f}) {
+	if utils.IsGzipped([]byte{0x1f}) {
 		t.Error("expected short data to not be gzipped")
 	}
 }

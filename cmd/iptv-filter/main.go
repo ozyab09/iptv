@@ -1,8 +1,6 @@
 package main
 
 import (
-	"fmt"
-	"net/url"
 	"os"
 	"path"
 	"strings"
@@ -17,6 +15,7 @@ import (
 
 var log = utils.NewSanitizedLoggerWithPrefix("[main]")
 
+// saveFilteredM3ULocally writes M3U content to a file in the output directory.
 func saveFilteredM3ULocally(content, filename string, cfg *config.Config) {
 	outputDir := cfg.OutputDir()
 	if err := os.MkdirAll(outputDir, 0755); err != nil {
@@ -33,6 +32,7 @@ func saveFilteredM3ULocally(content, filename string, cfg *config.Config) {
 	}
 }
 
+// mergeParts combines multiple M3U playlists, keeping only the first #EXTM3U header.
 func mergeParts(parts []string) string {
 	if len(parts) == 0 {
 		return ""
@@ -58,19 +58,39 @@ func mergeParts(parts []string) string {
 	return strings.Join(mergedLines, "\n")
 }
 
-func buildCustomEPGURL(endpointURL, bucketName, epgKey string) string {
-	parsed, err := url.Parse(endpointURL)
-	if err != nil {
-		hostPart := endpointURL
-		if idx := strings.Index(endpointURL, "://"); idx >= 0 {
-			hostPart = endpointURL[idx+3:]
+// parseM3USources splits comma-separated M3U URLs and returns valid URLs.
+func parseM3USources(m3uURL string) []string {
+	parts := strings.Split(m3uURL, ",")
+	var valid []string
+	for _, u := range parts {
+		u = strings.TrimSpace(u)
+		if u != "" {
+			valid = append(valid, u)
 		}
-		return fmt.Sprintf("https://%s.%s/%s", bucketName, hostPart, epgKey)
 	}
-	if parsed.Path != "" && parsed.Path != "/" {
-		return fmt.Sprintf("%s://%s%s/%s/%s", parsed.Scheme, parsed.Host, strings.TrimRight(parsed.Path, "/"), bucketName, epgKey)
+	return valid
+}
+
+// downloadAndFilterM3U downloads M3U from url, filters it, and returns filtered + original content.
+func downloadAndFilterM3U(urlStr string, categoriesToRemove, chNamesToExclude []string, customEPGURL string) (filtered, original string, err error) {
+	log.Info("Downloading M3U source: %s", urlStr)
+
+	if err = utils.Retry(3, 2*time.Second, 2.0, func() error {
+		original, err = m3u.DownloadM3U(urlStr)
+		return err
+	}); err != nil {
+		return "", "", err
 	}
-	return fmt.Sprintf("%s://%s.%s/%s", parsed.Scheme, bucketName, parsed.Host, epgKey)
+
+	filtered = m3u.FilterContent(original, categoriesToRemove, chNamesToExclude, customEPGURL)
+	return filtered, original, nil
+}
+
+// uploadWithRetry wraps an S3 upload function with retry logic.
+func uploadWithRetry(fn func() error) {
+	if err := utils.Retry(3, 2*time.Second, 2.0, fn); err != nil {
+		log.Error("Upload failed after retries: %v", err)
+	}
 }
 
 func run() int {
@@ -88,102 +108,44 @@ func run() int {
 	s3Bucket := cfg.S3DefaultBucketName()
 	s3FilteredKey := cfg.S3FilteredPlaylistKey()
 	s3AllKey := cfg.S3AllCategoriesPlaylistKey()
-	s3EPGKey := cfg.S3EPGKey()
 	categoriesToRemove := config.CategoriesToRemove
 	dryRun := cfg.DryRun()
+	s3Endpoint := cfg.S3EndpointURL()
+	customEPGURL := cfg.BuildCustomEPGURL()
 
-	m3uURLs := strings.Split(m3uURL, ",")
-	var validURLs []string
-	for _, u := range m3uURLs {
-		u = strings.TrimSpace(u)
-		if u != "" {
-			validURLs = append(validURLs, u)
-		}
-	}
-	m3uURLs = validURLs
+	m3uURLs := parseM3USources(m3uURL)
 	log.Info("Processing %d M3U source(s)", len(m3uURLs))
 
-	s3Endpoint := cfg.S3EndpointURL()
-	customEPGURL := buildCustomEPGURL(s3Endpoint, s3Bucket, s3EPGKey)
-
+	// Download and filter each M3U source.
 	var allFiltered []string
 	var allOriginal []string
-
-	for i, urlStr := range m3uURLs {
-		if len(m3uURLs) > 1 {
-			log.Info("Downloading M3U source %d/%d: %s", i+1, len(m3uURLs), urlStr)
-		} else {
-			log.Info("Downloading M3U source: %s", urlStr)
-		}
-
-		var m3uContent string
-		err := utils.Retry(3, 2*time.Second, 2.0, func() error {
-			var e error
-			m3uContent, e = m3u.DownloadM3U(urlStr)
-			return e
-		})
+	for _, urlStr := range m3uURLs {
+		filtered, original, err := downloadAndFilterM3U(urlStr, categoriesToRemove, config.ChannelNamesToExclude, customEPGURL)
 		if err != nil {
 			log.Error("Failed to download M3U from %s: %v", urlStr, err)
 			return 1
 		}
-
-		allOriginal = append(allOriginal, m3uContent)
-		chNamesToExclude := config.ChannelNamesToExclude
-		filtered := m3u.FilterContent(m3uContent, categoriesToRemove, chNamesToExclude, customEPGURL)
+		allOriginal = append(allOriginal, original)
 		allFiltered = append(allFiltered, filtered)
 	}
 
 	filteredContent := mergeParts(allFiltered)
+	originalContent := mergeParts(allOriginal)
 
+	// Apply channel metadata from categories.txt if configured.
 	categoriesFilePath := cfg.CategoriesFilePath()
 	if categoriesFilePath != "" {
-		log.Info("Loading channel metadata from: %s", categoriesFilePath)
-		categoriesMapping := m3u.ParseCategoriesFile(categoriesFilePath)
-		if len(categoriesMapping) > 0 {
+		if categoriesMapping := m3u.ParseCategoriesFile(categoriesFilePath); len(categoriesMapping) > 0 {
 			filteredContent = m3u.ApplyChannelMetadata(filteredContent, categoriesMapping)
 		}
 	}
 
-	originalContent := mergeParts(allOriginal)
-
 	saveFilteredM3ULocally(filteredContent, cfg.LocalFilteredPlaylistPath(), cfg)
 	saveFilteredM3ULocally(originalContent, cfg.LocalAllCategoriesPlaylistPath(), cfg)
 
+	// Process EPG: download, match tvg-ids, filter programmes.
 	if epgURL != "" {
-		log.Info("Starting EPG filtering process")
-
-		var epgContent string
-		err := utils.Retry(3, 2*time.Second, 2.0, func() error {
-			var e error
-			epgContent, e = epg.DownloadEPG(epgURL, cfg)
-			return e
-		})
-		if err != nil {
-			log.Error("Failed to download EPG: %v", err)
-		} else {
-			epgNameToIDMap := epg.BuildEPGNameToIDMap(epgContent)
-			filteredContent = m3u.AddTvgIDsToPlaylist(filteredContent, epgNameToIDMap)
-			saveFilteredM3ULocally(filteredContent, cfg.LocalFilteredPlaylistPath(), cfg)
-
-			chIDs, chNames := epg.ExtractChannelInfoFromPlaylist(filteredContent)
-			excludedCategories := config.EPGExcludedCategories
-			excludedChannelIDs := config.EPGExcludedChannelIDs
-			retentionDays := cfg.EPGRetentionDays()
-
-			filteredEPG, err := epg.FilterEPGContent(epgContent, chIDs, excludedCategories, excludedChannelIDs, chNames, retentionDays)
-			if err != nil {
-				log.Error("Failed to filter EPG: %v", err)
-			} else {
-				epg.SaveFilteredEPGLocally(filteredEPG, cfg.LocalFilteredEPGPath(), cfg)
-
-				if !dryRun {
-					outputDir := cfg.OutputDir()
-					utils.Retry(3, 2*time.Second, 2.0, func() error {
-						return s3.UploadFileToS3(cfg.LocalFilteredEPGPath(), s3Bucket, s3EPGKey, outputDir, s3Endpoint, cfg.S3Region(), "application/gzip")
-					})
-				}
-			}
-		}
+		processEPG(cfg, epgURL, &filteredContent, s3Bucket, s3Endpoint, dryRun)
 	}
 
 	if dryRun {
@@ -191,33 +153,64 @@ func run() int {
 		return 0
 	}
 
-	accessKey := os.Getenv("AWS_ACCESS_KEY_ID")
-	secretKey := os.Getenv("AWS_SECRET_ACCESS_KEY")
-	if accessKey == "" || secretKey == "" {
-		log.Warning("AWS credentials not found in environment variables. Make sure they are set.")
-	}
-	if s3Bucket == "" || s3Bucket == "your-bucket-name" {
-		log.Error("S3_BUCKET_NAME environment variable not set. Please configure it.")
-		return 1
-	}
-
-	utils.Retry(3, 2*time.Second, 2.0, func() error {
+	// Upload all content to S3.
+	uploadWithRetry(func() error {
 		_, err := s3.UploadArchiveToS3(filteredContent, s3Bucket, s3FilteredKey, s3Endpoint, cfg.S3Region())
 		return err
 	})
-	utils.Retry(3, 2*time.Second, 2.0, func() error {
+	uploadWithRetry(func() error {
 		_, err := s3.UploadArchiveToS3(originalContent, s3Bucket, s3AllKey, s3Endpoint, cfg.S3Region())
 		return err
 	})
-	utils.Retry(3, 2*time.Second, 2.0, func() error {
+	uploadWithRetry(func() error {
 		return s3.UploadToS3(filteredContent, s3Bucket, s3FilteredKey, s3Endpoint, cfg.S3Region(), "")
 	})
-	utils.Retry(3, 2*time.Second, 2.0, func() error {
+	uploadWithRetry(func() error {
 		return s3.UploadToS3(originalContent, s3Bucket, s3AllKey, s3Endpoint, cfg.S3Region(), "")
 	})
 
 	log.Info("Process completed successfully")
 	return 0
+}
+
+// processEPG handles EPG download, tvg-id matching, filtering, and upload.
+func processEPG(cfg *config.Config, epgURL string, filteredContent *string, s3Bucket, s3Endpoint string, dryRun bool) {
+	log.Info("Starting EPG filtering process")
+
+	var epgContent string
+	if err := utils.Retry(3, 2*time.Second, 2.0, func() error {
+		var e error
+		epgContent, e = epg.DownloadEPG(epgURL, cfg)
+		return e
+	}); err != nil {
+		log.Error("Failed to download EPG: %v", err)
+		return
+	}
+
+	// Build tvg-id map from EPG and add missing tvg-ids to filtered playlist.
+	epgNameToIDMap := epg.BuildEPGNameToIDMap(epgContent)
+	*filteredContent = m3u.AddTvgIDsToPlaylist(*filteredContent, epgNameToIDMap)
+	saveFilteredM3ULocally(*filteredContent, cfg.LocalFilteredPlaylistPath(), cfg)
+
+	// Extract channel info from playlist and filter EPG programmes.
+	chIDs, chNames := epg.ExtractChannelInfoFromPlaylist(*filteredContent)
+	retentionDays := cfg.EPGRetentionDays()
+
+	filteredEPG, err := epg.FilterEPGContent(epgContent, chIDs, config.EPGExcludedCategories, config.EPGExcludedChannelIDs, chNames, retentionDays)
+	if err != nil {
+		log.Error("Failed to filter EPG: %v", err)
+		return
+	}
+
+	epg.SaveFilteredEPGLocally(filteredEPG, cfg.LocalFilteredEPGPath(), cfg)
+
+	// Upload filtered EPG to S3 (non-dry-run only).
+	if !dryRun {
+		outputDir := cfg.OutputDir()
+		uploadWithRetry(func() error {
+			return s3.UploadFileToS3(cfg.LocalFilteredEPGPath(), s3Bucket, cfg.S3EPGKey(), outputDir, s3Endpoint, cfg.S3Region(), "application/gzip")
+		})
+	}
 }
 
 func main() {
