@@ -27,7 +27,8 @@ iptv/
 │   ├── m3u/processor.go           # M3U download, filtering, normalization
 │   ├── epg/processor.go           # EPG download (gzip/zip), XML filtering
 │   ├── s3/upload.go               # S3 upload via AWS SDK v2
-│   └── utils/
+│    └── utils/
+│       ├── http.go                # Shared HTTP client and DownloadFile utility
 │       ├── logger.go              # Sanitized logger
 │       └── retry.go               # Retry with exponential backoff
 ├── .github/workflows/filter-m3u.yml
@@ -89,6 +90,10 @@ GitHub Actions workflow in `.github/workflows/filter-m3u.yml`:
 - **filter-m3u**: Runs `go run ./cmd/iptv-filter/` (dry-run for PRs)
 
 Required secrets: `M3U_SOURCE_URL`, `S3_BUCKET_NAME`, `S3_OBJECT_KEY`, `S3_ENDPOINT_URL`, `S3_REGION`, `S3_EPG_KEY`, `EPG_SOURCE_URL`, `LOCAL_EPG_PATH`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`.
+
+## Development
+
+For AI-assisted development, see [AGENTS.md](AGENTS.md) for project context, architecture details, and module descriptions.
 
 ## License
 
