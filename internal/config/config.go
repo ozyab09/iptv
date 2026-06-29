@@ -135,13 +135,6 @@ var ChannelNamesToExclude = []string{
 	"Sports",
 }
 
-// ChannelsKeepAllVariants exempts these normalized names from number-suffix exclusion.
-var ChannelsKeepAllVariants = []string{
-	"tlc",
-	"москва 24",
-	"москва-24",
-}
-
 // EPGExcludedCategories lists EPG categories to exclude from the output.
 var EPGExcludedCategories = []string{"Кино"}
 

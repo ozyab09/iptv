@@ -139,19 +139,10 @@ func FilterContent(content string, categoriesToRemove, channelNamesToExclude []s
 						includeEntry = false
 					}
 
+					// Remove channels with numeric suffixes (e.g. "HD 50", "Channel 25").
+					// These are usually regional/time-shifted duplicates.
 					if includeEntry && regNumberSuffix.MatchString(channelName) {
-						keepAll := config.ChannelsKeepAllVariants
-						normalized := NormalizeNameForComparison(channelName)
-						shouldKeep := false
-						for _, k := range keepAll {
-							if normalized == k {
-								shouldKeep = true
-								break
-							}
-						}
-						if !shouldKeep {
-							includeEntry = false
-						}
+						includeEntry = false
 					}
 				}
 			}

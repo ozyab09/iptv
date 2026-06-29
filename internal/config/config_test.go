@@ -88,18 +88,6 @@ func TestChannelNamesToExclude(t *testing.T) {
 	}
 }
 
-func TestChannelsKeepAllVariants(t *testing.T) {
-	expected := []string{"tlc", "москва 24", "москва-24"}
-	if len(ChannelsKeepAllVariants) != len(expected) {
-		t.Errorf("expected %d items, got %d", len(expected), len(ChannelsKeepAllVariants))
-	}
-	for i, v := range expected {
-		if ChannelsKeepAllVariants[i] != v {
-			t.Errorf("expected %q, got %q", v, ChannelsKeepAllVariants[i])
-		}
-	}
-}
-
 func TestEPGRetentionDaysDefault(t *testing.T) {
 	cfg := New()
 	if cfg.EPGRetentionDays() != 10 {

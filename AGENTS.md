@@ -42,10 +42,10 @@ Multiple M3U URLs can be comma-separated in `M3U_SOURCE_URL`.
 - **Category filter**: deny-list approach — `CategoriesToRemove` (default: just `["Взрослые"]`). Everything else is kept.
 - **Channel exclusions**: `ChannelNamesToExclude` — matched case-insensitively as substring
 - **Regional exclusion**: channels ending with `+N` (e.g. `+1`, `+4 HD`, `+2 (Приволжье)`) are removed
-- **Number suffix exclusion**: channels ending with `2+` digits (e.g. `HD 50`, `50`) removed, unless in `ChannelsKeepAllVariants`
+- **Number suffix exclusion**: channels ending with `2+` digits (e.g. `HD 50`, `50`) are removed
 - **Name processing**: `orig` suffix removed from channel names
 - **No deduplication**: all channel variants kept. When multiple channels share the same normalized name, suffixes `#1`, `#2` etc. are appended
-- `ChannelsKeepAllVariants` config still exempts channels from number-suffix exclusion
+- All channels with numeric suffixes are excluded uniformly — no exemptions
 - **Optional metadata**: `categories.txt` can supply `group-title`/`tvg-id` overrides via `CATEGORIES_FILE_PATH` env var (matched by lowercase name)
 - **EPG-based tvg-id**: channels without `tvg-id` get one matched by name against EPG display-names
 
