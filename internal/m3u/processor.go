@@ -2,7 +2,6 @@ package m3u
 
 import (
 	"fmt"
-	"io"
 	"os"
 	"regexp"
 	"strings"
@@ -11,76 +10,52 @@ import (
 	"github.com/ozyab/iptv/internal/utils"
 )
 
+// Package-level logger with sanitized output (masks URLs/credentials).
 var logger = utils.NewSanitizedLoggerWithPrefix("[m3u]")
 
+// Pre-compiled regexps for efficient filtering.
+var (
+	regRegional      = regexp.MustCompile(`\s\+\d+(?:\s+HD)?(?:\s*\([^)]+\))?\s*$`) // e.g. " +1", " +4 HD", " +2 (Приволжье)"
+	regNumberSuffix  = regexp.MustCompile(`\s\d{2,}$`)                                     // e.g. " HD 50", " 25"
+	regGroupTitle    = regexp.MustCompile(`group-title="([^"]*)"`)                        // group-title attribute
+	regTvgID         = regexp.MustCompile(`tvg-id="([^"]*)"`)                             // tvg-id attribute
+	regURLTVG        = regexp.MustCompile(`url-tvg="[^"]*"`)                              // url-tvg attribute
+	regCategoriesFile = regexp.MustCompile(`group-title="([^"]+)".*?tvg-id="([^"]+)".+?,(.+)`) // categories.txt parser
+	regGroupTitleAttr = regexp.MustCompile(`group-title="[^"]*"`)                          // for replacement
+	regTvgIDAttr     = regexp.MustCompile(`tvg-id="[^"]*"`)                              // for replacement
+)
+
+// suffixesToRemove lists patterns stripped during name normalization.
+var suffixesToRemove = []*regexp.Regexp{
+	regexp.MustCompile(`\s*\bhd\b\s*`),
+	regexp.MustCompile(`\s*\borig\b\s*`),
+	regexp.MustCompile(`\s*\bsd\b\s*`),
+	regexp.MustCompile(`\s*\bfull hd\b\s*`),
+	regexp.MustCompile(`\s*\b4k\b\s*`),
+	regexp.MustCompile(`\s*\buhd\b\s*`),
+	regexp.MustCompile(`\s*\buhd tv\b\s*`),
+}
+
+// DownloadM3U downloads an M3U playlist from url with a 100 MB size limit.
 func DownloadM3U(url string) (string, error) {
 	logger.Info("Downloading M3U file from: %s", url)
-
-	resp, err := utils.HTTPClient.Get(url)
+	data, err := utils.DownloadFile(url, config.MaxM3UFileSize)
 	if err != nil {
 		logger.Error("Error downloading M3U file: %v", err)
 		return "", err
 	}
-	defer resp.Body.Close()
-
-	var chunks []byte
-	totalSize := 0
-	buf := make([]byte, 8192)
-
-	for {
-		n, err := resp.Body.Read(buf)
-		if n > 0 {
-			totalSize += n
-			if totalSize > config.MaxM3UFileSize {
-				return "", fmt.Errorf("M3U file exceeds maximum allowed size of %d bytes", config.MaxM3UFileSize)
-			}
-			chunks = append(chunks, buf[:n]...)
-		}
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			logger.Error("Error downloading M3U file: %v", err)
-			return "", err
-		}
-	}
-
-	content := string(chunks)
+	content := string(data)
 	logger.Info("M3U file downloaded successfully, size: %d characters", len(content))
 	return content, nil
 }
 
+// RemoveOrigSuffix strips trailing " orig" (case-insensitive) from channel name.
 func RemoveOrigSuffix(name string) string {
 	if len(name) >= 5 && strings.HasSuffix(strings.ToLower(name), " orig") {
 		return name[:len(name)-5]
 	}
 	return name
 }
-
-func GetBaseChannelName(name string) string {
-	temp := name
-	for {
-		changed := false
-		lower := strings.ToLower(temp)
-		if strings.HasSuffix(lower, " orig") {
-			temp = strings.TrimSpace(temp[:len(temp)-5])
-			changed = true
-		} else if strings.HasSuffix(lower, " hd") {
-			temp = strings.TrimSpace(temp[:len(temp)-3])
-			changed = true
-		}
-		if !changed {
-			break
-		}
-	}
-	return temp
-}
-
-var regRegional = regexp.MustCompile(`\s\+\d+(?:\s+HD)?(?:\s*\([^)]+\))?\s*$`)
-var regNumberSuffix = regexp.MustCompile(`\s\d{2,}$`)
-var regGroupTitle = regexp.MustCompile(`group-title="([^"]*)"`)
-var regTvgID = regexp.MustCompile(`tvg-id="([^"]*)"`)
-var regURLTVG = regexp.MustCompile(`url-tvg="[^"]*"`)
 
 func FilterContent(content string, categoriesToRemove, channelNamesToExclude []string, customEPGURL string) string {
 	logger.Info("Starting filtering process")
@@ -98,15 +73,6 @@ func FilterContent(content string, categoriesToRemove, channelNamesToExclude []s
 	lines := strings.Split(content, "\n")
 	var filteredLines []string
 	includeEntry := false
-	hasEXTINF := false
-
-	for _, line := range lines {
-		if strings.HasPrefix(strings.TrimSpace(line), "#EXTINF:") {
-			hasEXTINF = true
-			break
-		}
-	}
-
 	for _, line := range lines {
 		if len(line) > 10000 {
 			continue
@@ -202,24 +168,14 @@ func FilterContent(content string, categoriesToRemove, channelNamesToExclude []s
 			continue
 		}
 
+			// Append URL or other non-EXTINF line only when the entry is included.
+		// Empty lines and #EXTM3U headers are always kept.
 		if strings.HasPrefix(trimmed, "http") {
-			if !hasEXTINF {
-				if len(categoriesLower) == 0 {
-					filteredLines = append(filteredLines, line)
-				}
-			} else if includeEntry {
+			if includeEntry {
 				filteredLines = append(filteredLines, line)
 			}
-		} else if includeEntry {
+		} else if includeEntry || trimmed == "" || strings.HasPrefix(trimmed, "#EXTM3U") {
 			filteredLines = append(filteredLines, line)
-		} else {
-			if !strings.HasPrefix(trimmed, "#EXTINF:") && !includeEntry {
-				if strings.HasPrefix(trimmed, "#EXTM3U") || trimmed == "" {
-					filteredLines = append(filteredLines, line)
-				} else if !hasEXTINF && trimmed != "" {
-					filteredLines = append(filteredLines, line)
-				}
-			}
 		}
 	}
 
@@ -275,25 +231,16 @@ func ParseChannelEntries(lines []string) ([]string, []ChannelEntry) {
 	return headers, entries
 }
 
-var suffixesToRemove = []string{
-	`\bhd\b`,
-	`\borig\b`,
-	`\bsd\b`,
-	`\bfull hd\b`,
-	`\b4k\b`,
-	`\buhd\b`,
-	`\buhd tv\b`,
-}
-
+// NormalizeNameForComparison strips HD/orig/SD/4K/UHD/FHD suffixes for deduplication matching.
 func NormalizeNameForComparison(name string) string {
 	normalized := strings.ToLower(name)
-	for _, suffix := range suffixesToRemove {
-		re := regexp.MustCompile(`\s*` + suffix + `\s*`)
+	for _, re := range suffixesToRemove {
 		normalized = re.ReplaceAllString(normalized, " ")
 	}
 	return strings.Join(strings.Fields(normalized), " ")
 }
 
+// ParseCategoriesFile reads categories.txt and returns a map of lowercase channel name → {group, tvg_id}.
 func ParseCategoriesFile(filePath string) map[string]map[string]string {
 	mapping := make(map[string]map[string]string)
 
@@ -303,19 +250,13 @@ func ParseCategoriesFile(filePath string) map[string]map[string]string {
 		return mapping
 	}
 
-	content := string(data)
-	pattern := regexp.MustCompile(`group-title="([^"]+)".*?tvg-id="([^"]+)".+?,(.+)`)
-	matches := pattern.FindAllStringSubmatch(content, -1)
-
+	matches := regCategoriesFile.FindAllStringSubmatch(string(data), -1)
 	for _, m := range matches {
-		group := m[1]
-		tvgID := m[2]
-		name := strings.TrimSpace(m[3])
-		nameLower := strings.ToLower(name)
+		nameLower := strings.ToLower(strings.TrimSpace(m[3]))
 		if _, ok := mapping[nameLower]; !ok {
 			mapping[nameLower] = map[string]string{
-				"group":  group,
-				"tvg_id": tvgID,
+				"group":  m[1],
+				"tvg_id": m[2],
 			}
 		}
 	}
@@ -324,47 +265,46 @@ func ParseCategoriesFile(filePath string) map[string]map[string]string {
 	return mapping
 }
 
+// ApplyChannelMetadata overrides group-title and tvg-id for channels listed in categories.txt.
 func ApplyChannelMetadata(content string, categoriesMapping map[string]map[string]string) string {
 	lines := strings.Split(content, "\n")
 	updatedGroup := 0
 	updatedTvgID := 0
 
 	for i, line := range lines {
-		if strings.HasPrefix(strings.TrimSpace(line), "#EXTINF:") {
-			parts := strings.SplitN(line, ",", 2)
-			if len(parts) < 2 {
-				continue
-			}
-
-			channelName := strings.TrimSpace(parts[1])
-			nameLower := strings.ToLower(channelName)
-
-			meta, ok := categoriesMapping[nameLower]
-			if !ok {
-				continue
-			}
-
-			extinfPart := parts[0]
-
-			gtPattern := regexp.MustCompile(`group-title="[^"]*"`)
-			if gtPattern.MatchString(strings.ToLower(extinfPart)) {
-				extinfPart = gtPattern.ReplaceAllString(extinfPart, fmt.Sprintf(`group-title="%s"`, meta["group"]))
-				updatedGroup++
-			} else {
-				extinfPart += fmt.Sprintf(` group-title="%s"`, meta["group"])
-				updatedGroup++
-			}
-
-			tvgPattern := regexp.MustCompile(`tvg-id="[^"]*"`)
-			if tvgPattern.MatchString(strings.ToLower(extinfPart)) {
-				extinfPart = tvgPattern.ReplaceAllString(extinfPart, fmt.Sprintf(`tvg-id="%s"`, meta["tvg_id"]))
-			} else {
-				extinfPart += fmt.Sprintf(` tvg-id="%s"`, meta["tvg_id"])
-			}
-			updatedTvgID++
-
-			lines[i] = extinfPart + "," + parts[1]
+		if !strings.HasPrefix(strings.TrimSpace(line), "#EXTINF:") {
+			continue
 		}
+		parts := strings.SplitN(line, ",", 2)
+		if len(parts) < 2 {
+			continue
+		}
+
+		channelName := strings.TrimSpace(parts[1])
+		meta, ok := categoriesMapping[strings.ToLower(channelName)]
+		if !ok {
+			continue
+		}
+
+		extinfPart := parts[0]
+
+		// Override or add group-title attribute.
+		if regGroupTitleAttr.MatchString(extinfPart) {
+			extinfPart = regGroupTitleAttr.ReplaceAllString(extinfPart, fmt.Sprintf(`group-title="%s"`, meta["group"]))
+		} else {
+			extinfPart += fmt.Sprintf(` group-title="%s"`, meta["group"])
+		}
+		updatedGroup++
+
+		// Override or add tvg-id attribute.
+		if regTvgIDAttr.MatchString(extinfPart) {
+			extinfPart = regTvgIDAttr.ReplaceAllString(extinfPart, fmt.Sprintf(`tvg-id="%s"`, meta["tvg_id"]))
+		} else {
+			extinfPart += fmt.Sprintf(` tvg-id="%s"`, meta["tvg_id"])
+		}
+		updatedTvgID++
+
+		lines[i] = extinfPart + "," + parts[1]
 	}
 
 	if updatedGroup > 0 || updatedTvgID > 0 {

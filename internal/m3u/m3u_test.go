@@ -25,25 +25,6 @@ func TestRemoveOrigSuffix(t *testing.T) {
 	}
 }
 
-func TestGetBaseChannelName(t *testing.T) {
-	tests := []struct {
-		input    string
-		expected string
-	}{
-		{"Channel Name orig", "Channel Name"},
-		{"Channel Name hd", "Channel Name"},
-		{"Channel Name orig hd", "Channel Name"},
-		{"Channel Name HD", "Channel Name"},
-		{"Channel Name", "Channel Name"},
-	}
-	for _, tc := range tests {
-		result := GetBaseChannelName(tc.input)
-		if result != tc.expected {
-			t.Errorf("GetBaseChannelName(%q) = %q, want %q", tc.input, result, tc.expected)
-		}
-	}
-}
-
 func TestCountChannels(t *testing.T) {
 	content := `#EXTM3U
 #EXTINF:-1,Channel 1

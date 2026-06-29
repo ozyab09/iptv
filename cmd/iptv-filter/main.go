@@ -1,8 +1,6 @@
 package main
 
 import (
-	"fmt"
-	"net/url"
 	"os"
 	"path"
 	"strings"
@@ -17,6 +15,7 @@ import (
 
 var log = utils.NewSanitizedLoggerWithPrefix("[main]")
 
+// saveFilteredM3ULocally writes M3U content to a file in the output directory.
 func saveFilteredM3ULocally(content, filename string, cfg *config.Config) {
 	outputDir := cfg.OutputDir()
 	if err := os.MkdirAll(outputDir, 0755); err != nil {
@@ -33,6 +32,7 @@ func saveFilteredM3ULocally(content, filename string, cfg *config.Config) {
 	}
 }
 
+// mergeParts combines multiple M3U playlists, keeping only the first #EXTM3U header.
 func mergeParts(parts []string) string {
 	if len(parts) == 0 {
 		return ""
@@ -58,21 +58,6 @@ func mergeParts(parts []string) string {
 	return strings.Join(mergedLines, "\n")
 }
 
-func buildCustomEPGURL(endpointURL, bucketName, epgKey string) string {
-	parsed, err := url.Parse(endpointURL)
-	if err != nil {
-		hostPart := endpointURL
-		if idx := strings.Index(endpointURL, "://"); idx >= 0 {
-			hostPart = endpointURL[idx+3:]
-		}
-		return fmt.Sprintf("https://%s.%s/%s", bucketName, hostPart, epgKey)
-	}
-	if parsed.Path != "" && parsed.Path != "/" {
-		return fmt.Sprintf("%s://%s%s/%s/%s", parsed.Scheme, parsed.Host, strings.TrimRight(parsed.Path, "/"), bucketName, epgKey)
-	}
-	return fmt.Sprintf("%s://%s.%s/%s", parsed.Scheme, bucketName, parsed.Host, epgKey)
-}
-
 func run() int {
 	cfg := config.New()
 
@@ -88,10 +73,11 @@ func run() int {
 	s3Bucket := cfg.S3DefaultBucketName()
 	s3FilteredKey := cfg.S3FilteredPlaylistKey()
 	s3AllKey := cfg.S3AllCategoriesPlaylistKey()
-	s3EPGKey := cfg.S3EPGKey()
 	categoriesToRemove := config.CategoriesToRemove
 	dryRun := cfg.DryRun()
+	s3Endpoint := cfg.S3EndpointURL()
 
+	// Parse comma-separated M3U URLs.
 	m3uURLs := strings.Split(m3uURL, ",")
 	var validURLs []string
 	for _, u := range m3uURLs {
@@ -103,8 +89,8 @@ func run() int {
 	m3uURLs = validURLs
 	log.Info("Processing %d M3U source(s)", len(m3uURLs))
 
-	s3Endpoint := cfg.S3EndpointURL()
-	customEPGURL := buildCustomEPGURL(s3Endpoint, s3Bucket, s3EPGKey)
+	// Build the public EPG URL to inject into the M3U header.
+	customEPGURL := cfg.BuildCustomEPGURL()
 
 	var allFiltered []string
 	var allOriginal []string
@@ -179,7 +165,7 @@ func run() int {
 				if !dryRun {
 					outputDir := cfg.OutputDir()
 					utils.Retry(3, 2*time.Second, 2.0, func() error {
-						return s3.UploadFileToS3(cfg.LocalFilteredEPGPath(), s3Bucket, s3EPGKey, outputDir, s3Endpoint, cfg.S3Region(), "application/gzip")
+						return s3.UploadFileToS3(cfg.LocalFilteredEPGPath(), s3Bucket, cfg.S3EPGKey(), outputDir, s3Endpoint, cfg.S3Region(), "application/gzip")
 					})
 				}
 			}

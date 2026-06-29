@@ -1,3 +1,4 @@
+// Package config provides configuration from environment variables with validation.
 package config
 
 import (
@@ -8,20 +9,25 @@ import (
 	"strings"
 )
 
+// Config is a stateless configuration reader.
+// All methods read directly from environment variables for simplicity.
 type Config struct{}
 
 func New() *Config {
 	return &Config{}
 }
 
+// M3USourceURL returns the M3U source URL (comma-separated for multiple sources).
 func (c *Config) M3USourceURL() string {
 	return os.Getenv("M3U_SOURCE_URL")
 }
 
+// S3DefaultBucketName returns the S3 bucket name.
 func (c *Config) S3DefaultBucketName() string {
 	return os.Getenv("S3_BUCKET_NAME")
 }
 
+// S3FilteredPlaylistKey returns the S3 key for the filtered playlist (default: playlist.m3u).
 func (c *Config) S3FilteredPlaylistKey() string {
 	if v := os.Getenv("S3_OBJECT_KEY"); v != "" {
 		return v
@@ -29,14 +35,17 @@ func (c *Config) S3FilteredPlaylistKey() string {
 	return "playlist.m3u"
 }
 
+// S3AllCategoriesPlaylistKey returns the S3 key for the unfiltered playlist.
 func (c *Config) S3AllCategoriesPlaylistKey() string {
 	return "playlist-all.m3u"
 }
 
+// S3EndpointURL returns the S3-compatible endpoint URL.
 func (c *Config) S3EndpointURL() string {
 	return os.Getenv("S3_ENDPOINT_URL")
 }
 
+// S3Region returns the S3 region (default: us-east-1).
 func (c *Config) S3Region() string {
 	if v := os.Getenv("S3_REGION"); v != "" {
 		return v
@@ -44,9 +53,13 @@ func (c *Config) S3Region() string {
 	return "us-east-1"
 }
 
+// MaxM3UFileSize is the maximum M3U download size (100 MB).
 const MaxM3UFileSize = 100 * 1024 * 1024
+
+// MaxEPGFileSize is the maximum EPG download size (500 MB).
 const MaxEPGFileSize = 500 * 1024 * 1024
 
+// EPGRetentionDays returns how many days of EPG data to keep (default: 10).
 func (c *Config) EPGRetentionDays() int {
 	val := os.Getenv("EPG_RETENTION_DAYS")
 	if val == "" {
@@ -59,6 +72,7 @@ func (c *Config) EPGRetentionDays() int {
 	return n
 }
 
+// LocalFilteredPlaylistPath returns the local filename for the filtered playlist.
 func (c *Config) LocalFilteredPlaylistPath() string {
 	if v := os.Getenv("S3_OBJECT_KEY"); v != "" {
 		return v
@@ -66,6 +80,7 @@ func (c *Config) LocalFilteredPlaylistPath() string {
 	return "playlist.m3u"
 }
 
+// LocalAllCategoriesPlaylistPath returns the local filename for the unfiltered playlist.
 func (c *Config) LocalAllCategoriesPlaylistPath() string {
 	s3Key := os.Getenv("S3_OBJECT_KEY")
 	if s3Key == "" {
@@ -77,14 +92,17 @@ func (c *Config) LocalAllCategoriesPlaylistPath() string {
 	return s3Key + "-all"
 }
 
+// EPGSourceURL returns the EPG XML source URL.
 func (c *Config) EPGSourceURL() string {
 	return os.Getenv("EPG_SOURCE_URL")
 }
 
+// S3EPGKey returns the S3 key for the EPG file.
 func (c *Config) S3EPGKey() string {
 	return os.Getenv("S3_EPG_KEY")
 }
 
+// LocalEPGPath returns the local filename for the downloaded EPG.
 func (c *Config) LocalEPGPath() string {
 	if v := os.Getenv("LOCAL_EPG_PATH"); v != "" {
 		return v
@@ -92,6 +110,7 @@ func (c *Config) LocalEPGPath() string {
 	return "epg.xml.gz"
 }
 
+// LocalFilteredEPGPath returns the local filename for the filtered EPG.
 func (c *Config) LocalFilteredEPGPath() string {
 	s3Key := os.Getenv("S3_EPG_KEY")
 	if s3Key == "" {
@@ -103,10 +122,10 @@ func (c *Config) LocalFilteredEPGPath() string {
 	return s3Key + "-filtered"
 }
 
-var CategoriesToRemove = []string{
-	"Взрослые",
-}
+// CategoriesToRemove is the deny-list of channel groups to filter out.
+var CategoriesToRemove = []string{"Взрослые"}
 
+// ChannelNamesToExclude lists channels removed by name substring match (case-insensitive).
 var ChannelNamesToExclude = []string{
 	"Fashion",
 	"СПАС",
@@ -116,16 +135,17 @@ var ChannelNamesToExclude = []string{
 	"Sports",
 }
 
+// ChannelsKeepAllVariants exempts these normalized names from number-suffix exclusion.
 var ChannelsKeepAllVariants = []string{
 	"tlc",
 	"москва 24",
 	"москва-24",
 }
 
-var EPGExcludedCategories = []string{
-	"Кино",
-}
+// EPGExcludedCategories lists EPG categories to exclude from the output.
+var EPGExcludedCategories = []string{"Кино"}
 
+// EPGExcludedChannelIDs lists specific EPG channel IDs to exclude.
 var EPGExcludedChannelIDs = []string{
 	"2745", "6170", "6168", "7553", "6171", "9228", "7552",
 	"4729", "7594", "7595", "9233", "8822", "8817", "2438",
@@ -134,6 +154,7 @@ var EPGExcludedChannelIDs = []string{
 	"810", "6419",
 }
 
+// OutputDir returns the local output directory (default: output/).
 func (c *Config) OutputDir() string {
 	if v := os.Getenv("OUTPUT_DIR"); v != "" {
 		return v
@@ -141,10 +162,12 @@ func (c *Config) OutputDir() string {
 	return "output"
 }
 
+// CategoriesFilePath returns the optional path to categories.txt for metadata overrides.
 func (c *Config) CategoriesFilePath() string {
 	return os.Getenv("CATEGORIES_FILE_PATH")
 }
 
+// DryRun returns true if DRY_RUN env var is set to a truthy value.
 func (c *Config) DryRun() bool {
 	return strings.EqualFold(os.Getenv("DRY_RUN"), "true") ||
 		os.Getenv("DRY_RUN") == "1" ||
@@ -152,6 +175,29 @@ func (c *Config) DryRun() bool {
 		strings.EqualFold(os.Getenv("DRY_RUN"), "on")
 }
 
+// BuildCustomEPGURL constructs the public URL for the EPG file in S3.
+// Used to inject url-tvg into the M3U header.
+func (c *Config) BuildCustomEPGURL() string {
+	endpointURL := c.S3EndpointURL()
+	bucketName := c.S3DefaultBucketName()
+	epgKey := c.S3EPGKey()
+
+	parsed, err := url.Parse(endpointURL)
+	if err != nil {
+		// Try to extract host part manually
+		hostPart := endpointURL
+		if idx := strings.Index(endpointURL, "://"); idx >= 0 {
+			hostPart = endpointURL[idx+3:]
+		}
+		return fmt.Sprintf("https://%s.%s/%s", bucketName, hostPart, epgKey)
+	}
+	if parsed.Path != "" && parsed.Path != "/" {
+		return fmt.Sprintf("%s://%s%s/%s/%s", parsed.Scheme, parsed.Host, strings.TrimRight(parsed.Path, "/"), bucketName, epgKey)
+	}
+	return fmt.Sprintf("%s://%s.%s/%s", parsed.Scheme, bucketName, parsed.Host, epgKey)
+}
+
+// Validate checks all required configuration and returns a list of errors.
 func (c *Config) Validate() []string {
 	var errors []string
 	placeholderPatterns := []string{"your-", "your_provider", "your-epg-provider"}

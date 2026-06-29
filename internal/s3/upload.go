@@ -18,8 +18,30 @@ import (
 	"github.com/ozyab/iptv/internal/utils"
 )
 
+// Package-level logger with sanitized output.
 var logger = utils.NewSanitizedLoggerWithPrefix("[s3]")
 
+// metadata is shared across all S3 uploads for consistent tracking.
+var defaultMetadata = map[string]string{
+	"uploaded-by": "iptv-m3u-filter",
+}
+
+// buildS3Metadata creates a metadata map with a timestamp.
+func buildS3Metadata(extra ...map[string]string) map[string]string {
+	m := make(map[string]string, len(defaultMetadata)+1+len(extra))
+	for k, v := range defaultMetadata {
+		m[k] = v
+	}
+	m["upload-timestamp"] = fmt.Sprintf("%d", time.Now().Unix())
+	for _, e := range extra {
+		for k, v := range e {
+			m[k] = v
+		}
+	}
+	return m
+}
+
+// newS3Client creates an S3 client configured for the given endpoint and region.
 func newS3Client(s3Endpoint, region string) (*s3.Client, error) {
 	accessKey := os.Getenv("AWS_ACCESS_KEY_ID")
 	secretKey := os.Getenv("AWS_SECRET_ACCESS_KEY")
@@ -32,39 +54,47 @@ func newS3Client(s3Endpoint, region string) (*s3.Client, error) {
 		return nil, fmt.Errorf("failed to load AWS config: %w", err)
 	}
 
-	client := s3.NewFromConfig(awsCfg, func(o *s3.Options) {
+	return s3.NewFromConfig(awsCfg, func(o *s3.Options) {
 		o.BaseEndpoint = &s3Endpoint
 		o.UsePathStyle = true
-	})
-
-	return client, nil
+	}), nil
 }
 
-func UploadToS3(content, bucket, key, s3Endpoint, region, contentType string) error {
-	if contentType == "" {
-		contentType = "application/x-mpegurl"
-	}
-
-	logger.Info("Uploading to S3-compatible storage: s3://%s/%s", bucket, key)
-
+// validateEndpoint checks that the S3 endpoint URL is a valid HTTP/HTTPS URL.
+func validateEndpoint(s3Endpoint string) error {
 	if s3Endpoint == "" || (!strings.HasPrefix(s3Endpoint, "http://") && !strings.HasPrefix(s3Endpoint, "https://")) {
 		return fmt.Errorf("invalid S3 endpoint URL: %s. Must be a valid HTTP/HTTPS URL", s3Endpoint)
 	}
+	return nil
+}
+
+// getContentType returns the provided contentType or defaults to "application/x-mpegurl".
+func getContentType(contentType string) string {
+	if contentType == "" {
+		return "application/x-mpegurl"
+	}
+	return contentType
+}
+
+// UploadToS3 uploads a string as an S3 object.
+func UploadToS3(content, bucket, key, s3Endpoint, region, contentType string) error {
+	if err := validateEndpoint(s3Endpoint); err != nil {
+		return err
+	}
+	logger.Info("Uploading to S3-compatible storage: s3://%s/%s", bucket, key)
 
 	client, err := newS3Client(s3Endpoint, region)
 	if err != nil {
 		return err
 	}
 
+	ct := getContentType(contentType)
 	_, err = client.PutObject(context.TODO(), &s3.PutObjectInput{
 		Bucket:      &bucket,
 		Key:         &key,
 		Body:        strings.NewReader(content),
-		ContentType: &contentType,
-		Metadata: map[string]string{
-			"uploaded-by":      "m3u-simple-filter-script",
-			"upload-timestamp": fmt.Sprintf("%d", time.Now().Unix()),
-		},
+		ContentType: &ct,
+		Metadata:    buildS3Metadata(),
 	})
 	if err != nil {
 		logger.Error("Error uploading to S3-compatible storage: %v", err)
@@ -75,11 +105,13 @@ func UploadToS3(content, bucket, key, s3Endpoint, region, contentType string) er
 	return nil
 }
 
+// UploadFileToS3 uploads a local file to S3.
 func UploadFileToS3(filePath, bucket, key, outputDir, s3Endpoint, region, contentType string) error {
-	if contentType == "" {
-		contentType = "application/x-mpegurl"
+	if err := validateEndpoint(s3Endpoint); err != nil {
+		return err
 	}
 
+	// If file not found at filePath, try outputDir + filename.
 	fullPath := filePath
 	if outputDir != "" {
 		altPath := path.Join(outputDir, path.Base(filePath))
@@ -90,8 +122,9 @@ func UploadFileToS3(filePath, bucket, key, outputDir, s3Endpoint, region, conten
 
 	logger.Info("Uploading file to S3-compatible storage: s3://%s/%s from %s", bucket, key, fullPath)
 
-	if s3Endpoint == "" || (!strings.HasPrefix(s3Endpoint, "http://") && !strings.HasPrefix(s3Endpoint, "https://")) {
-		return fmt.Errorf("invalid S3 endpoint URL: %s. Must be a valid HTTP/HTTPS URL", s3Endpoint)
+	data, err := os.ReadFile(fullPath)
+	if err != nil {
+		return fmt.Errorf("failed to read file %s: %w", fullPath, err)
 	}
 
 	client, err := newS3Client(s3Endpoint, region)
@@ -99,21 +132,13 @@ func UploadFileToS3(filePath, bucket, key, outputDir, s3Endpoint, region, conten
 		return err
 	}
 
-	data, err := os.ReadFile(fullPath)
-	if err != nil {
-		return fmt.Errorf("failed to read file %s: %w", fullPath, err)
-	}
-
+	ct := getContentType(contentType)
 	_, err = client.PutObject(context.TODO(), &s3.PutObjectInput{
 		Bucket:      &bucket,
 		Key:         &key,
 		Body:        bytes.NewReader(data),
-		ContentType: &contentType,
-		Metadata: map[string]string{
-			"uploaded-by":      "m3u-simple-filter-script",
-			"upload-timestamp": fmt.Sprintf("%d", time.Now().Unix()),
-			"source-file":      fullPath,
-		},
+		ContentType: &ct,
+		Metadata:    buildS3Metadata(map[string]string{"source-file": fullPath}),
 	})
 	if err != nil {
 		logger.Error("Error uploading file to S3-compatible storage: %v", err)
@@ -124,7 +149,12 @@ func UploadFileToS3(filePath, bucket, key, outputDir, s3Endpoint, region, conten
 	return nil
 }
 
+// UploadArchiveToS3 gzip-compresses content and uploads it to S3 under archive/YYYY-MM-DD/.
 func UploadArchiveToS3(content, bucket, baseKey, s3Endpoint, region string) (string, error) {
+	if err := validateEndpoint(s3Endpoint); err != nil {
+		return "", err
+	}
+
 	now := time.Now().UTC()
 	dateStr := now.Format("2006-01-02")
 	timeStr := now.Format("15-04-05")
@@ -135,15 +165,7 @@ func UploadArchiveToS3(content, bucket, baseKey, s3Endpoint, region string) (str
 
 	logger.Info("Uploading archive to S3: s3://%s/%s", bucket, archiveKey)
 
-	if s3Endpoint == "" || (!strings.HasPrefix(s3Endpoint, "http://") && !strings.HasPrefix(s3Endpoint, "https://")) {
-		return "", fmt.Errorf("invalid S3 endpoint URL: %s. Must be a valid HTTP/HTTPS URL", s3Endpoint)
-	}
-
-	client, err := newS3Client(s3Endpoint, region)
-	if err != nil {
-		return "", err
-	}
-
+	// Gzip compress the content.
 	var buf bytes.Buffer
 	gw := gzip.NewWriter(&buf)
 	if _, err := gw.Write([]byte(content)); err != nil {
@@ -151,21 +173,24 @@ func UploadArchiveToS3(content, bucket, baseKey, s3Endpoint, region string) (str
 	}
 	gw.Close()
 
+	client, err := newS3Client(s3Endpoint, region)
+	if err != nil {
+		return "", err
+	}
+
 	originalSizeKB := float64(len(content)) / 1024
 	compressedSizeKB := float64(buf.Len()) / 1024
-
 	contentType := "application/gzip"
+
 	_, err = client.PutObject(context.TODO(), &s3.PutObjectInput{
 		Bucket:      &bucket,
 		Key:         &archiveKey,
 		Body:        bytes.NewReader(buf.Bytes()),
 		ContentType: &contentType,
-		Metadata: map[string]string{
-			"uploaded-by":        "m3u-simple-filter-script",
-			"upload-timestamp":   fmt.Sprintf("%d", time.Now().Unix()),
+		Metadata: buildS3Metadata(map[string]string{
 			"original-size-kb":   fmt.Sprintf("%.2f", originalSizeKB),
 			"compressed-size-kb": fmt.Sprintf("%.2f", compressedSizeKB),
-		},
+		}),
 	})
 	if err != nil {
 		logger.Error("Error uploading archive to S3: %v", err)

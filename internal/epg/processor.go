@@ -19,7 +19,10 @@ import (
 	"github.com/ozyab/iptv/internal/utils"
 )
 
+// Package-level logger with sanitized output.
 var logger = utils.NewSanitizedLoggerWithPrefix("[epg]")
+
+// XML structs for EPG (Electronic Program Guide) in XMLTV format.
 
 type TV struct {
 	XMLName    xml.Name  `xml:"tv"`
@@ -76,43 +79,19 @@ type Rating struct {
 	Value  string `xml:"value"`
 }
 
+// DownloadEPG downloads, decompresses (gz/zip), and returns EPG XML content as a string.
 func DownloadEPG(urlStr string, cfg *config.Config) (string, error) {
 	logger.Info("Downloading EPG file from: %s", urlStr)
 
-	resp, err := utils.HTTPClient.Get(urlStr)
+	rawContent, err := utils.DownloadFile(urlStr, config.MaxEPGFileSize)
 	if err != nil {
 		logger.Error("Error downloading EPG file: %v", err)
 		return "", err
 	}
-	defer resp.Body.Close()
 
-	var chunks []byte
-	totalSize := 0
-	buf := make([]byte, 8192)
-
-	for {
-		n, err := resp.Body.Read(buf)
-		if n > 0 {
-			totalSize += n
-			if totalSize > config.MaxEPGFileSize {
-				return "", fmt.Errorf("EPG file exceeds maximum allowed size of %d bytes", config.MaxEPGFileSize)
-			}
-			chunks = append(chunks, buf[:n]...)
-		}
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			logger.Error("Error downloading EPG file: %v", err)
-			return "", err
-		}
-	}
-
-	rawContent := chunks
-
+	// Save original compressed file for debugging, then decompress.
 	outputDir := cfg.OutputDir()
 	os.MkdirAll(outputDir, 0755)
-
 	parsedURL, _ := url.Parse(urlStr)
 	fname := path.Base(parsedURL.Path)
 	if fname == "" {
@@ -179,10 +158,14 @@ func DownloadEPG(urlStr string, cfg *config.Config) (string, error) {
 	return content, nil
 }
 
+// isGzipped detects gzip magic bytes (0x1f, 0x8b).
 func isGzipped(data []byte) bool {
 	return len(data) >= 2 && data[0] == 0x1f && data[1] == 0x8b
 }
 
+// ExtractChannelInfoFromPlaylist parses M3U EXTINF lines and returns:
+//   - channelIDs:   tvg-id → category (for EPG matching by ID)
+//   - channelNames: channel name → category (for EPG matching by name)
 func ExtractChannelInfoFromPlaylist(playlistContent string) (map[string]string, map[string]string) {
 	logger.Info("Extracting channel IDs and categories from playlist")
 
@@ -223,6 +206,8 @@ func ExtractChannelInfoFromPlaylist(playlistContent string) (map[string]string, 
 	return channelIDs, channelNames
 }
 
+// BuildEPGNameToIDMap creates a lowercase display-name → channel-id map from EPG XML.
+// Used to add tvg-id attributes to M3U channels that lack them.
 func BuildEPGNameToIDMap(epgContent string) map[string]string {
 	nameToID := make(map[string]string)
 
@@ -244,6 +229,7 @@ func BuildEPGNameToIDMap(epgContent string) map[string]string {
 	return nameToID
 }
 
+// Pre-compiled regexp for parsing EPG timestamps like "20250101000000 +0300".
 var epgTimeRegex = regexp.MustCompile(`(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})\s+(\S+)`)
 
 func FilterEPGContent(epgContent string, channelIDs map[string]string, excludedCategories, excludedChannelIDs []string, channelNames map[string]string, retentionDays int) (string, error) {
@@ -406,6 +392,7 @@ func FilterEPGContent(epgContent string, channelIDs map[string]string, excludedC
 	return xmlStr, nil
 }
 
+// parseEPGTime converts EPG timestamp (e.g. "20250101000000 +0300") to UTC time.Time.
 func parseEPGTime(match []string) (time.Time, error) {
 	loc := time.UTC
 	tz := match[7]
@@ -427,6 +414,7 @@ func parseEPGTime(match []string) (time.Time, error) {
 	return t.UTC(), nil
 }
 
+// SaveFilteredEPGLocally writes EPG content to disk, optionally gzip-compressed if filename ends with .gz.
 func SaveFilteredEPGLocally(content, filename string, cfg *config.Config) error {
 	outputDir := cfg.OutputDir()
 	if err := os.MkdirAll(outputDir, 0755); err != nil {
