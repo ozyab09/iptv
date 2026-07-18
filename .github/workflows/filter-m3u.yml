@@ -39,16 +39,7 @@ jobs:
       uses: actions/setup-go@v5
       with:
         go-version: '1.25'
-
-    - name: Cache Go modules
-      uses: actions/cache@v4
-      with:
-        path: |
-          ~/go/pkg/mod
-          ~/.cache/go-build
-        key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
-        restore-keys: |
-          ${{ runner.os }}-go-
+        cache: true
 
     - name: Run tests
       run: go test ./... -v -count=1
@@ -71,16 +62,7 @@ jobs:
       uses: actions/setup-go@v5
       with:
         go-version: '1.25'
-
-    - name: Cache Go modules
-      uses: actions/cache@v4
-      with:
-        path: |
-          ~/go/pkg/mod
-          ~/.cache/go-build
-        key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
-        restore-keys: |
-          ${{ runner.os }}-go-
+        cache: true
 
     - name: Set dry-run mode for pull requests
       if: github.event_name == 'pull_request'
