@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/ozyab/iptv/internal/config"
@@ -23,6 +24,10 @@ var (
 	regCategoriesFile = regexp.MustCompile(`group-title="([^"]+)".*?tvg-id="([^"]+)".+?,(.+)`) // categories.txt parser
 	regGroupTitleAttr = regexp.MustCompile(`group-title="[^"]*"`)                          // for replacement
 	regTvgIDAttr     = regexp.MustCompile(`tvg-id="[^"]*"`)                              // for replacement
+	regTvgLogo       = regexp.MustCompile(`tvg-logo="([^"]*)"`)                          // tvg-logo attribute (capture)
+	regTvgRec        = regexp.MustCompile(`tvg-rec="([^"]*)"`)                           // tvg-rec attribute (capture)
+	regTvgLogoAttr   = regexp.MustCompile(`tvg-logo="[^"]*"`)                            // for replacement
+	regTvgRecAttr    = regexp.MustCompile(`tvg-rec="[^"]*"`)                             // for replacement
 )
 
 // suffixesToRemove lists patterns stripped during name normalization.
@@ -170,7 +175,9 @@ func FilterContent(content string, categoriesToRemove, channelNamesToExclude []s
 		}
 	}
 
-	processed := RemoveDuplicatesAndApplyHDPref(strings.Join(filteredLines, "\n"))
+	contentNoDups := RemoveDuplicateURLs(strings.Join(filteredLines, "\n"))
+	processed := RemoveDuplicatesAndApplyHDPref(contentNoDups)
+	processed = SortPlaylistAlphabetically(processed)
 	origCh := CountChannels(content)
 	procCh := CountChannels(processed)
 	logger.Info("Filtering complete: %d channels -> %d channels", origCh, procCh)
@@ -302,6 +309,156 @@ func ApplyChannelMetadata(content string, categoriesMapping map[string]map[strin
 		logger.Info("Updated metadata: %d group-title, %d tvg-id from categories file", updatedGroup, updatedTvgID)
 	}
 	return strings.Join(lines, "\n")
+}
+
+// RemoveDuplicateURLs removes entries with duplicate URLs, keeping only one entry per unique URL.
+// For duplicate entries, it merges attributes (tvg-id, group-title, tvg-logo, tvg-rec) by taking
+// the first non-empty value and keeps the longest channel name.
+func RemoveDuplicateURLs(content string) string {
+	lines := strings.Split(content, "\n")
+	headers, entries := ParseChannelEntries(lines)
+
+	// Group entries by URL.
+	urlGroups := make(map[string][]ChannelEntry)
+	var noURLEntries []ChannelEntry
+
+	for _, entry := range entries {
+		url := ""
+		for _, extraLine := range entry.ExtraLines {
+			trimmed := strings.TrimSpace(extraLine)
+			if strings.HasPrefix(trimmed, "http") {
+				url = trimmed
+				break
+			}
+		}
+		if url != "" {
+			urlGroups[url] = append(urlGroups[url], entry)
+		} else {
+			noURLEntries = append(noURLEntries, entry)
+		}
+	}
+
+	var dedupedEntries []ChannelEntry
+	totalRemoved := 0
+
+	for _, group := range urlGroups {
+		if len(group) <= 1 {
+			dedupedEntries = append(dedupedEntries, group...)
+			continue
+		}
+
+		// Merge attributes: take first non-empty value from any entry.
+		mergedTvgID := ""
+		mergedGroupTitle := ""
+		mergedTvgLogo := ""
+		mergedTvgRec := ""
+		longestName := ""
+
+		for _, entry := range group {
+			extinfLine := entry.EXTINFLine
+
+			if m := regTvgID.FindStringSubmatch(extinfLine); len(m) > 1 && m[1] != "" && mergedTvgID == "" {
+				mergedTvgID = m[1]
+			}
+			if m := regGroupTitle.FindStringSubmatch(extinfLine); len(m) > 1 && m[1] != "" && mergedGroupTitle == "" {
+				mergedGroupTitle = m[1]
+			}
+			if m := regTvgLogo.FindStringSubmatch(extinfLine); len(m) > 1 && m[1] != "" && mergedTvgLogo == "" {
+				mergedTvgLogo = m[1]
+			}
+			if m := regTvgRec.FindStringSubmatch(extinfLine); len(m) > 1 && m[1] != "" && mergedTvgRec == "" {
+				mergedTvgRec = m[1]
+			}
+
+			// Longest channel name wins.
+			parts := strings.SplitN(extinfLine, ",", 2)
+			if len(parts) > 1 {
+				name := strings.TrimSpace(parts[1])
+				if len(name) > len(longestName) {
+					longestName = name
+				}
+			}
+		}
+
+		// Build merged EXTINF line from the first entry's structure.
+		firstEntry := group[0]
+		extinfPart := strings.SplitN(firstEntry.EXTINFLine, ",", 2)[0]
+
+		// Remove all existing attribute values.
+		extinfPart = regGroupTitleAttr.ReplaceAllString(extinfPart, "")
+		extinfPart = regTvgIDAttr.ReplaceAllString(extinfPart, "")
+		extinfPart = regTvgLogoAttr.ReplaceAllString(extinfPart, "")
+		extinfPart = regTvgRecAttr.ReplaceAllString(extinfPart, "")
+
+		// Clean up extra whitespace.
+		extinfPart = strings.TrimSpace(extinfPart)
+
+		// Add merged attributes in consistent order.
+		if mergedGroupTitle != "" {
+			extinfPart += fmt.Sprintf(` group-title="%s"`, mergedGroupTitle)
+		}
+		if mergedTvgID != "" {
+			extinfPart += fmt.Sprintf(` tvg-id="%s"`, mergedTvgID)
+		}
+		if mergedTvgLogo != "" {
+			extinfPart += fmt.Sprintf(` tvg-logo="%s"`, mergedTvgLogo)
+		}
+		if mergedTvgRec != "" {
+			extinfPart += fmt.Sprintf(` tvg-rec="%s"`, mergedTvgRec)
+		}
+
+		mergedLine := extinfPart + "," + longestName
+
+		dedupedEntries = append(dedupedEntries, ChannelEntry{
+			EXTINFLine: mergedLine,
+			ExtraLines: firstEntry.ExtraLines,
+		})
+		totalRemoved += len(group) - 1
+	}
+
+	// Append entries without URLs (kept as-is).
+	dedupedEntries = append(dedupedEntries, noURLEntries...)
+
+	if totalRemoved > 0 {
+		logger.Info("Removed %d duplicate URLs from playlist", totalRemoved)
+	}
+
+	var finalLines []string
+	finalLines = append(finalLines, headers...)
+	for _, entry := range dedupedEntries {
+		finalLines = append(finalLines, entry.EXTINFLine)
+		finalLines = append(finalLines, entry.ExtraLines...)
+	}
+	return strings.Join(finalLines, "\n")
+}
+
+// SortPlaylistAlphabetically sorts playlist entries alphabetically by channel name (case-insensitive).
+func SortPlaylistAlphabetically(content string) string {
+	lines := strings.Split(content, "\n")
+	headers, entries := ParseChannelEntries(lines)
+
+	sort.SliceStable(entries, func(i, j int) bool {
+		nameI := channelNameFromEntry(entries[i])
+		nameJ := channelNameFromEntry(entries[j])
+		return strings.ToLower(nameI) < strings.ToLower(nameJ)
+	})
+
+	var finalLines []string
+	finalLines = append(finalLines, headers...)
+	for _, entry := range entries {
+		finalLines = append(finalLines, entry.EXTINFLine)
+		finalLines = append(finalLines, entry.ExtraLines...)
+	}
+	return strings.Join(finalLines, "\n")
+}
+
+// channelNameFromEntry extracts the channel name (part after comma) from an EXTINF line.
+func channelNameFromEntry(entry ChannelEntry) string {
+	parts := strings.SplitN(entry.EXTINFLine, ",", 2)
+	if len(parts) > 1 {
+		return strings.TrimSpace(parts[1])
+	}
+	return ""
 }
 
 func AddTvgIDsToPlaylist(content string, epgNameToIDMap map[string]string) string {
