@@ -64,6 +64,186 @@ http://example.com/2duplicate`
 	}
 }
 
+func TestSortPlaylistAlphabetically(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		order    []string // expected channel name order
+	}{
+		{
+			name: "sort A-Z",
+			input: `#EXTM3U
+#EXTINF:-1 group-title="Новости",Channel C
+http://example.com/c.m3u8
+#EXTINF:-1 group-title="Спорт",Channel A
+http://example.com/a.m3u8
+#EXTINF:-1 group-title="Кино",Channel B
+http://example.com/b.m3u8`,
+			order: []string{"Channel A", "Channel B", "Channel C"},
+		},
+		{
+			name: "case-insensitive sort",
+			input: `#EXTM3U
+#EXTINF:-1,channel z
+http://example.com/z.m3u8
+#EXTINF:-1,Channel A
+http://example.com/a.m3u8
+#EXTINF:-1,CHANNEL B
+http://example.com/b.m3u8`,
+			order: []string{"Channel A", "CHANNEL B", "channel z"},
+		},
+		{
+			name: "preserves #N suffixes",
+			input: `#EXTM3U
+#EXTINF:-1,Channel B #2
+http://example.com/b2.m3u8
+#EXTINF:-1,Channel A
+http://example.com/a.m3u8
+#EXTINF:-1,Channel B #1
+http://example.com/b1.m3u8`,
+			order: []string{"Channel A", "Channel B #1", "Channel B #2"},
+		},
+		{
+			name: "stable sort keeps original order for equal names",
+			input: `#EXTM3U
+#EXTINF:-1,Same Name
+http://example.com/1.m3u8
+#EXTINF:-1,Same Name
+http://example.com/2.m3u8`,
+			order: []string{"Same Name", "Same Name"},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			result := SortPlaylistAlphabetically(tc.input)
+
+			// Extract channel names in order.
+			var names []string
+			for _, line := range strings.Split(result, "\n") {
+				if strings.HasPrefix(strings.TrimSpace(line), "#EXTINF:") {
+					parts := strings.SplitN(line, ",", 2)
+					if len(parts) > 1 {
+						names = append(names, strings.TrimSpace(parts[1]))
+					}
+				}
+			}
+
+			if len(names) != len(tc.order) {
+				t.Fatalf("expected %d channels, got %d: %v", len(tc.order), len(names), names)
+			}
+
+			for i, expected := range tc.order {
+				if names[i] != expected {
+					t.Errorf("position %d: expected %q, got %q", i, expected, names[i])
+				}
+			}
+		})
+	}
+}
+
+func TestRemoveDuplicateURLs(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		wantURLs int // expected number of unique URLs
+		checks   []string // substrings that must be present
+		notChecks []string // substrings that must NOT be present
+	}{
+		{
+			name: "deduplicate by URL, merge attributes, keep longest name",
+			input: `#EXTM3U
+#EXTINF:-1 group-title="Общие" tvg-id="1000" tvg-logo="http://epg.one/img/1000.png" tvg-rec="0",ОТР HD
+http://example.com/otr.m3u8
+#EXTINF:-1 tvg-rec="7",ОТР
+http://example.com/otr.m3u8`,
+			wantURLs: 1,
+			checks:   []string{`group-title="Общие"`, `tvg-id="1000"`, `tvg-logo="http://epg.one/img/1000.png"`, `tvg-rec="0"`, `ОТР HD`},
+			notChecks: nil,
+		},
+		{
+			name: "different URLs kept separate",
+			input: `#EXTM3U
+#EXTINF:-1 group-title="Общие" tvg-id="1000",Channel A
+http://example.com/a.m3u8
+#EXTINF:-1 group-title="Новости" tvg-id="2000",Channel B
+http://example.com/b.m3u8`,
+			wantURLs: 2,
+			checks:   []string{`Channel A`, `Channel B`, `http://example.com/a.m3u8`, `http://example.com/b.m3u8`},
+			notChecks: nil,
+		},
+		{
+			name: "merge fills missing tvg-logo from other entry",
+			input: `#EXTM3U
+#EXTINF:-1 tvg-id="500" tvg-logo="http://epg.one/img/500.png",Channel X
+http://example.com/x.m3u8
+#EXTINF:-1 tvg-id="500",Channel X Long Name Version
+http://example.com/x.m3u8`,
+			wantURLs: 1,
+			checks:   []string{`tvg-logo="http://epg.one/img/500.png"`, `Channel X Long Name Version`},
+			notChecks: []string{`Channel X\nhttp`}, // only the longest name should appear
+		},
+		{
+			name: "no duplicates passes through unchanged",
+			input: `#EXTM3U
+#EXTINF:-1 group-title="Общие" tvg-id="100",Channel 1
+http://example.com/1.m3u8
+#EXTINF:-1 group-title="Новости" tvg-id="200",Channel 2
+http://example.com/2.m3u8
+#EXTINF:-1 group-title="Спорт" tvg-id="300",Channel 3
+http://example.com/3.m3u8`,
+			wantURLs: 3,
+			checks:   []string{`Channel 1`, `Channel 2`, `Channel 3`},
+			notChecks: nil,
+		},
+		{
+			name: "three duplicate URLs merged into one",
+			input: `#EXTM3U
+#EXTINF:-1 group-title="A" tvg-id="1" tvg-rec="0",Short
+http://example.com/same.m3u8
+#EXTINF:-1 group-title="B" tvg-rec="5",Medium Name
+http://example.com/same.m3u8
+#EXTINF:-1 tvg-id="3" tvg-logo="http://logo.png",The Longest Channel Name Here
+http://example.com/same.m3u8`,
+			wantURLs: 1,
+			checks:   []string{`The Longest Channel Name Here`, `tvg-rec="0"`, `group-title="A"`, `tvg-logo="http://logo.png"`},
+			notChecks: []string{`Short`, `Medium Name`},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			result := RemoveDuplicateURLs(tc.input)
+
+			// Count unique URLs in result.
+			_, entries := ParseChannelEntries(strings.Split(result, "\n"))
+			urls := make(map[string]bool)
+			for _, e := range entries {
+				for _, extra := range e.ExtraLines {
+					if strings.HasPrefix(strings.TrimSpace(extra), "http") {
+						urls[strings.TrimSpace(extra)] = true
+					}
+				}
+			}
+			if len(urls) != tc.wantURLs {
+				t.Errorf("expected %d unique URLs, got %d", tc.wantURLs, len(urls))
+			}
+
+			for _, check := range tc.checks {
+				if !strings.Contains(result, check) {
+					t.Errorf("expected result to contain %q", check)
+				}
+			}
+
+			for _, notCheck := range tc.notChecks {
+				if strings.Contains(result, notCheck) {
+					t.Errorf("expected result NOT to contain %q", notCheck)
+				}
+			}
+		})
+	}
+}
+
 func TestRemoveDuplicatesWithTVGRec(t *testing.T) {
 	content := `#EXTM3U
 #EXTINF:-1 tvg-id="711" tvg-rec="3",Channel 1
