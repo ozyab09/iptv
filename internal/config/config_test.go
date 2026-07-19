@@ -68,11 +68,14 @@ func TestLocalPlaylistPaths(t *testing.T) {
 }
 
 func TestCategoriesToRemove(t *testing.T) {
-	if len(CategoriesToRemove) != 1 {
-		t.Errorf("expected 1 category, got %d", len(CategoriesToRemove))
+	expected := []string{"Взрослые", "Религия", "Религиозные", "40.РЕЛИГИЯ 🧙‍♂️", "Adult (18+) ❤️", "XXX (18+) 🔞", "💲💲💲Поддержи Проект💲💲💲", "🔺 INFO 🔺"}
+	if len(CategoriesToRemove) != len(expected) {
+		t.Errorf("expected %d categories, got %d", len(expected), len(CategoriesToRemove))
 	}
-	if CategoriesToRemove[0] != "Взрослые" {
-		t.Errorf("expected 'Взрослые', got '%s'", CategoriesToRemove[0])
+	for i, v := range expected {
+		if CategoriesToRemove[i] != v {
+			t.Errorf("expected category %q, got %q", v, CategoriesToRemove[i])
+		}
 	}
 }
 
