@@ -123,7 +123,16 @@ func (c *Config) LocalFilteredEPGPath() string {
 }
 
 // CategoriesToRemove is the deny-list of channel groups to filter out.
-var CategoriesToRemove = []string{"Взрослые"}
+var CategoriesToRemove = []string{
+	"Взрослые",
+	"Религия",
+	"Религиозные",
+	"40.РЕЛИГИЯ 🧙‍♂️",
+	"Adult (18+) ❤️",
+	"XXX (18+) 🔞",
+	"💲💲💲Поддержи Проект💲💲💲",
+	"🔺 INFO 🔺",
+}
 
 // ChannelNamesToExclude lists channels removed by name substring match (case-insensitive).
 var ChannelNamesToExclude = []string{
