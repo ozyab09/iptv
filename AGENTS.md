@@ -57,7 +57,8 @@ iptv/
 ### internal/config/config.go
 
 Config struct reading env vars with validation. Includes:
-- `CategoriesToRemove` — deny-list of categories (default: 8 categories, including `"Взрослые"`, `"Религия"`, `"Религиозные"`, `"40.РЕЛИГИЯ 🧙‍♂️"`, `"Adult (18+) ❤️"`, `"XXX (18+) 🔞"`, `"💲💲💲Поддержи Проект💲💲💲"`, `"🔺 INFO 🔺"`)
+- `CategoriesToRemove` — deny-list of categories (exact match, case-insensitive). Contains 46 entries covering: adult/18+, religion, anti-Russia, Ukraine, bold-unicode sport/music/TV, test/service categories with both original (numbered/emojis) and normalized (cleaned) variants.
+- `CategoriesToRemoveSubstring` — deny-list of ~130 substrings (case-insensitive). Any category whose name contains one of these substrings is filtered out. Covers: movies/series, sports (regular + bold unicode), kids, music (regular + bold unicode), religion, relax, fashion/shopping, anti-Russia/Ukraine, test/service, countries/regions (60+ countries), TV shows.
 - `ChannelNamesToExclude` — channels to exclude by name substring
 - `EPGExcludedCategories` / `EPGExcludedChannelIDs`
 - `DryRun()` — returns true if `DRY_RUN` env var is set to a truthy value

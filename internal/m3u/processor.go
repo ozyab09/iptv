@@ -16,18 +16,19 @@ var logger = utils.NewSanitizedLoggerWithPrefix("[m3u]")
 
 // Pre-compiled regexps for efficient filtering.
 var (
-	regRegional      = regexp.MustCompile(`\s\+\d+(?:\s+HD)?(?:\s*\([^)]+\))?\s*$`) // e.g. " +1", " +4 HD", " +2 (Приволжье)"
-	regNumberSuffix  = regexp.MustCompile(`\s\d{2,}$`)                                     // e.g. " HD 50", " 25"
-	regGroupTitle    = regexp.MustCompile(`group-title="([^"]*)"`)                        // group-title attribute
-	regTvgID         = regexp.MustCompile(`tvg-id="([^"]*)"`)                             // tvg-id attribute
-	regURLTVG        = regexp.MustCompile(`url-tvg="[^"]*"`)                              // url-tvg attribute
+	regRegional       = regexp.MustCompile(`\s\+\d+(?:\s+HD)?(?:\s*\([^)]+\))?\s*$`) // e.g. " +1", " +4 HD", " +2 (Приволжье)"
+	regNumberSuffix   = regexp.MustCompile(`\s\d{2,}$`)                                     // e.g. " HD 50", " 25"
+	regLeadingNumber  = regexp.MustCompile(`^\d+\.\s*`)                                     // e.g. "15.", "20. ", "60."
+	regGroupTitle     = regexp.MustCompile(`group-title="([^"]*)"`)                        // group-title attribute
+	regTvgID          = regexp.MustCompile(`tvg-id="([^"]*)"`)                             // tvg-id attribute
+	regURLTVG         = regexp.MustCompile(`url-tvg="[^"]*"`)                              // url-tvg attribute
 	regCategoriesFile = regexp.MustCompile(`group-title="([^"]+)".*?tvg-id="([^"]+)".+?,(.+)`) // categories.txt parser
 	regGroupTitleAttr = regexp.MustCompile(`group-title="[^"]*"`)                          // for replacement
-	regTvgIDAttr     = regexp.MustCompile(`tvg-id="[^"]*"`)                              // for replacement
-	regTvgLogo       = regexp.MustCompile(`tvg-logo="([^"]*)"`)                          // tvg-logo attribute (capture)
-	regTvgRec        = regexp.MustCompile(`tvg-rec="([^"]*)"`)                           // tvg-rec attribute (capture)
-	regTvgLogoAttr   = regexp.MustCompile(`tvg-logo="[^"]*"`)                            // for replacement
-	regTvgRecAttr    = regexp.MustCompile(`tvg-rec="[^"]*"`)                             // for replacement
+	regTvgIDAttr      = regexp.MustCompile(`tvg-id="[^"]*"`)                              // for replacement
+	regTvgLogo        = regexp.MustCompile(`tvg-logo="([^"]*)"`)                          // tvg-logo attribute (capture)
+	regTvgRec         = regexp.MustCompile(`tvg-rec="([^"]*)"`)                           // tvg-rec attribute (capture)
+	regTvgLogoAttr    = regexp.MustCompile(`tvg-logo="[^"]*"`)                            // for replacement
+	regTvgRecAttr     = regexp.MustCompile(`tvg-rec="[^"]*"`)                             // for replacement
 )
 
 
@@ -45,6 +46,62 @@ func DownloadM3U(url string) (string, error) {
 	return content, nil
 }
 
+// removeTrailingEmojiAndSymbols strips trailing emoji and decorative characters from a string.
+func removeTrailingEmojiAndSymbols(s string) string {
+	if s == "" {
+		return s
+	}
+	runes := []rune(s)
+	end := len(runes)
+	for end > 0 {
+		r := runes[end-1]
+		if isEmojiRune(r) || r == ' ' || r == '\t' || r == '\u00A0' {
+			end--
+		} else {
+			break
+		}
+	}
+	return string(runes[:end])
+}
+
+// isEmojiRune checks whether a rune belongs to common emoji/decorative Unicode ranges.
+func isEmojiRune(r rune) bool {
+	switch {
+	case r >= 0x1F300 && r <= 0x1F9FF: // Misc symbols, pictographs, emoticons, etc.
+		return true
+	case r >= 0x1F1E0 && r <= 0x1F1FF: // Regional indicator symbols (flags)
+		return true
+	case r >= 0x1F600 && r <= 0x1F64F: // Emoticons
+		return true
+	case r >= 0x1F680 && r <= 0x1F6FF: // Transport and map symbols
+		return true
+	case r >= 0x2600 && r <= 0x27BF: // Misc symbols, dingbats
+		return true
+	case r >= 0xFE00 && r <= 0xFE0F: // Variation selectors
+		return true
+	case r == 0x200D: // Zero-width joiner
+		return true
+	case r == 0x2B50 || r == 0x2B55: // Star, circle
+		return true
+	case r >= 0x20E3 && r <= 0x20E3: // Combining enclosing keycap
+		return true
+	case r >= 0x231A && r <= 0x231B: // Watch, hourglass
+		return true
+	case r >= 0x23F0 && r <= 0x23F3: // Alarm clock, hourglass done
+		return true
+	case r == 0x00A9 || r == 0x00AE: // ©, ®
+		return true
+	case r == 0x2122: // ™
+		return true
+	case r == 0x3030 || r == 0x303D: // Wavy dash, part alternation
+		return true
+	case r == 0x3297 || r == 0x3299: // ㊗, ㊙
+		return true
+	default:
+		return false
+	}
+}
+
 // RemoveOrigSuffix strips trailing " orig" (case-insensitive) from channel name.
 func RemoveOrigSuffix(name string) string {
 	if len(name) >= 5 && strings.HasSuffix(strings.ToLower(name), " orig") {
@@ -53,12 +110,17 @@ func RemoveOrigSuffix(name string) string {
 	return name
 }
 
-func FilterContent(content string, categoriesToRemove, channelNamesToExclude []string, customEPGURL string) string {
+func FilterContent(content string, categoriesToRemove, categoriesToRemoveSubstring, channelNamesToExclude []string, customEPGURL string) string {
 	logger.Info("Starting filtering process")
 
 	categoriesLower := make([]string, len(categoriesToRemove))
 	for i, c := range categoriesToRemove {
 		categoriesLower[i] = strings.ToLower(c)
+	}
+
+	substringLower := make([]string, len(categoriesToRemoveSubstring))
+	for i, s := range categoriesToRemoveSubstring {
+		substringLower[i] = strings.ToLower(s)
 	}
 
 	excludeLower := make([]string, len(channelNamesToExclude))
@@ -96,19 +158,44 @@ func FilterContent(content string, categoriesToRemove, channelNamesToExclude []s
 		if strings.HasPrefix(trimmed, "#EXTINF:") {
 			includeEntry = false
 
-			if len(categoriesLower) > 0 {
-				if m := regGroupTitle.FindStringSubmatch(line); m != nil {
-					groupTitle := strings.ToLower(m[1])
-					keep := true
+			if m := regGroupTitle.FindStringSubmatch(line); m != nil {
+				// Normalize group-title: strip leading numbers + trailing emojis.
+				originalGroup := m[1]
+				normalized := regLeadingNumber.ReplaceAllString(originalGroup, "")
+				normalized = removeTrailingEmojiAndSymbols(normalized)
+				groupTitle := strings.ToLower(normalized)
+
+				// Update line with cleaned group-title if it changed.
+				if normalized != originalGroup {
+					newAttr := fmt.Sprintf(`group-title="%s"`, normalized)
+					line = regGroupTitleAttr.ReplaceAllString(line, newAttr)
+				}
+
+				keep := true
+
+				// Exact match against deny-list.
+				if keep && len(categoriesLower) > 0 {
 					for _, cat := range categoriesLower {
 						if cat == groupTitle {
 							keep = false
 							break
 						}
 					}
-					includeEntry = keep
 				}
-			} else {
+
+				// Substring match against deny-list.
+				if keep && len(substringLower) > 0 {
+					for _, substr := range substringLower {
+						if strings.Contains(groupTitle, substr) {
+							keep = false
+							break
+						}
+					}
+				}
+
+				includeEntry = keep
+			} else if len(categoriesLower) == 0 && len(substringLower) == 0 {
+				// No category filtering configured — include all channels.
 				includeEntry = true
 			}
 

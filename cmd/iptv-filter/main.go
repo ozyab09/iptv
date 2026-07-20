@@ -72,7 +72,7 @@ func parseM3USources(m3uURL string) []string {
 }
 
 // downloadAndFilterM3U downloads M3U from url, filters it, and returns filtered + original content.
-func downloadAndFilterM3U(urlStr string, categoriesToRemove, chNamesToExclude []string, customEPGURL string) (filtered, original string, err error) {
+func downloadAndFilterM3U(urlStr string, categoriesToRemove, categoriesToRemoveSubstring, chNamesToExclude []string, customEPGURL string) (filtered, original string, err error) {
 	log.Info("Downloading M3U source: %s", urlStr)
 
 	if err = utils.Retry(3, 2*time.Second, 2.0, func() error {
@@ -82,7 +82,7 @@ func downloadAndFilterM3U(urlStr string, categoriesToRemove, chNamesToExclude []
 		return "", "", err
 	}
 
-	filtered = m3u.FilterContent(original, categoriesToRemove, chNamesToExclude, customEPGURL)
+	filtered = m3u.FilterContent(original, categoriesToRemove, categoriesToRemoveSubstring, chNamesToExclude, customEPGURL)
 	return filtered, original, nil
 }
 
@@ -109,6 +109,7 @@ func run() int {
 	s3FilteredKey := cfg.S3FilteredPlaylistKey()
 	s3AllKey := cfg.S3AllCategoriesPlaylistKey()
 	categoriesToRemove := config.CategoriesToRemove
+	categoriesToRemoveSubstring := config.CategoriesToRemoveSubstring
 	dryRun := cfg.DryRun()
 	s3Endpoint := cfg.S3EndpointURL()
 	customEPGURL := cfg.BuildCustomEPGURL()
@@ -120,7 +121,7 @@ func run() int {
 	var allFiltered []string
 	var allOriginal []string
 	for _, urlStr := range m3uURLs {
-		filtered, original, err := downloadAndFilterM3U(urlStr, categoriesToRemove, config.ChannelNamesToExclude, customEPGURL)
+		filtered, original, err := downloadAndFilterM3U(urlStr, categoriesToRemove, categoriesToRemoveSubstring, config.ChannelNamesToExclude, customEPGURL)
 		if err != nil {
 			log.Error("Failed to download M3U from %s: %v", urlStr, err)
 			return 1
