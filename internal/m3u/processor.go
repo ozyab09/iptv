@@ -30,16 +30,7 @@ var (
 	regTvgRecAttr    = regexp.MustCompile(`tvg-rec="[^"]*"`)                             // for replacement
 )
 
-// suffixesToRemove lists patterns stripped during name normalization.
-var suffixesToRemove = []*regexp.Regexp{
-	regexp.MustCompile(`\s*\bhd\b\s*`),
-	regexp.MustCompile(`\s*\borig\b\s*`),
-	regexp.MustCompile(`\s*\bsd\b\s*`),
-	regexp.MustCompile(`\s*\bfull hd\b\s*`),
-	regexp.MustCompile(`\s*\b4k\b\s*`),
-	regexp.MustCompile(`\s*\buhd\b\s*`),
-	regexp.MustCompile(`\s*\buhd tv\b\s*`),
-}
+
 
 // DownloadM3U downloads an M3U playlist from url with a 100 MB size limit.
 func DownloadM3U(url string) (string, error) {
@@ -176,8 +167,8 @@ func FilterContent(content string, categoriesToRemove, channelNamesToExclude []s
 	}
 
 	contentNoDups := RemoveDuplicateURLs(strings.Join(filteredLines, "\n"))
-	processed := RemoveDuplicatesAndApplyHDPref(contentNoDups)
-	processed = SortPlaylistAlphabetically(processed)
+	processed := SortPlaylistAlphabetically(contentNoDups)
+	processed = AddSequentialNumbers(processed)
 	origCh := CountChannels(content)
 	procCh := CountChannels(processed)
 	logger.Info("Filtering complete: %d channels -> %d channels", origCh, procCh)
@@ -227,15 +218,6 @@ func ParseChannelEntries(lines []string) ([]string, []ChannelEntry) {
 		}
 	}
 	return headers, entries
-}
-
-// NormalizeNameForComparison strips HD/orig/SD/4K/UHD/FHD suffixes for deduplication matching.
-func NormalizeNameForComparison(name string) string {
-	normalized := strings.ToLower(name)
-	for _, re := range suffixesToRemove {
-		normalized = re.ReplaceAllString(normalized, " ")
-	}
-	return strings.Join(strings.Fields(normalized), " ")
 }
 
 // ParseCategoriesFile reads categories.txt and returns a map of lowercase channel name → {group, tvg_id}.
@@ -491,45 +473,41 @@ func AddTvgIDsToPlaylist(content string, epgNameToIDMap map[string]string) strin
 	return strings.Join(lines, "\n")
 }
 
-func RemoveDuplicatesAndApplyHDPref(content string) string {
+// toSuperscript converts an integer to superscript digits (¹, ², ³, ...).
+func toSuperscript(n int) string {
+	if n < 1 {
+		return ""
+	}
+	supers := []rune{'⁰', '¹', '²', '³', '⁴', '⁵', '⁶', '⁷', '⁸', '⁹'}
+	s := fmt.Sprintf("%d", n)
+	result := make([]rune, len(s))
+	for i, ch := range s {
+		result[i] = supers[ch-'0']
+	}
+	return string(result)
+}
+
+// AddSequentialNumbers adds a sequential superscript number (¹, ², ³, ...) to every channel name
+// based on its position in the sorted playlist.
+func AddSequentialNumbers(content string) string {
 	lines := strings.Split(content, "\n")
 	headers, entries := ParseChannelEntries(lines)
 
-	grouped := make(map[string][]ChannelEntry)
-
-	for _, entry := range entries {
+	for i, entry := range entries {
 		parts := strings.SplitN(entry.EXTINFLine, ",", 2)
-		var channelName string
 		if len(parts) > 1 {
-			channelName = strings.TrimSpace(parts[1])
-		}
-		normalizedName := NormalizeNameForComparison(channelName)
-		grouped[normalizedName] = append(grouped[normalizedName], entry)
-	}
-
-	var result []ChannelEntry
-	for key, variants := range grouped {
-		if len(variants) > 1 {
-			for idx, v := range variants {
-				parts := strings.SplitN(v.EXTINFLine, ",", 2)
-				if len(parts) > 1 {
-					chName := strings.TrimSpace(parts[1])
-					newName := fmt.Sprintf("%s #%d", chName, idx+1)
-					v.EXTINFLine = parts[0] + "," + newName
-				}
-				result = append(result, v)
-			}
-			logger.Info("Kept all %d variants for '%s' with numeric suffixes", len(variants), key)
-		} else {
-			result = append(result, variants...)
+			chName := strings.TrimSpace(parts[1])
+			newName := fmt.Sprintf("%s %s", chName, toSuperscript(i+1))
+			entries[i].EXTINFLine = parts[0] + "," + newName
 		}
 	}
 
 	var finalLines []string
 	finalLines = append(finalLines, headers...)
-	for _, entry := range result {
+	for _, entry := range entries {
 		finalLines = append(finalLines, entry.EXTINFLine)
 		finalLines = append(finalLines, entry.ExtraLines...)
 	}
 	return strings.Join(finalLines, "\n")
 }
+

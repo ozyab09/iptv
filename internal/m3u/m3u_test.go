@@ -38,32 +38,6 @@ http://example.com/3`
 	}
 }
 
-func TestRemoveDuplicatesAndApplyHDPref(t *testing.T) {
-	content := `#EXTM3U
-#EXTINF:-1 tvg-id="711",Channel 1
-http://example.com/1
-#EXTINF:-1 tvg-id="711",Channel 1 HD
-http://example.com/1hd
-#EXTINF:-1 tvg-id="162",Channel 2
-http://example.com/2
-#EXTINF:-1 tvg-id="162",Channel 2
-http://example.com/2duplicate`
-
-	result := RemoveDuplicatesAndApplyHDPref(content)
-	if !strings.Contains(result, "Channel 1") {
-		t.Error("expected 'Channel 1' in result")
-	}
-	if !strings.Contains(result, "Channel 1 HD") {
-		t.Error("expected 'Channel 1 HD' in result")
-	}
-	if !strings.Contains(result, "Channel 2 #1") {
-		t.Error("expected 'Channel 2 #1' in result")
-	}
-	if !strings.Contains(result, "Channel 2 #2") {
-		t.Error("expected 'Channel 2 #2' in result")
-	}
-}
-
 func TestSortPlaylistAlphabetically(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -93,15 +67,15 @@ http://example.com/b.m3u8`,
 			order: []string{"Channel A", "CHANNEL B", "channel z"},
 		},
 		{
-			name: "preserves #N suffixes",
+			name: "sorts correctly with superscript suffixes",
 			input: `#EXTM3U
-#EXTINF:-1,Channel B #2
+#EXTINF:-1,Channel B ²
 http://example.com/b2.m3u8
 #EXTINF:-1,Channel A
 http://example.com/a.m3u8
-#EXTINF:-1,Channel B #1
+#EXTINF:-1,Channel B ¹
 http://example.com/b1.m3u8`,
-			order: []string{"Channel A", "Channel B #1", "Channel B #2"},
+			order: []string{"Channel A", "Channel B ²", "Channel B ¹"},
 		},
 		{
 			name: "stable sort keeps original order for equal names",
@@ -244,41 +218,39 @@ http://example.com/same.m3u8`,
 	}
 }
 
-func TestRemoveDuplicatesWithTVGRec(t *testing.T) {
+func TestAddSequentialNumbers(t *testing.T) {
 	content := `#EXTM3U
-#EXTINF:-1 tvg-id="711" tvg-rec="3",Channel 1
-http://example.com/1low
-#EXTINF:-1 tvg-id="711" tvg-rec="7",Channel 1
-http://example.com/1high
-#EXTINF:-1 tvg-id="162" tvg-rec="0",Channel 2
-http://example.com/2low
-#EXTINF:-1 tvg-id="162" tvg-rec="5",Channel 2
-http://example.com/2high`
+#EXTINF:-1 tvg-id="711",Channel A
+http://example.com/a
+#EXTINF:-1 tvg-id="162",Channel B
+http://example.com/b
+#EXTINF:-1 tvg-id="711",Channel A
+http://example.com/a2
+#EXTINF:-1 tvg-id="999",Channel C
+http://example.com/c`
 
-	result := RemoveDuplicatesAndApplyHDPref(content)
-	if !strings.Contains(result, "Channel 1 #1") {
-		t.Error("expected 'Channel 1 #1' in result")
+	result := AddSequentialNumbers(content)
+
+	tests := []struct {
+		name     string
+		original string
+		renamed  string
+	}{
+		{"channel 1", "Channel A", "Channel A ¹"},
+		{"channel 2", "Channel B", "Channel B ²"},
+		{"channel 3", "Channel A", "Channel A ³"},
+		{"channel 4", "Channel C", "Channel C ⁴"},
 	}
-	if !strings.Contains(result, "Channel 1 #2") {
-		t.Error("expected 'Channel 1 #2' in result")
-	}
-	if !strings.Contains(result, `tvg-rec="3"`) {
-		t.Error("expected tvg-rec=3 in result")
-	}
-	if !strings.Contains(result, `tvg-rec="7"`) {
-		t.Error("expected tvg-rec=7 in result")
-	}
-	if !strings.Contains(result, "Channel 2 #1") {
-		t.Error("expected 'Channel 2 #1' in result")
-	}
-	if !strings.Contains(result, "Channel 2 #2") {
-		t.Error("expected 'Channel 2 #2' in result")
-	}
-	if !strings.Contains(result, `tvg-rec="0"`) {
-		t.Error("expected tvg-rec=0 in result")
-	}
-	if !strings.Contains(result, `tvg-rec="5"`) {
-		t.Error("expected tvg-rec=5 in result")
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if strings.Contains(result, tc.original+",") {
+				t.Errorf("expected original name %q to be renamed to %q", tc.original, tc.renamed)
+			}
+			if !strings.Contains(result, tc.renamed) {
+				t.Errorf("expected renamed channel %q in result", tc.renamed)
+			}
+		})
 	}
 }
 
