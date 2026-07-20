@@ -2,7 +2,7 @@
 
 ## Project
 
-IPTV M3U playlist filter: downloads M3U from HTTP URLs, filters by category (deny-list), normalizes names (remove `orig`, exclude regional `+1`/`+4` variants), keeps all channel variants (adds `#1`/`#2` suffixes for duplicates), optionally processes EPG, uploads to S3-compatible storage (Yandex Cloud).
+IPTV M3U playlist filter: downloads M3U from HTTP URLs, filters by category (deny-list), normalizes names (remove `orig`, exclude regional `+1`/`+4` variants), numbers all channels sequentially with superscript (¹, ², ³ … ⁿ), optionally processes EPG, uploads to S3-compatible storage (Yandex Cloud).
 
 ## Language & runtime
 
@@ -44,7 +44,8 @@ iptv/
 │   └── utils/
 │       ├── http.go                # Shared HTTP client and DownloadFile utility
 │       ├── logger.go              # Sanitized logger
-│       └── retry.go               # Retry with exponential backoff
+│       ├── retry.go               # Retry with exponential backoff
+│       └── compress.go            # GZip/ZIP decompression utilities
 ├── .github/workflows/filter-m3u.yml
 ├── go.mod / go.sum
 ├── categories.txt                 # Channel metadata (group-title/tvg-id overrides)
@@ -56,10 +57,12 @@ iptv/
 ### internal/config/config.go
 
 Config struct reading env vars with validation. Includes:
-- `CategoriesToRemove` — deny-list of categories (default: `["Взрослые"]`)
+- `CategoriesToRemove` — deny-list of categories (default: 8 categories, including `"Взрослые"`, `"Религия"`, `"Религиозные"`, `"40.РЕЛИГИЯ 🧙‍♂️"`, `"Adult (18+) ❤️"`, `"XXX (18+) 🔞"`, `"💲💲💲Поддержи Проект💲💲💲"`, `"🔺 INFO 🔺"`)
 - `ChannelNamesToExclude` — channels to exclude by name substring
 - `EPGExcludedCategories` / `EPGExcludedChannelIDs`
+- `DryRun()` — returns true if `DRY_RUN` env var is set to a truthy value
 - `BuildCustomEPGURL()` — constructs public URL for EPG file in S3
+- `OutputDir()` — returns local output directory (default: `output/`)
 - `Validate()` — validates all required env vars before processing
 
 ### internal/m3u/processor.go
@@ -68,11 +71,13 @@ M3U download, filtering, parsing, normalization. Key functions:
 - `DownloadM3U()` — HTTP download with size check (100MB)
 - `FilterContent()` — line-by-line filter: category deny-list, channel name exclusion, regional `+N` exclusion, number suffix exclusion, `orig` removal
 - `RemoveOrigSuffix()` — strips trailing " orig"
-- `NormalizeNameForComparison()` — strips HD/orig/SD/4K/UHD/FHD suffixes
+- `RemoveDuplicateURLs()` — deduplicates entries with identical URLs, merges attributes (tvg-id, group-title, tvg-logo, tvg-rec), keeps the longest channel name
+- `SortPlaylistAlphabetically()` — sorts playlist entries A-Z by channel name (case-insensitive)
+- `AddSequentialNumbers()` — adds sequential superscript number (¹, ², ³ … ⁿ) to every channel after sorting
 - `ParseCategoriesFile()` — parses categories.txt for metadata overrides
-- `ApplyChannelMetadata()` — applies group-title/tvg-id from categories file
+- `ApplyChannelMetadata()` — overrides group-title/tvg-id from categories.txt
 - `AddTvgIDsToPlaylist()` — adds tvg-id from EPG name-to-id map
-- `RemoveDuplicatesAndApplyHDPref()` — groups by normalized name, adds `#1`/`#2` suffixes
+- `CountChannels()` — counts #EXTINF entries in M3U content
 
 ### internal/epg/processor.go
 
@@ -95,15 +100,17 @@ S3 upload via AWS SDK v2. Functions:
 - `DownloadFile()` — shared HTTP download with size limit enforcement
 - `Retry()` — utility function with exponential backoff (3 attempts, 2s delay, 2x backoff)
 - `SanitizedWriter` — log wrapper that masks URLs and AWS keys in output
+- `IsGzipped()` / `DecompressGZip()` — detects and decompresses gzipped content
+- `DecompressZip()` — extracts `.zip` archives (first entry)
 
 ## Filtering logic (internal/m3u/)
 
-- **Category filter**: deny-list approach — `CategoriesToRemove` (default: just `["Взрослые"]`). Everything else is kept.
+- **Category filter**: deny-list approach — `CategoriesToRemove` (default: 8 categories: религия, adult/18+, поддержка проекта, info). Everything else is kept.
 - **Channel exclusions**: `ChannelNamesToExclude` — matched case-insensitively as substring (default: `Fashion`, `СПАС`, `Три ангела`, `ЛДПР`, `UA`, `Sports`)
 - **Regional exclusion**: channels ending with `+N` (e.g. `+1`, `+4 HD`, `+2 (Приволжье)`) are removed
 - **Number suffix exclusion**: channels ending with `2+` digits (e.g. `HD 50`, `50`) are removed — all channels excluded uniformly, no exemptions
 - **Name processing**: `orig` suffix removed from channel names
-- **No deduplication**: all channel variants kept. When multiple channels share the same normalized name, suffixes `#1`, `#2` etc. are appended
+- **Sequential numbering**: all channels are numbered sequentially with superscript digits (¹, ², ³ … ⁿ) after alphabetical sorting
 - **Optional metadata**: `categories.txt` can supply `group-title`/`tvg-id` overrides via `CATEGORIES_FILE_PATH` env var (matched by lowercase name)
 - **EPG-based tvg-id**: channels without `tvg-id` get one matched by name against EPG display-names
 
