@@ -263,7 +263,7 @@ http://example.com/1
 #EXTINF:-1 group-title="Развлекательные",Channel 2
 http://example.com/2`
 
-	result := FilterContent(content, []string{"Взрослые"}, nil, "")
+	result := FilterContent(content, []string{"Взрослые"}, nil, nil, "")
 
 	if strings.Contains(result, "Adult Channel") {
 		t.Error("expected Adult Channel to be filtered out")
@@ -283,7 +283,7 @@ http://example.com/1
 #EXTINF:-1 group-title="Развлекательные",Channel 2 orig
 http://example.com/2`
 
-	result := FilterContent(content, nil, nil, "")
+	result := FilterContent(content, nil, nil, nil, "")
 
 	if !strings.Contains(result, "Channel 1") {
 		t.Error("expected 'Channel 1' in result")
@@ -315,7 +315,7 @@ http://example.com/25
 #EXTINF:-1 group-title="Россия | Russia",Normal Channel
 http://example.com/normal`
 
-	result := FilterContent(content, nil, nil, "")
+	result := FilterContent(content, nil, nil, nil, "")
 
 	if !strings.Contains(result, "Channel 1") {
 		t.Error("expected 'Channel 1' in result")
@@ -354,7 +354,7 @@ http://example.com/news
 #EXTINF:-1 group-title="Россия | Russia",Sports Channel
 http://example.com/sports`
 
-	result := FilterContent(content, nil, []string{"Fashion"}, "")
+	result := FilterContent(content, nil, nil, []string{"Fashion"}, "")
 
 	if strings.Contains(result, "Fashion TV") {
 		t.Error("expected 'Fashion TV' to be excluded")
@@ -381,7 +381,7 @@ http://example.com/fashion3
 #EXTINF:-1 group-title="Россия | Russia",Regular Channel
 http://example.com/regular`
 
-	result := FilterContent(content, nil, []string{"Fashion"}, "")
+	result := FilterContent(content, nil, nil, []string{"Fashion"}, "")
 
 	if strings.Contains(result, "FASHION TV") {
 		t.Error("expected 'FASHION TV' to be excluded")
@@ -408,7 +408,7 @@ http://example.com/gambling
 #EXTINF:-1 group-title="Россия | Russia",Regular Channel
 http://example.com/regular`
 
-	result := FilterContent(content, nil, []string{"Fashion", "Adult", "Gambling"}, "")
+	result := FilterContent(content, nil, nil, []string{"Fashion", "Adult", "Gambling"}, "")
 
 	if strings.Contains(result, "Fashion TV") {
 		t.Error("expected 'Fashion TV' to be excluded")
@@ -421,5 +421,93 @@ http://example.com/regular`
 	}
 	if !strings.Contains(result, "Regular Channel") {
 		t.Error("expected 'Regular Channel' to be kept")
+	}
+}
+
+func TestFilterContentNormalizesGroupTitle(t *testing.T) {
+	content := `#EXTM3U
+#EXTINF:-1 group-title="15.𝐊𝐢𝐧𝐨 📽",Movie Channel
+http://example.com/movie
+#EXTINF:-1 group-title="20.𝕂иℍ𝕠 🇷🇺",Cinema Channel
+http://example.com/cinema
+#EXTINF:-1 group-title="1.✨ ЕКБ 🦎",Local Channel
+http://example.com/local
+#EXTINF:-1 group-title="60.Квант-Телеком 🎡",Tech Channel
+http://example.com/tech
+#EXTINF:-1 group-title="Россия | Россия",Normal
+http://example.com/normal
+#EXTINF:-1 group-title="Тест 🛒 🎧",Shop Music
+http://example.com/shop`
+
+	result := FilterContent(content, nil, nil, nil, "")
+
+	// Все каналы должны остаться (фильтрация не настроена).
+	// group-title должен быть очищен: цифры + эмодзи.
+	tests := []struct {
+		name     string
+		channel  string
+		oldGroup string // should NOT be present
+		newGroup string // SHOULD be present (cleaned)
+	}{
+		{"кино", "Movie Channel", `group-title="15.𝐊𝐢𝐧𝐨 📽"`, `group-title="𝐊𝐢𝐧𝐨"`},
+		{"кино 2", "Cinema Channel", `group-title="20.𝕂иℍ𝕠 🇷🇺"`, `group-title="𝕂иℍ𝕠"`},
+		{"екб", "Local Channel", `group-title="1.✨ ЕКБ 🦎"`, `group-title="✨ ЕКБ"`},
+		{"квант", "Tech Channel", `group-title="60.Квант-Телеком 🎡"`, `group-title="Квант-Телеком"`},
+		{"обычная", "Normal", `group-title="Россия"`, `group-title="Россия | Россия"`},
+		{"мульти-эмодзи", "Shop Music", `group-title="Тест 🛒 🎧"`, `group-title="Тест"`},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if !strings.Contains(result, tc.channel) {
+				t.Errorf("expected '%s' to be kept in result", tc.channel)
+			}
+			if strings.Contains(result, tc.oldGroup) {
+				t.Errorf("expected old group-title %q to be stripped, but found in result", tc.oldGroup)
+			}
+			if !strings.Contains(result, tc.newGroup) {
+				t.Errorf("expected cleaned group-title %q in result", tc.newGroup)
+			}
+		})
+	}
+}
+
+func TestFilterContentWithCategorySubstring(t *testing.T) {
+	content := `#EXTM3U
+#EXTINF:-1 group-title="Кино и Сериалы",Movie Channel
+http://example.com/movie
+#EXTINF:-1 group-title="ДЕТСКИЕ 👶",Kids Channel
+http://example.com/kids
+#EXTINF:-1 group-title="Россия | Russia",News Channel
+http://example.com/news
+#EXTINF:-1 group-title="Спорт TM",Sports Channel
+http://example.com/sports
+#EXTINF:-1 group-title="TEST* 👈",Test Channel
+http://example.com/test`
+
+	result := FilterContent(content, nil, []string{"кино", "детск", "спорт", "test"}, nil, "")
+
+	tests := []struct {
+		name    string
+		channel string
+		kept    bool // true = should remain, false = should be filtered out
+	}{
+		{"кино категория", "Movie Channel", false},
+		{"детские категория", "Kids Channel", false},
+		{"спорт категория", "Sports Channel", false},
+		{"test категория", "Test Channel", false},
+		{"обычный канал", "News Channel", true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			present := strings.Contains(result, tc.channel)
+			if tc.kept && !present {
+				t.Errorf("expected '%s' to be kept, but it was filtered out", tc.channel)
+			}
+			if !tc.kept && present {
+				t.Errorf("expected '%s' to be filtered out, but it was kept", tc.channel)
+			}
+		})
 	}
 }
