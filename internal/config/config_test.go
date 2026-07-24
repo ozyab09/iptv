@@ -100,8 +100,7 @@ func TestCategoriesToRemove(t *testing.T) {
 		"𝕄𝕦𝕤𝕚𝕔",
 		"45.𝕄𝕦𝕤𝕚𝕔 🇪🇺",
 		"𝕄𝕦𝕤𝕚𝕔",
-		"45.145.32 🍟",
-		"145.32",
+
 		"56.𝕋𝕧ℤ𝕒𝕋𝕒𝕜 📼",
 		"𝕋𝕧ℤ𝕒𝕋𝕒𝕜",
 		"62.32 📼",
@@ -109,10 +108,6 @@ func TestCategoriesToRemove(t *testing.T) {
 		"TVS ☆",
 		"TVS",
 		"TvZaTak",
-		"15.𝐊𝐢𝐧𝐨 📽",
-		"𝐊𝐢𝐧𝐨",
-		"20.𝕂иℍ𝕠 🇷🇺",
-		"𝕂иℍ𝕠",
 		"MavTV ⭐️",
 		"aleks-u-romki* 😊",
 	}

@@ -2,6 +2,7 @@ package m3u
 
 import (
 	"fmt"
+	"hash/fnv"
 	"os"
 	"regexp"
 	"sort"
@@ -255,7 +256,7 @@ func FilterContent(content string, categoriesToRemove, categoriesToRemoveSubstri
 
 	contentNoDups := RemoveDuplicateURLs(strings.Join(filteredLines, "\n"))
 	processed := SortPlaylistAlphabetically(contentNoDups)
-	processed = AddSequentialNumbers(processed)
+	processed = AddEmojiByURL(processed)
 	origCh := CountChannels(content)
 	procCh := CountChannels(processed)
 	logger.Info("Filtering complete: %d channels -> %d channels", origCh, procCh)
@@ -560,31 +561,59 @@ func AddTvgIDsToPlaylist(content string, epgNameToIDMap map[string]string) strin
 	return strings.Join(lines, "\n")
 }
 
-// toSuperscript converts an integer to superscript digits (¹, ², ³, ...).
-func toSuperscript(n int) string {
-	if n < 1 {
-		return ""
-	}
-	supers := []rune{'⁰', '¹', '²', '³', '⁴', '⁵', '⁶', '⁷', '⁸', '⁹'}
-	s := fmt.Sprintf("%d", n)
-	result := make([]rune, len(s))
-	for i, ch := range s {
-		result[i] = supers[ch-'0']
-	}
-	return string(result)
+// emojiPoolA are visually distinct shape/color/symbol emojis used as the first component
+// of the emoji pair identifier. The pair provides ~1500+ unique combinations.
+var emojiPoolA = []string{
+	"🔴", "🟠", "🟡", "🟢", "🔵", "🟣", "⚫", "⚪",
+	"🔶", "🔷", "🔸", "🔹", "🔺", "🔻", "⬛", "⬜",
+	"🔘", "⭕", "💠", "💮", "❓", "💢", "💥", "💫",
+	"🌟", "⭐", "✨", "🔥", "💧", "🌊", "☀️", "🌙",
+	"☁️", "⚡", "🌀", "🌈", "💨", "❄️", "🌪", "🌫",
 }
 
-// AddSequentialNumbers adds a sequential superscript number (¹, ², ³, ...) to every channel name
-// based on its position in the sorted playlist.
-func AddSequentialNumbers(content string) string {
+// emojiPoolB are visually distinct object/animal/nature emojis used as the second component.
+var emojiPoolB = []string{
+	"🐶", "🐱", "🐼", "🐯", "🦁", "🦊", "🐻", "🐨",
+	"🐰", "🦄", "🐸", "🐵", "🦋", "🐝", "🐞", "🐌",
+	"🌻", "🌺", "🌹", "🌸", "🌴", "🍀", "🌿", "🍁",
+	"🎯", "🏆", "🎮", "🎸", "🎺", "🎻", "🥁", "📺",
+	"🎬", "🎵", "🎶", "🚀", "🛸", "🎪", "🎭", "🎨",
+}
+
+// urlToEmojiPair generates a deterministic emoji pair (from two pools) based on the URL hash.
+// Same URL always produces the same emoji pair. Uses FNV-1a 64-bit hash for speed and distribution.
+func urlToEmojiPair(url string) string {
+	h := fnv.New64a()
+	h.Write([]byte(url))
+	sum := h.Sum64()
+	a := emojiPoolA[sum%uint64(len(emojiPoolA))]
+	b := emojiPoolB[(sum>>32)%uint64(len(emojiPoolB))]
+	return a + b
+}
+
+// AddEmojiByURL adds a unique emoji pair (e.g. 🔴🐱) to every channel name,
+// deterministically derived from the channel's stream URL via FNV-1a hash.
+// This replaces the previous sequential superscript numbering.
+func AddEmojiByURL(content string) string {
 	lines := strings.Split(content, "\n")
 	headers, entries := ParseChannelEntries(lines)
 
 	for i, entry := range entries {
+		// Extract URL from ExtraLines.
+		url := ""
+		for _, extraLine := range entry.ExtraLines {
+			trimmed := strings.TrimSpace(extraLine)
+			if strings.HasPrefix(trimmed, "http") {
+				url = trimmed
+				break
+			}
+		}
+
 		parts := strings.SplitN(entry.EXTINFLine, ",", 2)
 		if len(parts) > 1 {
 			chName := strings.TrimSpace(parts[1])
-			newName := fmt.Sprintf("%s %s", chName, toSuperscript(i+1))
+			emoji := urlToEmojiPair(url)
+			newName := fmt.Sprintf("%s %s", chName, emoji)
 			entries[i].EXTINFLine = parts[0] + "," + newName
 		}
 	}

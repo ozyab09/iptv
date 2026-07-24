@@ -158,8 +158,7 @@ var CategoriesToRemove = []string{
 	"𝕄𝕦𝕤𝕚𝕔",           // после нормализации
 	"45.𝕄𝕦𝕤𝕚𝕔 🇪🇺",
 	"𝕄𝕦𝕤𝕚𝕔",           // после нормализации
-	"45.145.32 🍟",
-	"145.32",            // после нормализации
+
 	// Служебные / Тестовые (bold unicode)
 	"56.𝕋𝕧ℤ𝕒𝕋𝕒𝕜 📼",
 	"𝕋𝕧ℤ𝕒𝕋𝕒𝕜",         // после нормализации
@@ -168,11 +167,7 @@ var CategoriesToRemove = []string{
 	"TVS ☆",
 	"TVS",               // после нормализации
 	"TvZaTak",
-	// Bold unicode кино (содержат символы, не покрываемые substring "кино")
-	"15.𝐊𝐢𝐧𝐨 📽",
-	"𝐊𝐢𝐧𝐨",            // после нормализации
-	"20.𝕂иℍ𝕠 🇷🇺",
-	"𝕂иℍ𝕠",            // после нормализации
+
 	"MavTV ⭐️",
 	"aleks-u-romki* 😊",
 }
@@ -180,10 +175,7 @@ var CategoriesToRemove = []string{
 // CategoriesToRemoveSubstring lists substrings to match against group-title (case-insensitive).
 // Any category whose name contains one of these substrings will be filtered out.
 var CategoriesToRemoveSubstring = []string{
-	// Кино и Сериалы
-	"кино", "сериал", "кинозал", "bcu", "kinowalk",
-	"гранд", "девяностые", "криминальная", "уральские",
-	"mav tv",
+
 	// Спорт (обычный текст)
 	"спорт", "sport", "матч",
 	// Спорт (bold unicode: ℂп𝕠𝕡т)
@@ -194,7 +186,7 @@ var CategoriesToRemoveSubstring = []string{
 	"радио тв", "музык", "dance", "retro", "bridge",
 	"trace", "mtv", "record", "dfm",
 	// Музыка (bold unicode: 𝕄𝕦𝕤𝕚𝕔, 145.32)
-	"𝕤𝕚𝕔", "145.32",
+	"𝕤𝕚𝕔",
 	// Религия
 	"религи",
 	// Relax
@@ -204,8 +196,8 @@ var CategoriesToRemoveSubstring = []string{
 	// АнтиРоссия / Украина
 	"антиросс", "україн", "украина", "наш нет",
 	// Служебные / Тестовые
-	"test", "rutube", "cinerama", "watcher", "flussonic",
-	"ngenix", "izone", "internet42", "onair", "ushba", "sewv",
+	"rutube", "cinerama", "watcher", "flussonic",
+	"ngenix", "internet42", "ushba", "sewv",
 	"tvz", "tv s", "tvzotak", "mavtv", "aleks",
 	// Служебные (bold unicode: 𝕋𝕧ℤ𝕒𝕋𝕒𝕜)
 	"𝕋𝕧ℤ",

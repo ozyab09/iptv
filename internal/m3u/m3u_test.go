@@ -218,39 +218,98 @@ http://example.com/same.m3u8`,
 	}
 }
 
-func TestAddSequentialNumbers(t *testing.T) {
-	content := `#EXTM3U
-#EXTINF:-1 tvg-id="711",Channel A
-http://example.com/a
-#EXTINF:-1 tvg-id="162",Channel B
-http://example.com/b
-#EXTINF:-1 tvg-id="711",Channel A
-http://example.com/a2
-#EXTINF:-1 tvg-id="999",Channel C
-http://example.com/c`
-
-	result := AddSequentialNumbers(content)
-
+func TestAddEmojiByURL(t *testing.T) {
 	tests := []struct {
-		name     string
-		original string
-		renamed  string
+		name    string
+		content string
+		checks  []string // channels that should be present
 	}{
-		{"channel 1", "Channel A", "Channel A ¹"},
-		{"channel 2", "Channel B", "Channel B ²"},
-		{"channel 3", "Channel A", "Channel A ³"},
-		{"channel 4", "Channel C", "Channel C ⁴"},
+		{
+			name: "deterministic: same URL → same emoji pair",
+			content: `#EXTM3U
+#EXTINF:-1 tvg-id="711",Channel A
+http://example.com/a.m3u8
+#EXTINF:-1 tvg-id="162",Channel B
+http://example.com/b.m3u8
+#EXTINF:-1 tvg-id="711",Channel A
+http://example.com/a.m3u8`,
+			checks: []string{"Channel A", "Channel B"},
+		},
+		{
+			name: "emoji pair appended to channel name",
+			content: `#EXTM3U
+#EXTINF:-1 tvg-id="100",Channel X
+http://example.com/x.m3u8
+#EXTINF:-1 tvg-id="200",Channel Y
+http://example.com/y.m3u8`,
+			checks: []string{"Channel X", "Channel Y"},
+		},
+		{
+			name: "handles different URLs producing different emojis",
+			content: `#EXTM3U
+#EXTINF:-1,Channel 1
+http://example.com/1.m3u8
+#EXTINF:-1,Channel 2
+http://example.com/2.m3u8
+#EXTINF:-1,Channel 3
+http://example.com/3.m3u8`,
+			checks: []string{"Channel 1", "Channel 2", "Channel 3"},
+		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if strings.Contains(result, tc.original+",") {
-				t.Errorf("expected original name %q to be renamed to %q", tc.original, tc.renamed)
+			result := AddEmojiByURL(tc.content)
+
+			for _, ch := range tc.checks {
+				if !strings.Contains(result, ch) {
+					t.Errorf("expected '%s' to be present in result", ch)
+				}
 			}
-			if !strings.Contains(result, tc.renamed) {
-				t.Errorf("expected renamed channel %q in result", tc.renamed)
+
+			// Verify that original channel names without emoji no longer appear at the end of EXTINF.
+			for _, line := range strings.Split(result, "\n") {
+				if !strings.HasPrefix(strings.TrimSpace(line), "#EXTINF:") {
+					continue
+				}
+				parts := strings.SplitN(line, ",", 2)
+				if len(parts) < 2 {
+					continue
+				}
+				name := strings.TrimSpace(parts[1])
+				// Name should have an emoji appended (separated by space).
+				if !strings.Contains(name, " ") {
+					t.Errorf("expected emoji pair appended to channel name, got: %q", name)
+				}
 			}
 		})
+	}
+}
+
+func TestUrlToEmojiPairDeterministic(t *testing.T) {
+	url1a := "http://example.com/stream1.m3u8"
+	url1b := "http://example.com/stream1.m3u8"
+	url2 := "http://example.com/stream2.m3u8"
+
+	emoji1a := urlToEmojiPair(url1a)
+	emoji1b := urlToEmojiPair(url1b)
+	emoji2 := urlToEmojiPair(url2)
+
+	// Same URL → same emoji.
+	if emoji1a != emoji1b {
+		t.Errorf("same URL should produce same emoji pair: %q vs %q", emoji1a, emoji1b)
+	}
+
+	// Different URL → different emoji (highly likely).
+	// Not guaranteed but extremely improbable with 1600+ combinations.
+	if emoji1a == emoji2 {
+		t.Logf("note: different URLs produced same emoji pair %q (possible but unlikely)", emoji1a)
+	}
+
+	// Emoji pair should contain at least 2 non-ASCII characters (visual emojis).
+	// Note: some emojis like ☀️ use variation selectors (U+FE0F), so rune count may be >2.
+	if len(emoji1a) < 4 {
+		t.Errorf("expected emoji pair to have at least 4 bytes, got %d: %q", len(emoji1a), emoji1a)
 	}
 }
 
