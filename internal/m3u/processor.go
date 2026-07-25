@@ -23,6 +23,7 @@ var (
 	regGroupTitle     = regexp.MustCompile(`group-title="([^"]*)"`)                        // group-title attribute
 	regTvgID          = regexp.MustCompile(`tvg-id="([^"]*)"`)                             // tvg-id attribute
 	regURLTVG         = regexp.MustCompile(`url-tvg="[^"]*"`)                              // url-tvg attribute
+	regTVGURL         = regexp.MustCompile(`tvg-url="[^"]*"`)                              // tvg-url attribute
 	regCategoriesFile = regexp.MustCompile(`group-title="([^"]+)".*?tvg-id="([^"]+)".+?,(.+)`) // categories.txt parser
 	regGroupTitleAttr = regexp.MustCompile(`group-title="[^"]*"`)                          // for replacement
 	regTvgIDAttr      = regexp.MustCompile(`tvg-id="[^"]*"`)                              // for replacement
@@ -142,6 +143,11 @@ func FilterContent(content string, categoriesToRemove, categoriesToRemoveSubstri
 
 		if strings.HasPrefix(trimmed, "#EXTM3U") {
 			if customEPGURL != "" {
+				// Replace tvg-url attribute (alternative format).
+				if regTVGURL.MatchString(lineLower) {
+					line = regTVGURL.ReplaceAllString(line, fmt.Sprintf(`tvg-url="%s"`, customEPGURL))
+				}
+				// Replace or add url-tvg attribute.
 				if regURLTVG.MatchString(lineLower) {
 					line = regURLTVG.ReplaceAllString(line, fmt.Sprintf(`url-tvg="%s"`, customEPGURL))
 				} else {
