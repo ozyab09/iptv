@@ -25,7 +25,7 @@ env:
 jobs:
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     permissions:
       contents: read
 
@@ -41,12 +41,18 @@ jobs:
         go-version: '1.25'
         cache: true
 
+    - name: Build
+      run: go build -o /dev/null ./...
+
+    - name: Vet
+      run: go vet ./...
+
     - name: Run tests
       run: go test ./... -v -count=1
 
   filter-m3u:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 30
     needs: test
     if: github.event_name != 'pull_request' || always()
     permissions:
@@ -64,9 +70,20 @@ jobs:
         go-version: '1.25'
         cache: true
 
+    - name: Build binary
+      run: go build -o iptv-filter ./cmd/iptv-filter/
+
     - name: Set dry-run mode for pull requests
       if: github.event_name == 'pull_request'
       run: echo "DRY_RUN=true" >> $GITHUB_ENV
 
     - name: Run M3U filter script
-      run: go run ./cmd/iptv-filter/
+      run: ./iptv-filter
+
+    - name: Upload output artifacts
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: output
+        path: output/
+        retention-days: 7

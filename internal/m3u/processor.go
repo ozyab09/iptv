@@ -1,6 +1,7 @@
 package m3u
 
 import (
+	"context"
 	"fmt"
 	"hash/fnv"
 	"os"
@@ -111,8 +112,16 @@ func urlToEmojiPair(url string) string {
 // ─── Downloads ────────────────────────────────────────────────────────────────────
 
 func DownloadM3U(url string) (string, error) {
+	return DownloadM3UWithContext(nil, url, false)
+}
+
+// DownloadM3UWithContext downloads M3U with context support for cancellation.
+func DownloadM3UWithContext(ctx context.Context, url string, skipSSLVerify bool) (string, error) {
 	logger.Info("Downloading M3U file from: %s", url)
-	data, err := utils.DownloadFile(url, config.MaxM3UFileSize)
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	data, err := utils.DownloadFileWithContext(ctx, url, config.MaxM3UFileSize, skipSSLVerify)
 	if err != nil {
 		logger.Error("Error downloading M3U file: %v", err)
 		return "", err
@@ -125,15 +134,16 @@ func DownloadM3U(url string) (string, error) {
 // ─── Normalization ────────────────────────────────────────────────────────────────
 
 func isEmojiRune(r rune) bool {
+	// Regional indicators (flags) — NOT covered by 0x1F300+ range.
+	if r >= 0x1F1E0 && r <= 0x1F1FF {
+		return true
+	}
+	// Main emoji block: misc symbols, pictographs, emoticons, transport.
+	if r >= 0x1F300 && r <= 0x1F9FF {
+		return true
+	}
+	// Additional ranges outside the main emoji block.
 	switch {
-	case r >= 0x1F300 && r <= 0x1F9FF:
-		return true
-	case r >= 0x1F1E0 && r <= 0x1F1FF:
-		return true
-	case r >= 0x1F600 && r <= 0x1F64F:
-		return true
-	case r >= 0x1F680 && r <= 0x1F6FF:
-		return true
 	case r >= 0x2600 && r <= 0x27BF:
 		return true
 	case r >= 0xFE00 && r <= 0xFE0F:
@@ -519,7 +529,6 @@ func FilterContent(content string, categoriesToRemove, categoriesToRemoveSubstri
 
 	lines := strings.Split(content, "\n")
 	var filteredLines []string
-	totalProcessed := 0
 
 	for _, line := range lines {
 		if len(line) > 10000 {
@@ -536,7 +545,6 @@ func FilterContent(content string, categoriesToRemove, categoriesToRemoveSubstri
 
 		// Channel entry: filter and normalize.
 		if strings.HasPrefix(trimmed, "#EXTINF:") {
-			totalProcessed++
 			result := filterEntry(line, exactMatchLower, substringLower, excludeLower)
 			if result.keep {
 				filteredLines = append(filteredLines, result.filteredLine)
@@ -614,6 +622,7 @@ func ParseCategoriesFile(filePath string) map[string]map[string]string {
 		logger.Warning("Categories file not found: %s", filePath)
 		return mapping
 	}
+	logger.Info("Categories file loaded: %s (%d bytes)", filePath, len(data))
 
 	regCategoriesFile := regexp.MustCompile(`group-title="([^"]+)".*?tvg-id="([^"]+)".+?,(.+)`)
 	matches := regCategoriesFile.FindAllStringSubmatch(string(data), -1)

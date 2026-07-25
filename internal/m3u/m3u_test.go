@@ -67,15 +67,15 @@ http://example.com/b.m3u8`,
 			order: []string{"Channel A", "CHANNEL B", "channel z"},
 		},
 		{
-			name: "sorts correctly with superscript suffixes",
+			name: "sorts correctly with emoji suffixes",
 			input: `#EXTM3U
-#EXTINF:-1,Channel B ²
+#EXTINF:-1,Channel B 🔴🐱
 http://example.com/b2.m3u8
 #EXTINF:-1,Channel A
 http://example.com/a.m3u8
-#EXTINF:-1,Channel B ¹
+#EXTINF:-1,Channel B 🟠🐶
 http://example.com/b1.m3u8`,
-			order: []string{"Channel A", "Channel B ²", "Channel B ¹"},
+			order: []string{"Channel A", "Channel B 🔴🐱", "Channel B 🟠🐶"},
 		},
 		{
 			name: "stable sort keeps original order for equal names",

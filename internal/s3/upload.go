@@ -63,31 +63,27 @@ func validateEndpoint(s3Endpoint string) error {
 	return nil
 }
 
-func getContentType(contentType string) string {
+func getContentType(contentType string) *string {
 	if contentType == "" {
-		return "application/x-mpegurl"
+		ct := "application/x-mpegurl"
+		return &ct
 	}
-	return contentType
+	return &contentType
 }
 
 // UploadToS3 uploads content as an S3 object with context support.
-func UploadToS3(ctx context.Context, content, bucket, key, s3Endpoint, region, contentType string) error {
-	if err := validateEndpoint(s3Endpoint); err != nil {
-		return err
+func UploadToS3(ctx context.Context, client *s3.Client, content, bucket, key, contentType string) error {
+	if client == nil {
+		return fmt.Errorf("S3 client is nil")
 	}
 	logger.Info("Uploading to S3-compatible storage: s3://%s/%s", bucket, key)
 
-	client, err := newS3Client(ctx, s3Endpoint, region)
-	if err != nil {
-		return err
-	}
-
 	ct := getContentType(contentType)
-	_, err = client.PutObject(ctx, &s3.PutObjectInput{
+	_, err := client.PutObject(ctx, &s3.PutObjectInput{
 		Bucket:      &bucket,
 		Key:         &key,
 		Body:        strings.NewReader(content),
-		ContentType: &ct,
+		ContentType: ct,
 		Metadata:    buildS3Metadata(),
 	})
 	if err != nil {
@@ -100,11 +96,10 @@ func UploadToS3(ctx context.Context, content, bucket, key, s3Endpoint, region, c
 }
 
 // UploadFileToS3 uploads a local file to S3 with context support.
-func UploadFileToS3(ctx context.Context, filePath, bucket, key, outputDir, s3Endpoint, region, contentType string) error {
-	if err := validateEndpoint(s3Endpoint); err != nil {
-		return err
+func UploadFileToS3(ctx context.Context, client *s3.Client, filePath, bucket, key, outputDir, contentType string) error {
+	if client == nil {
+		return fmt.Errorf("S3 client is nil")
 	}
-
 	fullPath := filePath
 	if outputDir != "" {
 		altPath := path.Join(outputDir, path.Base(filePath))
@@ -120,17 +115,12 @@ func UploadFileToS3(ctx context.Context, filePath, bucket, key, outputDir, s3End
 		return fmt.Errorf("failed to read file %s: %w", fullPath, err)
 	}
 
-	client, err := newS3Client(ctx, s3Endpoint, region)
-	if err != nil {
-		return err
-	}
-
 	ct := getContentType(contentType)
 	_, err = client.PutObject(ctx, &s3.PutObjectInput{
 		Bucket:      &bucket,
 		Key:         &key,
 		Body:        bytes.NewReader(data),
-		ContentType: &ct,
+		ContentType: ct,
 		Metadata:    buildS3Metadata(map[string]string{"source-file": fullPath}),
 	})
 	if err != nil {
@@ -143,11 +133,10 @@ func UploadFileToS3(ctx context.Context, filePath, bucket, key, outputDir, s3End
 }
 
 // UploadArchiveToS3 gzip-compresses content and uploads it to S3 under archive/YYYY-MM-DD/.
-func UploadArchiveToS3(ctx context.Context, content, bucket, baseKey, s3Endpoint, region string) (string, error) {
-	if err := validateEndpoint(s3Endpoint); err != nil {
-		return "", err
+func UploadArchiveToS3(ctx context.Context, client *s3.Client, content, bucket, baseKey string) (string, error) {
+	if client == nil {
+		return "", fmt.Errorf("S3 client is nil")
 	}
-
 	now := time.Now().UTC()
 	dateStr := now.Format("2006-01-02")
 	timeStr := now.Format("15-04-05")
@@ -165,16 +154,12 @@ func UploadArchiveToS3(ctx context.Context, content, bucket, baseKey, s3Endpoint
 	}
 	gw.Close()
 
-	client, err := newS3Client(ctx, s3Endpoint, region)
-	if err != nil {
-		return "", err
-	}
-
+	clientForUpload := client
 	originalSizeKB := float64(len(content)) / 1024
 	compressedSizeKB := float64(buf.Len()) / 1024
 	contentType := "application/gzip"
 
-	_, err = client.PutObject(ctx, &s3.PutObjectInput{
+	_, err := clientForUpload.PutObject(ctx, &s3.PutObjectInput{
 		Bucket:      &bucket,
 		Key:         &archiveKey,
 		Body:        bytes.NewReader(buf.Bytes()),
@@ -193,14 +178,20 @@ func UploadArchiveToS3(ctx context.Context, content, bucket, baseKey, s3Endpoint
 	return archiveKey, nil
 }
 
-// UploadBoth uploads content as both a direct S3 object and a gzip archive.
-func UploadBoth(ctx context.Context, content, bucket, key, s3Endpoint, region string) error {
-	// Archive upload.
-	if _, err := UploadArchiveToS3(ctx, content, bucket, key, s3Endpoint, region); err != nil {
+// NewClient creates a reusable S3 client.
+func NewClient(ctx context.Context, s3Endpoint, region string) (*s3.Client, error) {
+	if err := validateEndpoint(s3Endpoint); err != nil {
+		return nil, err
+	}
+	return newS3Client(ctx, s3Endpoint, region)
+}
+
+// UploadBoth uploads content as both a direct S3 object and a gzip archive using an existing client.
+func UploadBoth(ctx context.Context, client *s3.Client, content, bucket, key, contentType string) error {
+	if _, err := UploadArchiveToS3(ctx, client, content, bucket, key); err != nil {
 		return fmt.Errorf("archive upload failed: %w", err)
 	}
-	// Direct upload.
-	if err := UploadToS3(ctx, content, bucket, key, s3Endpoint, region, ""); err != nil {
+	if err := UploadToS3(ctx, client, content, bucket, key, contentType); err != nil {
 		return fmt.Errorf("direct upload failed: %w", err)
 	}
 	return nil

@@ -129,6 +129,11 @@ func (c *Config) LocalFilteredEPGPath() string {
 	return c.s3EPGKey + "-filtered"
 }
 
+// EnsureOutputDir creates the output directory if it doesn't exist.
+func (c *Config) EnsureOutputDir() error {
+	return os.MkdirAll(c.outputDir, 0755)
+}
+
 // DryRun returns true if dry-run mode is enabled.
 func (c *Config) DryRun() bool { return c.dryRun }
 

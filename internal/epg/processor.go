@@ -222,19 +222,20 @@ func FilterEPGContent(epgContent string, channelIDs map[string]string, excludedC
 		}
 	}
 
-	// Stream-parse EPG XML to avoid loading 463MB into Go structs.
+	// Pre-compute retention window to avoid time.Now() calls in the loop.
+	now := time.Now()
+	oneHourAgo := now.Add(-1 * time.Hour)
+	retentionLater := now.AddDate(0, 0, retentionDays)
+
+	// Single-pass streaming parse: channels come before programmes in XMLTV.
 	var result TV
 	result.XMLName = xml.Name{Local: "tv"}
 
-	decoder := xml.NewDecoder(bytes.NewReader([]byte(epgContent)))
-
-	// First pass (channels): build channel keep-set while streaming.
 	channelsToKeep := make(map[string]bool)
-
-	// Build EPG channel display-name map first (pass 1).
+	checkedChannels := make(map[string]bool)
 	epgChDisplayNames := make(map[string][]string)
 
-	decoder = xml.NewDecoder(bytes.NewReader([]byte(epgContent))) // reset
+	decoder := xml.NewDecoder(bytes.NewReader([]byte(epgContent)))
 	for {
 		tok, err := decoder.Token()
 		if err == io.EOF {
@@ -244,169 +245,126 @@ func FilterEPGContent(epgContent string, channelIDs map[string]string, excludedC
 			return "", fmt.Errorf("error parsing EPG XML token: %w", err)
 		}
 
-		if se, ok := tok.(xml.StartElement); ok && se.Name.Local == "channel" {
+		se, ok := tok.(xml.StartElement)
+		if !ok {
+			continue
+		}
+
+		switch se.Name.Local {
+		case "channel":
 			var ch Channel
 			if err := decoder.DecodeElement(&ch, &se); err != nil {
 				logger.Warning("Error decoding channel element: %v", err)
 				continue
 			}
+
+			// Collect display names for name-based EPG matching.
 			for _, dn := range ch.DisplayName {
 				if dn.Value != "" {
 					epgChDisplayNames[ch.ID] = append(epgChDisplayNames[ch.ID], strings.ToLower(strings.TrimSpace(dn.Value)))
 				}
 			}
-		}
-	}
 
-	// Second pass: filter programmes and channels.
-	decoder = xml.NewDecoder(bytes.NewReader([]byte(epgContent))) // reset
-	checkedChannels := make(map[string]bool)
-
-	for {
-		tok, err := decoder.Token()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return "", fmt.Errorf("error parsing EPG XML token: %w", err)
-		}
-
-		switch se := tok.(type) {
-		case xml.StartElement:
-			switch se.Name.Local {
-			case "channel":
-				var ch Channel
-				if err := decoder.DecodeElement(&ch, &se); err != nil {
-					logger.Warning("Error decoding channel element: %v", err)
-					continue
-				}
-
-				// Check if this channel should be kept.
-				_, matchedByID := channelIDs[ch.ID]
-				if !matchedByID {
-					// Check by name.
-					if dns, ok := epgChDisplayNames[ch.ID]; ok && len(chNamesNormalized) > 0 {
-						for _, dn := range dns {
-							if chNamesNormalized[dn] {
-								matchedByID = true
-								break
-							}
-						}
-					}
-				}
-
-				shouldKeep := matchedByID
-				if shouldKeep {
-					// Check exclusions.
-					if excludedIDSet[ch.ID] {
-						shouldKeep = false
-					}
-				}
-
-				if shouldKeep {
-					channelsToKeep[ch.ID] = true
-					result.Channels = append(result.Channels, Channel{
-						ID: ch.ID,
-						DisplayName: func() []DisplayName {
-							if len(ch.DisplayName) > 0 {
-								return []DisplayName{{Lang: ch.DisplayName[0].Lang, Value: ch.DisplayName[0].Value}}
-							}
-							return nil
-						}(),
-					})
-				}
-
-			case "programme":
-				// Only process programmes for kept channels.
-				chRef := ""
-				for _, attr := range se.Attr {
-					if attr.Name.Local == "channel" {
-						chRef = attr.Value
+			// Check if this channel should be kept by ID or name.
+			_, matchedByID := channelIDs[ch.ID]
+			if !matchedByID && len(chNamesNormalized) > 0 {
+				for _, dn := range epgChDisplayNames[ch.ID] {
+					if chNamesNormalized[dn] {
+						matchedByID = true
 						break
 					}
 				}
+			}
 
-				if !channelsToKeep[chRef] {
-					// Skip this programme.
-					if err := decoder.Skip(); err != nil {
-						logger.Warning("Error skipping programme element: %v", err)
+			shouldKeep := matchedByID && !excludedIDSet[ch.ID]
+			if shouldKeep {
+				channelsToKeep[ch.ID] = true
+				result.Channels = append(result.Channels, Channel{
+					ID: ch.ID,
+					DisplayName: func() []DisplayName {
+						if len(ch.DisplayName) > 0 {
+							return []DisplayName{{Lang: ch.DisplayName[0].Lang, Value: ch.DisplayName[0].Value}}
+						}
+						return nil
+					}(),
+				})
+			}
+
+		case "programme":
+			chRef := ""
+			for _, attr := range se.Attr {
+				if attr.Name.Local == "channel" {
+					chRef = attr.Value
+					break
+				}
+			}
+
+			if !channelsToKeep[chRef] {
+				if err := decoder.Skip(); err != nil {
+					logger.Warning("Error skipping programme element: %v", err)
+				}
+				continue
+			}
+
+			var prog Programme
+			if err := decoder.DecodeElement(&prog, &se); err != nil {
+				logger.Warning("Error decoding programme element: %v", err)
+				continue
+			}
+
+			// Check exclusion by category or ID (once per channel).
+			if !checkedChannels[prog.Channel] {
+				checkedChannels[prog.Channel] = true
+				catToCheck := channelIDs[prog.Channel]
+
+				exclude := false
+				if catToCheck != "" {
+					catLower := strings.ToLower(catToCheck)
+					for _, ec := range excludedCatLower {
+						if catLower == ec {
+							exclude = true
+							break
+						}
 					}
+				}
+				if excludedIDSet[prog.Channel] {
+					exclude = true
+				}
+
+				if exclude {
+					delete(channelsToKeep, prog.Channel)
+					for i, ch := range result.Channels {
+						if ch.ID == prog.Channel {
+							result.Channels = append(result.Channels[:i], result.Channels[i+1:]...)
+							break
+						}
+					}
+					checkedChannels[prog.Channel] = false
 					continue
 				}
+			}
 
-				var prog Programme
-				if err := decoder.DecodeElement(&prog, &se); err != nil {
-					logger.Warning("Error decoding programme element: %v", err)
-					continue
-				}
+			if !channelsToKeep[prog.Channel] {
+				continue
+			}
 
-				// Apply retention window.
-				if !checkedChannels[prog.Channel] {
-					checkedChannels[prog.Channel] = true
+			// Apply time retention filter.
+			startMatch := epgTimeRegex.FindStringSubmatch(prog.Start)
+			stopMatch := epgTimeRegex.FindStringSubmatch(prog.Stop)
 
-					catToCheck := channelIDs[prog.Channel]
-					if catToCheck == "" {
-						for chID := range channelNames {
-							_ = chID // matched by name elsewhere
-						}
-					}
-
-					// Check category exclusion.
-					if catToCheck != "" {
-						catLower := strings.ToLower(catToCheck)
-						for _, ec := range excludedCatLower {
-							if catLower == ec {
-								// Remove channel from keep-set.
-								delete(channelsToKeep, prog.Channel)
-								// Also remove from result.Channels.
-								for i, ch := range result.Channels {
-									if ch.ID == prog.Channel {
-										result.Channels = append(result.Channels[:i], result.Channels[i+1:]...)
-										break
-									}
-								}
-								checkedChannels[prog.Channel] = false
-								break
-							}
-						}
-					}
-					if excludedIDSet[prog.Channel] {
-						delete(channelsToKeep, prog.Channel)
-						for i, ch := range result.Channels {
-							if ch.ID == prog.Channel {
-								result.Channels = append(result.Channels[:i], result.Channels[i+1:]...)
-								break
-							}
-						}
-						checkedChannels[prog.Channel] = false
+			include := true
+			if startMatch != nil && stopMatch != nil {
+				startTime, err1 := parseEPGTime(startMatch)
+				stopTime, err2 := parseEPGTime(stopMatch)
+				if err1 == nil && err2 == nil {
+					if stopTime.Before(oneHourAgo) || startTime.After(retentionLater) {
+						include = false
 					}
 				}
+			}
 
-				if !channelsToKeep[prog.Channel] {
-					continue
-				}
-
-				// Apply time retention filter.
-				startMatch := epgTimeRegex.FindStringSubmatch(prog.Start)
-				stopMatch := epgTimeRegex.FindStringSubmatch(prog.Stop)
-
-				include := true
-				if startMatch != nil && stopMatch != nil {
-					startTime, err1 := parseEPGTime(startMatch)
-					stopTime, err2 := parseEPGTime(stopMatch)
-					if err1 == nil && err2 == nil {
-						now := time.Now()
-						oneHourAgo := now.Add(-1 * time.Hour)
-						retentionLater := now.AddDate(0, 0, retentionDays)
-						if stopTime.Before(oneHourAgo) || startTime.After(retentionLater) {
-							include = false
-						}
-					}
-				}
-
-				if include {
-					result.Programmes = append(result.Programmes, prog)
-				}
+			if include {
+				result.Programmes = append(result.Programmes, prog)
 			}
 		}
 	}

@@ -1,8 +1,12 @@
-.PHONY: test run dry-run vet lint clean
+.PHONY: test run dry-run vet lint clean build
 
 # Run all tests with verbose output
 test:
 	go test ./... -v -count=1
+
+# Build binary
+build:
+	go build -o bin/iptv-filter ./cmd/iptv-filter/
 
 # Run the M3U filter (requires .env or exported vars)
 run:
@@ -18,5 +22,5 @@ vet:
 
 # Clean output directory and temporary files
 clean:
-	rm -rf output/
+	rm -rf output/ bin/
 	rm -f playlist.m3u playlist-all.m3u

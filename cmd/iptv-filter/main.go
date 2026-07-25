@@ -9,6 +9,8 @@ import (
 	"syscall"
 	"time"
 
+	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
+
 	"github.com/ozyab/iptv/internal/config"
 	"github.com/ozyab/iptv/internal/epg"
 	"github.com/ozyab/iptv/internal/m3u"
@@ -31,14 +33,9 @@ func gracefulCtx() (context.Context, context.CancelFunc) {
 	return ctx, cancel
 }
 
-// saveFile writes M3U content to a file in the output directory.
+// saveFile writes content to a file in the output directory.
 func saveFile(content, filename string, cfg *config.Config) {
-	outputDir := cfg.OutputDir()
-	if err := os.MkdirAll(outputDir, 0755); err != nil {
-		log.Error("Failed to create output directory: %v", err)
-		return
-	}
-	filepath := path.Join(outputDir, filename)
+	filepath := path.Join(cfg.OutputDir(), filename)
 	if err := os.WriteFile(filepath, []byte(content), 0644); err != nil {
 		log.Error("Failed to save file: %v", err)
 		return
@@ -89,12 +86,12 @@ func parseM3USources(m3uURL string) []string {
 
 // ─── Pipeline step: download M3U ────────────────────────────────────────────────
 
-func downloadM3U(ctx context.Context, urlStr string) (string, error) {
+func downloadM3U(ctx context.Context, urlStr string, skipSSLVerify bool) (string, error) {
 	log.Info("Downloading M3U source: %s", urlStr)
 	var original string
 	err := utils.Retry(3, 2*time.Second, 2.0, func() error {
 		var e error
-		original, e = m3u.DownloadM3U(urlStr)
+		original, e = m3u.DownloadM3UWithContext(ctx, urlStr, skipSSLVerify)
 		return e
 	})
 	return original, err
@@ -127,7 +124,7 @@ func applyMetadata(content string, cfg *config.Config) string {
 
 // ─── Pipeline step: process EPG ──────────────────────────────────────────────────
 
-func processEPG(ctx context.Context, cfg *config.Config, epgURL string, filteredContent string, dryRun bool) (string, error) {
+func processEPG(ctx context.Context, cfg *config.Config, epgURL string, filteredContent string, s3Client *awss3.Client, dryRun bool) (string, error) {
 	log.Info("Starting EPG filtering process")
 
 	var epgContent string
@@ -139,12 +136,10 @@ func processEPG(ctx context.Context, cfg *config.Config, epgURL string, filtered
 		return filteredContent, err
 	}
 
-	// Build tvg-id map from EPG and add missing tvg-ids to filtered playlist.
 	epgNameToIDMap := epg.BuildEPGNameToIDMap(epgContent)
 	filteredContent = m3u.AddTvgIDsToPlaylist(filteredContent, epgNameToIDMap)
 	saveFile(filteredContent, cfg.LocalFilteredPlaylistPath(), cfg)
 
-	// Extract channel info and filter EPG programmes.
 	chIDs, chNames := epg.ExtractChannelInfoFromPlaylist(filteredContent)
 	filteredEPG, err := epg.FilterEPGContent(epgContent, chIDs, config.EPGExcludedCategories, config.EPGExcludedChannelIDs, chNames, cfg.EPGRetentionDays())
 	if err != nil {
@@ -153,10 +148,9 @@ func processEPG(ctx context.Context, cfg *config.Config, epgURL string, filtered
 
 	epg.SaveFilteredEPGLocally(filteredEPG, cfg.LocalFilteredEPGPath(), cfg)
 
-	// Upload filtered EPG to S3 (non-dry-run only).
-	if !dryRun {
+	if !dryRun && s3Client != nil {
 		uploadWithRetry(ctx, func() error {
-			return s3.UploadFileToS3(ctx, cfg.LocalFilteredEPGPath(), cfg.S3DefaultBucketName(), cfg.S3EPGKey(), cfg.OutputDir(), cfg.S3EndpointURL(), cfg.S3Region(), "application/gzip")
+			return s3.UploadFileToS3(ctx, s3Client, cfg.LocalFilteredEPGPath(), cfg.S3DefaultBucketName(), cfg.S3EPGKey(), cfg.OutputDir(), "application/gzip")
 		})
 	}
 
@@ -171,9 +165,9 @@ func uploadWithRetry(ctx context.Context, fn func() error) {
 	}
 }
 
-func uploadBoth(ctx context.Context, content, bucket, key, s3Endpoint, region string) {
+func uploadBoth(ctx context.Context, client *awss3.Client, content, bucket, key string) {
 	uploadWithRetry(ctx, func() error {
-		return s3.UploadBoth(ctx, content, bucket, key, s3Endpoint, region)
+		return s3.UploadBoth(ctx, client, content, bucket, key, "")
 	})
 }
 
@@ -192,6 +186,12 @@ func run() int {
 	ctx, cancel := gracefulCtx()
 	defer cancel()
 
+	// Ensure output directory exists once.
+	if err := cfg.EnsureOutputDir(); err != nil {
+		log.Error("Failed to create output directory: %v", err)
+		return 1
+	}
+
 	m3uURL := cfg.M3USourceURL()
 	epgURL := cfg.EPGSourceURL()
 	s3Bucket := cfg.S3DefaultBucketName()
@@ -200,6 +200,7 @@ func run() int {
 	dryRun := cfg.DryRun()
 	s3Endpoint := cfg.S3EndpointURL()
 	customEPGURL := cfg.BuildCustomEPGURL()
+	skipSSL := cfg.SkipSSLVerify()
 
 	m3uURLs := parseM3USources(m3uURL)
 	log.Info("Processing %d M3U source(s)", len(m3uURLs))
@@ -208,7 +209,7 @@ func run() int {
 	var allFiltered []string
 	var allOriginal []string
 	for _, urlStr := range m3uURLs {
-		original, err := downloadM3U(ctx, urlStr)
+		original, err := downloadM3U(ctx, urlStr, skipSSL)
 		if err != nil {
 			log.Error("Failed to download M3U from %s: %v", urlStr, err)
 			return 1
@@ -221,17 +222,28 @@ func run() int {
 	filteredContent := mergeParts(allFiltered)
 	originalContent := mergeParts(allOriginal)
 
-	// Step 2: Apply channel metadata from categories.txt.
+	// Step 2: Apply channel metadata.
 	filteredContent = applyMetadata(filteredContent, cfg)
 
 	// Step 3: Save files locally.
 	saveFile(filteredContent, cfg.LocalFilteredPlaylistPath(), cfg)
 	saveFile(originalContent, cfg.LocalAllCategoriesPlaylistPath(), cfg)
 
-	// Step 4: Process EPG (adds tvg-ids and filters EPG).
+	// Step 4: Create reusable S3 client (if not dry-run).
+	var s3Client *awss3.Client
+	if !dryRun {
+		var err error
+		s3Client, err = s3.NewClient(ctx, s3Endpoint, cfg.S3Region())
+		if err != nil {
+			log.Error("Failed to create S3 client: %v", err)
+			return 1
+		}
+	}
+
+	// Step 5: Process EPG.
 	if epgURL != "" {
 		var err error
-		filteredContent, err = processEPG(ctx, cfg, epgURL, filteredContent, dryRun)
+		filteredContent, err = processEPG(ctx, cfg, epgURL, filteredContent, s3Client, dryRun)
 		if err != nil {
 			log.Error("EPG processing failed: %v", err)
 			return 1
@@ -243,9 +255,9 @@ func run() int {
 		return 0
 	}
 
-	// Step 5: Upload everything to S3.
-	uploadBoth(ctx, filteredContent, s3Bucket, s3FilteredKey, s3Endpoint, cfg.S3Region())
-	uploadBoth(ctx, originalContent, s3Bucket, s3AllKey, s3Endpoint, cfg.S3Region())
+	// Step 6: Upload everything to S3 (reusing client).
+	uploadBoth(ctx, s3Client, filteredContent, s3Bucket, s3FilteredKey)
+	uploadBoth(ctx, s3Client, originalContent, s3Bucket, s3AllKey)
 
 	log.Info("Process completed successfully")
 	return 0
