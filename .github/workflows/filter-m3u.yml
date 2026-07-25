@@ -80,10 +80,3 @@ jobs:
     - name: Run M3U filter script
       run: ./iptv-filter
 
-    - name: Upload output artifacts
-      if: always()
-      uses: actions/upload-artifact@v5
-      with:
-        name: output
-        path: output/
-        retention-days: 7
