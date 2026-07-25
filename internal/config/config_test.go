@@ -2,6 +2,7 @@ package config
 
 import (
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -70,50 +71,29 @@ func TestLocalPlaylistPaths(t *testing.T) {
 func TestCategoriesToRemove(t *testing.T) {
 	expected := []string{
 		"Взрослые",
+		"Adult (18+)",
+		"XXX (18+)",
 		"Религия",
 		"Религиозные",
-		"40.РЕЛИГИЯ 🧙‍♂️",
-		"РЕЛИГИЯ",
-		"Adult (18+) ❤️",
-		"Adult (18+)",
-		"XXX (18+) 🔞",
-		"XXX (18+)",
 		"💲💲💲Поддержи Проект💲💲💲",
-		"🔺 INFO 🔺",
 		"🔺 INFO",
-		"10.АнтиРОССИЙСКИЕ 🇪🇺",
 		"АнтиРОССИЙСКИЕ",
-		"12.𝕐𝕜𝕡𝕒Їℍ𝕒 🇺🇦",
 		"𝕐𝕜𝕡𝕒Їℍ𝕒",
 		"Українські",
-		"Украина 🇺🇦",
 		"Украина",
-		"Наш Нет 🇺🇦",
 		"Наш Нет",
-		"34.ℂп𝕠𝕡т ⚽️",
 		"ℂп𝕠𝕡т",
-		"37.186 ♻️",
 		"186",
-		"43.РАДИО ТВ 📻",
 		"РАДИО ТВ",
-		"44.𝕄𝕦𝕤𝕚𝕔 🇷🇺",
 		"𝕄𝕦𝕤𝕚𝕔",
-		"45.𝕄𝕦𝕤𝕚𝕔 🇪🇺",
-		"𝕄𝕦𝕤𝕚𝕔",
-
-		"56.𝕋𝕧ℤ𝕒𝕋𝕒𝕜 📼",
 		"𝕋𝕧ℤ𝕒𝕋𝕒𝕜",
-		"62.32 📼",
 		"32",
-		"TVS ☆",
 		"TVS",
 		"TvZaTak",
 		"MavTV ⭐️",
 		"aleks-u-romki* 😊",
-
 		"𝐊𝐢𝐧𝐨",
 		"𝕂иℍ𝕠",
-
 		"РОССИЯ+",
 	}
 	if len(CategoriesToRemove) != len(expected) {
@@ -122,6 +102,18 @@ func TestCategoriesToRemove(t *testing.T) {
 	for i, v := range expected {
 		if CategoriesToRemove[i] != v {
 			t.Errorf("expected category %q, got %q", v, CategoriesToRemove[i])
+		}
+	}
+}
+
+func TestCategoriesToRemoveSubstring(t *testing.T) {
+	// Verify all substrings are non-empty and in lowercase.
+	for i, s := range CategoriesToRemoveSubstring {
+		if s == "" {
+			t.Errorf("CategoriesToRemoveSubstring[%d] is empty", i)
+		}
+		if s != strings.ToLower(s) {
+			t.Errorf("CategoriesToRemoveSubstring[%d] is not lowercase: %q", i, s)
 		}
 	}
 }
@@ -138,6 +130,18 @@ func TestChannelNamesToExclude(t *testing.T) {
 	}
 }
 
+func TestEPGExcludedCategories(t *testing.T) {
+	if len(EPGExcludedCategories) == 0 {
+		t.Error("expected at least one EPG excluded category")
+	}
+}
+
+func TestEPGExcludedChannelIDs(t *testing.T) {
+	if len(EPGExcludedChannelIDs) == 0 {
+		t.Error("expected at least one EPG excluded channel ID")
+	}
+}
+
 func TestEPGRetentionDaysDefault(t *testing.T) {
 	cfg := New()
 	if cfg.EPGRetentionDays() != 10 {
@@ -151,5 +155,21 @@ func TestEPGRetentionDaysFromEnv(t *testing.T) {
 	cfg := New()
 	if cfg.EPGRetentionDays() != 7 {
 		t.Errorf("expected EPGRetentionDays to be 7, got %d", cfg.EPGRetentionDays())
+	}
+}
+
+func TestSkipSSLVerifyDefault(t *testing.T) {
+	cfg := New()
+	if cfg.SkipSSLVerify() {
+		t.Error("expected SkipSSLVerify to be false by default")
+	}
+}
+
+func TestSkipSSLVerifyFromEnv(t *testing.T) {
+	os.Setenv("SKIP_SSL_VERIFY", "true")
+	defer os.Unsetenv("SKIP_SSL_VERIFY")
+	cfg := New()
+	if !cfg.SkipSSLVerify() {
+		t.Error("expected SkipSSLVerify to be true when SKIP_SSL_VERIFY=true")
 	}
 }

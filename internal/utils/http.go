@@ -1,6 +1,7 @@
 package utils
 
 import (
+	"context"
 	"crypto/tls"
 	"fmt"
 	"io"
@@ -8,18 +9,32 @@ import (
 	"time"
 )
 
-// HTTPClient is a shared HTTP client with disabled SSL verification (needed for local dev).
-var HTTPClient = &http.Client{
-	Transport: &http.Transport{
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-	},
-	Timeout: 30 * time.Minute,
+// NewHTTPClient creates an HTTP client with optional SSL verification bypass.
+func NewHTTPClient(skipSSLVerify bool) *http.Client {
+	return &http.Client{
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: skipSSLVerify},
+		},
+		Timeout: 30 * time.Minute,
+	}
 }
 
 // DownloadFile performs an HTTP GET and returns raw bytes, enforcing a maxSize limit.
-// Shared by both M3U and EPG downloaders to avoid code duplication.
+// Uses the default HTTP client with SSL verification enabled.
 func DownloadFile(url string, maxSize int) ([]byte, error) {
-	resp, err := HTTPClient.Get(url)
+	return DownloadFileWithContext(context.Background(), url, maxSize, false)
+}
+
+// DownloadFileWithContext performs an HTTP GET with context support, enforcing a maxSize limit.
+func DownloadFileWithContext(ctx context.Context, url string, maxSize int, skipSSLVerify bool) ([]byte, error) {
+	client := NewHTTPClient(skipSSLVerify)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("HTTP GET failed: %w", err)
 	}
