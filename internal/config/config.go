@@ -170,6 +170,13 @@ var CategoriesToRemove = []string{
 
 	"MavTV ⭐️",
 	"aleks-u-romki* 😊",
+
+	// Кино и сериалы (bold unicode)
+	"𝐊𝐢𝐧𝐨",
+	"𝕂иℍ𝕠",
+
+	// Региональные категории
+	"РОССИЯ+",
 }
 
 // CategoriesToRemoveSubstring lists substrings to match against group-title (case-insensitive).
@@ -229,7 +236,7 @@ var CategoriesToRemoveSubstring = []string{
 	"швейцари", "шри-ланка",
 	"эквадор", "эфиопи", "япони",
 // Кино / Сериалы / Шоу (исключаемые категории)
-	"девяностые", "кинозал", "киноstream",
+	"кино", "девяностые", "кинозал", "киноstream",
 	"сериал", "криминальная", "kinowalk",
 	"екб", "kino", "viju",
 	"тайны", "уральские",
