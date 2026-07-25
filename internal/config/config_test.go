@@ -110,6 +110,11 @@ func TestCategoriesToRemove(t *testing.T) {
 		"TvZaTak",
 		"MavTV ⭐️",
 		"aleks-u-romki* 😊",
+
+		"𝐊𝐢𝐧𝐨",
+		"𝕂иℍ𝕠",
+
+		"РОССИЯ+",
 	}
 	if len(CategoriesToRemove) != len(expected) {
 		t.Errorf("expected %d categories, got %d", len(expected), len(CategoriesToRemove))
