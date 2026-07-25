@@ -1,13 +1,15 @@
 package s3
 
 import (
+	"context"
 	"os"
 	"strings"
 	"testing"
 )
 
-func TestUploadToS3InvalidEndpoint(t *testing.T) {
-	err := UploadToS3("content", "bucket", "key", "", "us-east-1", "")
+func TestNewClientInvalidEndpoint(t *testing.T) {
+	ctx := context.Background()
+	_, err := NewClient(ctx, "", "us-east-1")
 	if err == nil {
 		t.Error("expected error for empty endpoint")
 	}
@@ -16,22 +18,7 @@ func TestUploadToS3InvalidEndpoint(t *testing.T) {
 	}
 }
 
-func TestUploadFileToS3InvalidEndpoint(t *testing.T) {
-	err := UploadFileToS3("file.txt", "bucket", "key", "", "bad-url", "us-east-1", "")
-	if err == nil {
-		t.Error("expected error for invalid endpoint")
-	}
-}
-
-func TestUploadArchiveToS3InvalidEndpoint(t *testing.T) {
-	_, err := UploadArchiveToS3("content", "bucket", "key", "", "us-east-1")
-	if err == nil {
-		t.Error("expected error for empty endpoint")
-	}
-}
-
-func TestNewS3ClientNoCreds(t *testing.T) {
-	// Save original env vars
+func TestNewClient(t *testing.T) {
 	origKey := os.Getenv("AWS_ACCESS_KEY_ID")
 	origSecret := os.Getenv("AWS_SECRET_ACCESS_KEY")
 	defer func() {
@@ -42,11 +29,37 @@ func TestNewS3ClientNoCreds(t *testing.T) {
 	os.Setenv("AWS_ACCESS_KEY_ID", "test-key")
 	os.Setenv("AWS_SECRET_ACCESS_KEY", "test-secret")
 
-	client, err := newS3Client("https://storage.example.com", "ru-central1")
+	ctx := context.Background()
+	client, err := NewClient(ctx, "https://storage.example.com", "ru-central1")
 	if err != nil {
-		t.Fatalf("newS3Client failed: %v", err)
+		t.Fatalf("NewClient failed: %v", err)
 	}
 	if client == nil {
 		t.Error("expected non-nil client")
+	}
+}
+
+func TestUploadToS3InvalidParams(t *testing.T) {
+	ctx := context.Background()
+	// Passing nil client should handle gracefully.
+	err := UploadToS3(ctx, nil, "content", "bucket", "key", "text/plain")
+	if err == nil {
+		t.Error("expected error for nil client")
+	}
+}
+
+func TestUploadArchiveToS3InvalidParams(t *testing.T) {
+	ctx := context.Background()
+	_, err := UploadArchiveToS3(ctx, nil, "content", "bucket", "key")
+	if err == nil {
+		t.Error("expected error for nil client")
+	}
+}
+
+func TestUploadBothInvalidParams(t *testing.T) {
+	ctx := context.Background()
+	err := UploadBoth(ctx, nil, "content", "bucket", "key", "")
+	if err == nil {
+		t.Error("expected error for nil client")
 	}
 }

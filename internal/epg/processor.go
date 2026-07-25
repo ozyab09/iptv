@@ -3,8 +3,10 @@ package epg
 import (
 	"bytes"
 	"compress/gzip"
+	"context"
 	"encoding/xml"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"path"
@@ -17,21 +19,19 @@ import (
 	"github.com/ozyab/iptv/internal/utils"
 )
 
-// Package-level logger with sanitized output.
 var logger = utils.NewSanitizedLoggerWithPrefix("[epg]")
 
 // Pre-compiled regexps for EPG processing.
 var (
-	epgGTRegex  = regexp.MustCompile(`group-title="([^"]*)"`) // group-title attribute
-	epgTvgRegex = regexp.MustCompile(`tvg-id="([^"]*)"`)      // tvg-id attribute
-	epgTimeRegex = regexp.MustCompile(`(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})\s+(\S+)`) // EPG timestamp
+	epgGTRegex   = regexp.MustCompile(`group-title="([^"]*)"`)
+	epgTvgRegex  = regexp.MustCompile(`tvg-id="([^"]*)"`)
+	epgTimeRegex = regexp.MustCompile(`(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})\s+(\S+)`)
 )
 
-// XML structs for EPG (Electronic Program Guide) in XMLTV format.
-
+// XML structs for EPG (XMLTV format).
 type TV struct {
-	XMLName    xml.Name  `xml:"tv"`
-	Channels   []Channel `xml:"channel"`
+	XMLName    xml.Name    `xml:"tv"`
+	Channels   []Channel   `xml:"channel"`
 	Programmes []Programme `xml:"programme"`
 }
 
@@ -54,14 +54,14 @@ type Icon struct {
 }
 
 type Programme struct {
-	Channel string      `xml:"channel,attr"`
-	Start   string      `xml:"start,attr"`
-	Stop    string      `xml:"stop,attr"`
-	Title   []Title     `xml:"title"`
-	Desc    []Desc      `xml:"desc"`
+	Channel  string     `xml:"channel,attr"`
+	Start    string     `xml:"start,attr"`
+	Stop     string     `xml:"stop,attr"`
+	Title    []Title    `xml:"title"`
+	Desc     []Desc     `xml:"desc"`
 	Category []Category `xml:"category"`
-	Icon    []Icon      `xml:"icon"`
-	Rating  []Rating    `xml:"rating"`
+	Icon     []Icon     `xml:"icon"`
+	Rating   []Rating   `xml:"rating"`
 }
 
 type Title struct {
@@ -84,17 +84,16 @@ type Rating struct {
 	Value  string `xml:"value"`
 }
 
-// DownloadEPG downloads, decompresses (gz/zip), and returns EPG XML content as a string.
-func DownloadEPG(urlStr string, cfg *config.Config) (string, error) {
+// DownloadEPG downloads and decompresses (gz/zip) EPG content.
+func DownloadEPG(ctx context.Context, urlStr string, cfg *config.Config) (string, error) {
 	logger.Info("Downloading EPG file from: %s", urlStr)
 
-	rawContent, err := utils.DownloadFile(urlStr, config.MaxEPGFileSize)
+	rawContent, err := utils.DownloadFileWithContext(ctx, urlStr, config.MaxEPGFileSize, cfg.SkipSSLVerify())
 	if err != nil {
 		logger.Error("Error downloading EPG file: %v", err)
 		return "", err
 	}
 
-	// Save original compressed file for debugging, then decompress.
 	outputDir := cfg.OutputDir()
 	os.MkdirAll(outputDir, 0755)
 	parsedURL, _ := url.Parse(urlStr)
@@ -104,7 +103,6 @@ func DownloadEPG(urlStr string, cfg *config.Config) (string, error) {
 	}
 	originalFilePath := path.Join(outputDir, "original_"+fname)
 
-	// Save original file for debugging, then decompress.
 	if err := os.WriteFile(originalFilePath, rawContent, 0644); err != nil {
 		return "", fmt.Errorf("failed to save original EPG: %w", err)
 	}
@@ -113,18 +111,19 @@ func DownloadEPG(urlStr string, cfg *config.Config) (string, error) {
 	}
 
 	var decompressed []byte
+	var errDecompress error
 	switch {
 	case strings.HasSuffix(urlStr, ".gz") || utils.IsGzipped(rawContent):
 		logger.Info("Detected gzipped EPG file, decompressing...")
-		decompressed, err = utils.DecompressGZip(rawContent)
-		if err != nil {
-			return "", fmt.Errorf("failed to decompress gzip: %w", err)
+		decompressed, errDecompress = utils.DecompressGZip(rawContent)
+		if errDecompress != nil {
+			return "", fmt.Errorf("failed to decompress gzip: %w", errDecompress)
 		}
 	case strings.HasSuffix(urlStr, ".zip"):
 		logger.Info("Detected zipped EPG file, extracting...")
-		decompressed, err = utils.DecompressZip(rawContent)
-		if err != nil {
-			return "", fmt.Errorf("failed to decompress zip: %w", err)
+		decompressed, errDecompress = utils.DecompressZip(rawContent)
+		if errDecompress != nil {
+			return "", fmt.Errorf("failed to decompress zip: %w", errDecompress)
 		}
 	default:
 		decompressed = rawContent
@@ -135,16 +134,12 @@ func DownloadEPG(urlStr string, cfg *config.Config) (string, error) {
 	return content, nil
 }
 
-// ExtractChannelInfoFromPlaylist parses M3U EXTINF lines and returns:
-//   - channelIDs:   tvg-id → category (for EPG matching by ID)
-//   - channelNames: channel name → category (for EPG matching by name)
+// ExtractChannelInfoFromPlaylist parses M3U EXTINF lines for channel IDs and names.
 func ExtractChannelInfoFromPlaylist(playlistContent string) (map[string]string, map[string]string) {
 	logger.Info("Extracting channel IDs and categories from playlist")
 
 	channelIDs := make(map[string]string)
 	channelNames := make(map[string]string)
-
-	// Use pre-compiled package-level regexps.
 
 	for _, line := range strings.Split(playlistContent, "\n") {
 		trimmed := strings.TrimSpace(line)
@@ -178,7 +173,6 @@ func ExtractChannelInfoFromPlaylist(playlistContent string) (map[string]string, 
 }
 
 // BuildEPGNameToIDMap creates a lowercase display-name → channel-id map from EPG XML.
-// Used to add tvg-id attributes to M3U channels that lack them.
 func BuildEPGNameToIDMap(epgContent string) map[string]string {
 	nameToID := make(map[string]string)
 
@@ -200,6 +194,7 @@ func BuildEPGNameToIDMap(epgContent string) map[string]string {
 	return nameToID
 }
 
+// FilterEPGContent filters EPG by channel IDs/names, excludes categories/IDs, applies retention.
 func FilterEPGContent(epgContent string, channelIDs map[string]string, excludedCategories, excludedChannelIDs []string, channelNames map[string]string, retentionDays int) (string, error) {
 	logger.Info("Filtering EPG content for %d channel IDs and %d channel names", len(channelIDs), len(channelNames))
 
@@ -227,128 +222,155 @@ func FilterEPGContent(epgContent string, channelIDs map[string]string, excludedC
 		}
 	}
 
-	var tv TV
-	if err := xml.Unmarshal([]byte(epgContent), &tv); err != nil {
-		logger.Error("Error parsing EPG XML: %v", err)
-		return "", err
-	}
-
-	epgChDisplayNames := make(map[string][]string)
-	for _, ch := range tv.Channels {
-		for _, dn := range ch.DisplayName {
-			if dn.Value != "" {
-				epgChDisplayNames[ch.ID] = append(epgChDisplayNames[ch.ID], strings.ToLower(strings.TrimSpace(dn.Value)))
-			}
-		}
-	}
-
-	channelsToKeep := make(map[string]bool)
-	channelsToKeepByName := make(map[string]string)
-
-	for _, prog := range tv.Programmes {
-		channelRef := prog.Channel
-		_, matchedByID := channelIDs[channelRef]
-
-		matchedByName := false
-		var matchedCategory string
-
-		if !matchedByID && len(chNamesNormalized) > 0 {
-			if dns, ok := epgChDisplayNames[channelRef]; ok {
-				for _, dn := range dns {
-					if chNamesNormalized[dn] {
-						matchedByName = true
-						matchedCategory = chNameCatLower[dn]
-						break
-					}
-				}
-			}
-		}
-
-		if matchedByID || matchedByName {
-			var categoryToCheck string
-			if matchedByID {
-				categoryToCheck = channelIDs[channelRef]
-			} else if matchedByName {
-				categoryToCheck = matchedCategory
-			}
-
-			excludeByCat := false
-			if categoryToCheck != "" {
-				catLower := strings.ToLower(categoryToCheck)
-				for _, ec := range excludedCatLower {
-					if catLower == ec {
-						excludeByCat = true
-						break
-					}
-				}
-			}
-
-			excludeByID := excludedIDSet[channelRef]
-
-			if !excludeByCat && !excludeByID {
-				channelsToKeep[channelRef] = true
-				if matchedByName {
-					channelsToKeepByName[channelRef] = matchedCategory
-				}
-			}
-		}
-	}
-
-	logger.Info("EPG content filtering: %d channels after category and ID exclusions (from %d tvg-id + %d names)",
-		len(channelsToKeep), len(channelIDs), len(channelNames))
-
-	var result TV
-
-	for _, ch := range tv.Channels {
-		if !channelsToKeep[ch.ID] {
-			continue
-		}
-		newCh := Channel{ID: ch.ID}
-		if len(ch.DisplayName) > 0 {
-			newCh.DisplayName = []DisplayName{{
-				Lang:  ch.DisplayName[0].Lang,
-				Value: ch.DisplayName[0].Value,
-			}}
-		}
-		result.Channels = append(result.Channels, newCh)
-	}
-
+	// Pre-compute retention window to avoid time.Now() calls in the loop.
 	now := time.Now()
 	oneHourAgo := now.Add(-1 * time.Hour)
-	if retentionDays < 1 {
-		retentionDays = 10
-	}
 	retentionLater := now.AddDate(0, 0, retentionDays)
 
-	for _, prog := range tv.Programmes {
-		if !channelsToKeep[prog.Channel] {
+	// Single-pass streaming parse: channels come before programmes in XMLTV.
+	var result TV
+	result.XMLName = xml.Name{Local: "tv"}
+
+	channelsToKeep := make(map[string]bool)
+	checkedChannels := make(map[string]bool)
+	epgChDisplayNames := make(map[string][]string)
+
+	decoder := xml.NewDecoder(bytes.NewReader([]byte(epgContent)))
+	for {
+		tok, err := decoder.Token()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return "", fmt.Errorf("error parsing EPG XML token: %w", err)
+		}
+
+		se, ok := tok.(xml.StartElement)
+		if !ok {
 			continue
 		}
 
-		startMatch := epgTimeRegex.FindStringSubmatch(prog.Start)
-		stopMatch := epgTimeRegex.FindStringSubmatch(prog.Stop)
-
-		include := false
-		if startMatch != nil && stopMatch != nil {
-			startTime, err1 := parseEPGTime(startMatch)
-			stopTime, err2 := parseEPGTime(stopMatch)
-			if err1 == nil && err2 == nil {
-				if !stopTime.Before(oneHourAgo) && !startTime.After(retentionLater) {
-					include = true
-				}
-			} else {
-				include = true
+		switch se.Name.Local {
+		case "channel":
+			var ch Channel
+			if err := decoder.DecodeElement(&ch, &se); err != nil {
+				logger.Warning("Error decoding channel element: %v", err)
+				continue
 			}
-		} else {
-			include = true
-		}
 
-		if !include {
-			continue
-		}
+			// Collect display names for name-based EPG matching.
+			for _, dn := range ch.DisplayName {
+				if dn.Value != "" {
+					epgChDisplayNames[ch.ID] = append(epgChDisplayNames[ch.ID], strings.ToLower(strings.TrimSpace(dn.Value)))
+				}
+			}
 
-		result.Programmes = append(result.Programmes, prog)
+			// Check if this channel should be kept by ID or name.
+			_, matchedByID := channelIDs[ch.ID]
+			if !matchedByID && len(chNamesNormalized) > 0 {
+				for _, dn := range epgChDisplayNames[ch.ID] {
+					if chNamesNormalized[dn] {
+						matchedByID = true
+						break
+					}
+				}
+			}
+
+			shouldKeep := matchedByID && !excludedIDSet[ch.ID]
+			if shouldKeep {
+				channelsToKeep[ch.ID] = true
+				result.Channels = append(result.Channels, Channel{
+					ID: ch.ID,
+					DisplayName: func() []DisplayName {
+						if len(ch.DisplayName) > 0 {
+							return []DisplayName{{Lang: ch.DisplayName[0].Lang, Value: ch.DisplayName[0].Value}}
+						}
+						return nil
+					}(),
+				})
+			}
+
+		case "programme":
+			chRef := ""
+			for _, attr := range se.Attr {
+				if attr.Name.Local == "channel" {
+					chRef = attr.Value
+					break
+				}
+			}
+
+			if !channelsToKeep[chRef] {
+				if err := decoder.Skip(); err != nil {
+					logger.Warning("Error skipping programme element: %v", err)
+				}
+				continue
+			}
+
+			var prog Programme
+			if err := decoder.DecodeElement(&prog, &se); err != nil {
+				logger.Warning("Error decoding programme element: %v", err)
+				continue
+			}
+
+			// Check exclusion by category or ID (once per channel).
+			if !checkedChannels[prog.Channel] {
+				checkedChannels[prog.Channel] = true
+				catToCheck := channelIDs[prog.Channel]
+
+				exclude := false
+				if catToCheck != "" {
+					catLower := strings.ToLower(catToCheck)
+					for _, ec := range excludedCatLower {
+						if catLower == ec {
+							exclude = true
+							break
+						}
+					}
+				}
+				if excludedIDSet[prog.Channel] {
+					exclude = true
+				}
+
+				if exclude {
+					delete(channelsToKeep, prog.Channel)
+					for i, ch := range result.Channels {
+						if ch.ID == prog.Channel {
+							result.Channels = append(result.Channels[:i], result.Channels[i+1:]...)
+							break
+						}
+					}
+					checkedChannels[prog.Channel] = false
+					continue
+				}
+			}
+
+			if !channelsToKeep[prog.Channel] {
+				continue
+			}
+
+			// Apply time retention filter.
+			startMatch := epgTimeRegex.FindStringSubmatch(prog.Start)
+			stopMatch := epgTimeRegex.FindStringSubmatch(prog.Stop)
+
+			include := true
+			if startMatch != nil && stopMatch != nil {
+				startTime, err1 := parseEPGTime(startMatch)
+				stopTime, err2 := parseEPGTime(stopMatch)
+				if err1 == nil && err2 == nil {
+					if stopTime.Before(oneHourAgo) || startTime.After(retentionLater) {
+						include = false
+					}
+				}
+			}
+
+			if include {
+				result.Programmes = append(result.Programmes, prog)
+			}
+		}
 	}
+
+	logger.Info("EPG content filtering: %d channels after exclusions, %d programmes retained",
+		len(result.Channels), len(result.Programmes))
 
 	out, err := xml.MarshalIndent(result, "", "  ")
 	if err != nil {
@@ -382,7 +404,7 @@ func parseEPGTime(match []string) (time.Time, error) {
 	return t.UTC(), nil
 }
 
-// SaveFilteredEPGLocally writes EPG content to disk, optionally gzip-compressed if filename ends with .gz.
+// SaveFilteredEPGLocally writes EPG content to disk, gzip-compressed if filename ends with .gz.
 func SaveFilteredEPGLocally(content, filename string, cfg *config.Config) error {
 	outputDir := cfg.OutputDir()
 	if err := os.MkdirAll(outputDir, 0755); err != nil {

@@ -38,8 +38,12 @@ func (s *SanitizedWriter) Error(format string, args ...interface{}) {
 }
 
 var urlPattern = regexp.MustCompile(`https?://[^\s'"<>]+`)
-var awsKeyPattern = regexp.MustCompile(`(YCAJEu[A-Za-z0-9_\-]+)`)
-var awsSecretPattern = regexp.MustCompile(`(YCON[A-Za-z0-9_\-]+)`)
+
+// Supported credential patterns:
+// - Yandex Cloud: YCAJEu... (key), YCON... (secret)
+// - AWS: AKIA... / ASIA... (access key)
+var awsKeyPattern = regexp.MustCompile(`(YCAJEu[A-Za-z0-9_\-]+|AKIA[A-Za-z0-9_\-]{16}|ASIA[A-Za-z0-9_\-]{16})`)
+var awsSecretPattern = regexp.MustCompile(`(YCON[A-Za-z0-9_\-]+|\*{10,}[A-Za-z0-9+/=]{10,})`)
 
 func sanitizeLogMessage(format string, args ...interface{}) string {
 	msg := format
