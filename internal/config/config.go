@@ -197,6 +197,9 @@ var CategoriesToRemove = []string{
 	"𝕂иℍ𝕠",
 	// Региональные категории
 	"РОССИЯ+",
+
+	// Другие
+	"Гранд",
 }
 
 // CategoriesToRemoveSubstring lists substrings to match against group-title (case-insensitive).
