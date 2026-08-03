@@ -39,7 +39,7 @@ func New() *Config {
 		epgSourceURL:  os.Getenv("EPG_SOURCE_URL"),
 		s3EPGKey:      os.Getenv("S3_EPG_KEY"),
 		localEPGPath:  envOrDefault("LOCAL_EPG_PATH", "epg.xml.gz"),
-		epgRetention:  envIntOrDefault("EPG_RETENTION_DAYS", 10),
+		epgRetention:  envIntOrDefault("EPG_RETENTION_DAYS", 3),
 		outputDir:     envOrDefault("OUTPUT_DIR", "output"),
 		categoriesFile: os.Getenv("CATEGORIES_FILE_PATH"),
 		dryRun:        isTruthy(os.Getenv("DRY_RUN")),
