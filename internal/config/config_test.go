@@ -145,8 +145,8 @@ func TestEPGExcludedChannelIDs(t *testing.T) {
 
 func TestEPGRetentionDaysDefault(t *testing.T) {
 	cfg := New()
-	if cfg.EPGRetentionDays() != 10 {
-		t.Errorf("expected EPGRetentionDays to be 10, got %d", cfg.EPGRetentionDays())
+	if cfg.EPGRetentionDays() != 3 {
+		t.Errorf("expected EPGRetentionDays to be 3, got %d", cfg.EPGRetentionDays())
 	}
 }
 

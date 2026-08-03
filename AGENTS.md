@@ -80,7 +80,7 @@ iptv/
 | `S3Region()` | `S3_REGION` | `us-east-1` |
 | `EPGSourceURL()` | `EPG_SOURCE_URL` | — |
 | `S3EPGKey()` | `S3_EPG_KEY` | — |
-| `EPGRetentionDays()` | `EPG_RETENTION_DAYS` | `10` |
+| `EPGRetentionDays()` | `EPG_RETENTION_DAYS` | `3` |
 | `OutputDir()` | `OUTPUT_DIR` | `output` |
 | `CategoriesFilePath()` | `CATEGORIES_FILE_PATH` | — |
 | `DryRun()` | `DRY_RUN` | `false` |
@@ -144,7 +144,7 @@ Filtering steps per entry:
   - Second pass eliminated (merged into one pass — channels come before programmes in XMLTV)
   - Filters channels by ID/name matching
   - Applies category exclusions and channel ID exclusions
-  - Applies time-based retention (default 10 days)
+  - Applies time-based retention (default 3 days)
   - Returns filtered XML with `xml.MarshalIndent`
 - `SaveFilteredEPGLocally()` — saves with gzip compression if filename ends with `.gz`
 
@@ -185,7 +185,7 @@ Filtering steps per entry:
 ## EPG processing (internal/epg/)
 
 - Downloads from `EPG_SOURCE_URL` (supports `.gz` and `.zip`)
-- `EPG_RETENTION_DAYS` (default: 10) — discards programmes outside this window
+- `EPG_RETENTION_DAYS` (default: 3) — discards programmes outside this window
 - `EPGExcludedCategories` — categories excluded from EPG (default: `Кино`)
 - `EPGExcludedChannelIDs` — 31 specific channel IDs
 - Filtering uses **single-pass streaming** `xml.Decoder` (no full 463MB `xml.Unmarshal`)

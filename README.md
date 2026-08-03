@@ -59,7 +59,7 @@ Set these environment variables:
 | `AWS_SECRET_ACCESS_KEY` | S3 secret key | required |
 | `DRY_RUN` | Skip S3 upload | (unset) |
 | `OUTPUT_DIR` | Local output directory | `output` |
-| `EPG_RETENTION_DAYS` | EPG retention window | `10` |
+| `EPG_RETENTION_DAYS` | EPG retention window | `3` |
 | `CATEGORIES_FILE_PATH` | Path to categories.txt | (optional) |
 
 Load with:
