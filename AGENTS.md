@@ -2,7 +2,7 @@
 
 ## Project
 
-IPTV M3U playlist filter: downloads M3U from HTTP URLs, filters by category (deny-list), normalizes names (remove `orig`, exclude regional `+N` variants), assigns unique emoji pairs to channels deterministically derived from stream URL via FNV-1a hash, optionally processes EPG, uploads to S3-compatible storage (Yandex Cloud).
+IPTV M3U playlist filter: downloads M3U from HTTP URLs, filters by category (deny-list), normalizes names (remove `orig`, exclude regional `+N` variants), assigns unique emoji pairs to channels deterministically derived from stream URL (first emoji from hostname, second from path) via FNV-1a hash, optionally processes EPG, uploads to S3-compatible storage (Yandex Cloud).
 
 ## Language & runtime
 
@@ -116,7 +116,7 @@ Key exported functions:
 - `FilterContent()` — main pipeline: normalization, category filtering (exact + substring), name exclusion, regional suffix removal, numeric suffix removal, `orig` removal, dedup, sort, emoji
 - `RemoveDuplicateURLs()` — deduplicates by URL, merges attributes (tvg-id, group-title, tvg-logo, tvg-rec), keeps longest name
 - `SortPlaylistAlphabetically()` — A-Z by channel name (case-insensitive, stable sort)
-- `AddEmojiByURL()` — appends FNV-1a based emoji pair (🔴🐱) to each channel name; 40×40 pools = ~1600 combinations
+- `AddEmojiByURL()` — appends FNV-1a based emoji pair (🔴🐱) to each channel name; first emoji derived from URL hostname, second from URL path; 100+×100+ pools = ~10,000+ combinations
 - `AddTvgIDsToPlaylist()` — adds `tvg-id` from EPG name-to-id map
 - `RemoveOrigSuffix()` — strips trailing " orig"
 - `ParseCategoriesFile()` / `ApplyChannelMetadata()` — categories.txt override
@@ -177,7 +177,7 @@ Filtering steps per entry:
 - **Group-title normalization**: leading numbers (`^\\d+.\\s*`) stripped, trailing emojis stripped
 - **Channel exclusions**: by name substring (6 patterns), regional suffix (`+N`), numeric suffix (`2+` digits at end)
 - **Name processing**: `orig` suffix removed
-- **Emoji identifiers**: FNV-1a 64-bit hash of stream URL → pair from 2×40 emoji pools, appended to channel name
+- **Emoji identifiers**: FNV-1a 64-bit hash → first emoji from URL hostname (DNS name, port ignored), second from URL path (query ignored); pools of 100+ emojis each (~10,000+ combinations), appended to channel name
 - **Dedup by URL**: first non-empty attributes merged, longest name wins
 - **Sort**: A-Z case-insensitive stable sort after dedup
 - **Metadata overrides**: `categories.txt` can supply `group-title`/`tvg-id` via `CATEGORIES_FILE_PATH` env var

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"hash/fnv"
+	"net/url"
 	"os"
 	"regexp"
 	"sort"
@@ -84,29 +85,106 @@ func channelNameFromEntry(entry ChannelEntry) string {
 
 // ─── Emoji helpers ────────────────────────────────────────────────────────────────
 
+// emojiPoolA: 100+ символов (геометрия, погода, космос, сердца, знаки).
+// Первый эмодзи пары канала формируется из hostname (DNS-имени) URL потока.
 var emojiPoolA = []string{
+	// Геометрия и цвета.
 	"🔴", "🟠", "🟡", "🟢", "🔵", "🟣", "⚫", "⚪",
 	"🔶", "🔷", "🔸", "🔹", "🔺", "🔻", "⬛", "⬜",
 	"🔘", "⭕", "💠", "💮", "❓", "💢", "💥", "💫",
+	"🟥", "🟧", "🟨", "🟩", "🟦", "🟪", "🟫",
+	"◼️", "◻️", "◽", "◾", "🔲", "🔳",
+	// Погода, небо и космос.
 	"🌟", "⭐", "✨", "🔥", "💧", "🌊", "☀️", "🌙",
 	"☁️", "⚡", "🌀", "🌈", "💨", "❄️", "🌪", "🌫",
+	"🌤️", "🌥️", "🌦️", "🌧️", "🌨️", "🌩️", "⛈️", "🌬️",
+	"🌍", "🌎", "🌏", "🌕", "🌖", "🌗", "🌘", "🌑",
+	"🌒", "🌓", "🌔", "🌝", "🌚", "🌛", "🌜", "🌞",
+	"🌠", "☄️",
+	// Сердца.
+	"❤️", "🧡", "💛", "💚", "💙", "💜", "🖤", "🤍",
+	"🤎", "💖", "💗", "💓", "💞", "💕", "💘", "💝",
+	"💟", "❣️", "💔",
+	// Знаки и символы.
+	"✅", "❌", "❎", "➕", "➖", "✖️", "💯", "🔟",
+	"🏁", "🚩", "🎌",
 }
 
+// emojiPoolB: 100+ эмодзи (животные, растения, еда, объекты, транспорт).
+// Второй эмодзи пары канала формируется из path-части URL потока.
 var emojiPoolB = []string{
+	// Животные.
 	"🐶", "🐱", "🐼", "🐯", "🦁", "🦊", "🐻", "🐨",
 	"🐰", "🦄", "🐸", "🐵", "🦋", "🐝", "🐞", "🐌",
+	"🐭", "🐹", "🐺", "🐗", "🐴", "🐮", "🐷", "🐽",
+	"🐍", "🦎", "🐢", "🐙", "🦑", "🦐", "🦞", "🦀",
+	"🐡", "🐠", "🐟", "🐬", "🐳", "🐋", "🦈", "🐊",
+	"🐅", "🐆", "🦓", "🦍", "🦧", "🐘", "🦛", "🦏",
+	"🐪", "🐫", "🦒", "🦘", "🐃", "🐂", "🐄", "🐎",
+	"🐖", "🐏", "🐑", "🦙", "🐐", "🦌", "🐕", "🐩",
+	"🦮", "🦚", "🦜", "🦢", "🦩", "🦝", "🦨", "🦡",
+	"🦫", "🦦", "🦥", "🐀", "🐿️", "🦔", "🐉", "🐲",
+	// Растения.
 	"🌻", "🌺", "🌹", "🌸", "🌴", "🍀", "🌿", "🍁",
-	"🎯", "🏆", "🎮", "🎸", "🎺", "🎻", "🥁", "📺",
-	"🎬", "🎵", "🎶", "🚀", "🛸", "🎪", "🎭", "🎨",
+	"🌵", "🌲", "🌳", "🌱", "🍃", "🍂", "🌾", "💐",
+	"🌷", "🌼", "🌽", "🌶️", "🥀",
+	// Еда.
+	"🍎", "🍊", "🍋", "🍇", "🍓", "🍉", "🍒", "🍑",
+	"🥭", "🍍", "🥥", "🍅", "🥑", "🥕", "🥔", "🍞",
+	"🧀", "🥚", "🍳", "🥞", "🥓", "🍗", "🍖", "🌭",
+	"🍔", "🍟", "🍕", "🌮", "🥗", "🍜", "🍣", "🍦",
+	"🍰", "🎂", "🍭", "🍬", "🍫", "🍿", "🍩", "🍪",
+	"🍺", "🍷", "🥛", "🍵", "☕",
+	// Объекты и транспорт.
+	"🏀", "⚽", "🎾", "🏐", "🎱", "🏓", "🎳", "⛳",
+	"🏅", "🎟️", "🎫", "🎰", "🧩", "🎲", "♟️", "🎧",
+	"🎤", "🎹", "🪗", "🪕", "💻", "📱", "⌚", "🗿",
+	"🗼", "🏰", "🏯", "🗽", "🚗", "🚕", "🚙", "🚌",
+	"🏎️", "🚓", "🚑", "🚒", "🚚", "🚜", "🛵", "🚲",
+	"✈️", "🛫", "🛬", "🚁", "🛶", "⛵", "🚤", "🚢",
 }
 
-func urlToEmojiPair(url string) string {
+// urlToEmojiPair returns a two-emoji identifier for a stream URL:
+// the first emoji is derived from the URL hostname, the second from the URL path.
+func urlToEmojiPair(rawURL string) string {
+	return emojiFromHostname(rawURL) + emojiFromPath(rawURL)
+}
+
+// emojiFromHostname derives an emoji from the URL hostname (DNS name, port ignored).
+func emojiFromHostname(rawURL string) string {
+	host := urlComponent(rawURL, true)
+	return emojiPoolA[fnv64(host)%uint64(len(emojiPoolA))]
+}
+
+// emojiFromPath derives an emoji from the URL path part.
+func emojiFromPath(rawURL string) string {
+	path := urlComponent(rawURL, false)
+	return emojiPoolB[fnv64(path)%uint64(len(emojiPoolB))]
+}
+
+// fnv64 computes the FNV-1a 64-bit hash of a string.
+func fnv64(s string) uint64 {
 	h := fnv.New64a()
-	h.Write([]byte(url))
-	sum := h.Sum64()
-	a := emojiPoolA[sum%uint64(len(emojiPoolA))]
-	b := emojiPoolB[(sum>>32)%uint64(len(emojiPoolB))]
-	return a + b
+	h.Write([]byte(s))
+	return h.Sum64()
+}
+
+// urlComponent extracts the hostname (wantHost=true) or path (wantHost=false) part
+// of a URL for emoji derivation. Falls back to the raw URL string when parsing
+// fails or the URL has no hostname (relative/malformed URLs).
+func urlComponent(rawURL string, wantHost bool) string {
+	u, err := url.Parse(rawURL)
+	if err != nil || u.Hostname() == "" {
+		return rawURL
+	}
+	if wantHost {
+		return strings.ToLower(u.Hostname())
+	}
+	path := u.Path
+	if path == "" {
+		path = "/"
+	}
+	return path
 }
 
 // ─── Downloads ────────────────────────────────────────────────────────────────────

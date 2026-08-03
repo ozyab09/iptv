@@ -313,6 +313,78 @@ func TestUrlToEmojiPairDeterministic(t *testing.T) {
 	}
 }
 
+func TestUrlToEmojiPairUsesHostnameAndPath(t *testing.T) {
+	// Первый эмодзи (по hostname) одинаков для одного DNS-имени, порт не влияет.
+	h1 := emojiFromHostname("http://cdn.example.com:8080/live/ch1.m3u8?token=abc")
+	h2 := emojiFromHostname("http://cdn.example.com/live/ch2.m3u8?token=def")
+	if h1 != h2 {
+		t.Errorf("same hostname should produce same first emoji: %q vs %q", h1, h2)
+	}
+
+	// Разные hostname — почти наверняка разные первые эмодзи.
+	h3 := emojiFromHostname("http://cdn.other.net/live/ch1.m3u8")
+	if h1 == h3 {
+		t.Logf("note: different hostnames produced same emoji %q (possible but unlikely)", h1)
+	}
+
+	// Второй эмодзи (по path) различается для разных путей на одном хосте.
+	p1 := emojiFromPath("http://cdn.example.com/live/ch1.m3u8")
+	p2 := emojiFromPath("http://cdn.example.com/live/ch2.m3u8")
+	if p1 == p2 {
+		t.Logf("note: different paths produced same emoji %q (possible but unlikely)", p1)
+	}
+
+	// Одинаковый путь на разных хостах → одинаковый второй эмодзи.
+	p3 := emojiFromPath("http://cdn.other.net/live/ch1.m3u8")
+	if p1 != p3 {
+		t.Errorf("same path should produce same second emoji: %q vs %q", p1, p3)
+	}
+
+	// Query-строка не должна влиять на второй эмодзи.
+	p4 := emojiFromPath("http://cdn.example.com/live/ch1.m3u8?token=xyz")
+	if p1 != p4 {
+		t.Errorf("query string must not affect path emoji: %q vs %q", p1, p4)
+	}
+}
+
+func TestUrlComponentFallback(t *testing.T) {
+	// Некорректный URL не должен паниковать и должен давать fallback.
+	if got := urlComponent("not a url ://", true); got == "" {
+		t.Error("expected non-empty fallback for malformed URL")
+	}
+	// Относительный URL (без хоста) → fallback на всю строку.
+	if got := urlComponent("relative/path.m3u8", false); got != "relative/path.m3u8" {
+		t.Errorf("expected raw fallback for relative URL, got %q", got)
+	}
+	// Hostname: порт отбрасывается, DNS-имя приводится к нижнему регистру.
+	if got := urlComponent("http://CDN.Example.COM:8080/x", true); got != "cdn.example.com" {
+		t.Errorf("expected lowercased hostname without port, got %q", got)
+	}
+	// Пустой path → "/".
+	if got := urlComponent("http://cdn.example.com", false); got != "/" {
+		t.Errorf("expected \"/\" for empty path, got %q", got)
+	}
+}
+
+func TestEmojiPoolsExpanded(t *testing.T) {
+	if len(emojiPoolA) < 100 {
+		t.Errorf("emojiPoolA must have at least 100 emojis, got %d", len(emojiPoolA))
+	}
+	if len(emojiPoolB) < 100 {
+		t.Errorf("emojiPoolB must have at least 100 emojis, got %d", len(emojiPoolB))
+	}
+	// Внутри пула не должно быть дубликатов (они бы тратили комбинации).
+	for name, pool := range map[string][]string{"A": emojiPoolA, "B": emojiPoolB} {
+		seen := make(map[string]bool)
+		for _, e := range pool {
+			if seen[e] {
+				t.Errorf("duplicate emoji in pool %s: %q", name, e)
+			}
+			seen[e] = true
+		}
+	}
+}
+
 func TestFilterContentWithCategories(t *testing.T) {
 	content := `#EXTM3U
 #EXTINF:-1 group-title="Взрослые",Adult Channel
