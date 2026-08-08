@@ -75,3 +75,21 @@ func TestMaskURL(t *testing.T) {
 		t.Errorf("expected 'https://****/****', got '%s'", masked)
 	}
 }
+
+func TestStripTrailingEmoji(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"Первый канал 🔴🐱", "Первый канал"},
+		{"Канал ❄️🍁 ", "Канал"},
+		{"Обычный канал", "Обычный канал"},
+		{"", ""},
+		{"Канал 🎯 HD", "Канал 🎯 HD"}, // эмодзи не в конце — не трогаем
+	}
+	for _, tc := range tests {
+		if got := StripTrailingEmoji(tc.input); got != tc.expected {
+			t.Errorf("StripTrailingEmoji(%q) = %q, want %q", tc.input, got, tc.expected)
+		}
+	}
+}

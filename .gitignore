@@ -9,6 +9,7 @@
 go.work
 go.work.sum
 vendor/
+bin/
 
 # Local config files
 playlist.m3u

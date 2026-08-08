@@ -161,7 +161,9 @@ func ExtractChannelInfoFromPlaylist(playlistContent string) (map[string]string, 
 
 		parts := strings.SplitN(line, ",", 2)
 		if len(parts) > 1 {
-			chName := strings.TrimSpace(parts[1])
+			// Срезаем эмодзи-пару, добавленную к имени при фильтрации,
+			// чтобы имена матчились с EPG display-name (без эмодзи).
+			chName := utils.StripTrailingEmoji(strings.TrimSpace(parts[1]))
 			if chName != "" {
 				channelNames[chName] = category
 			}
@@ -215,7 +217,8 @@ func FilterEPGContent(epgContent string, channelIDs map[string]string, excludedC
 	chNamesNormalized := make(map[string]bool)
 	chNameCatLower := make(map[string]string)
 	for name, cat := range channelNames {
-		normalized := strings.ToLower(strings.TrimSpace(name))
+		// Защитно срезаем эмодзи-пары, если они попали в имена.
+		normalized := strings.ToLower(utils.StripTrailingEmoji(strings.TrimSpace(name)))
 		chNamesNormalized[normalized] = true
 		if cat != "" {
 			chNameCatLower[normalized] = cat

@@ -4,6 +4,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestEnvironmentVariableOverride(t *testing.T) {
@@ -73,6 +74,7 @@ func TestCategoriesToRemove(t *testing.T) {
 		"Взрослые",
 		"Adult (18+)",
 		"XXX (18+)",
+		"XXX",
 		"Религия",
 		"Религиозные",
 		"💲💲💲Поддержи Проект💲💲💲",
@@ -92,6 +94,7 @@ func TestCategoriesToRemove(t *testing.T) {
 		"TvZaTak",
 		"MavTV ⭐️",
 		"aleks-u-romki* 😊",
+		"Play-x",
 		"𝐊𝐢𝐧𝐨",
 		"𝕂иℍ𝕠",
 		"РОССИЯ+",
@@ -163,6 +166,50 @@ func TestSkipSSLVerifyDefault(t *testing.T) {
 	cfg := New()
 	if cfg.SkipSSLVerify() {
 		t.Error("expected SkipSSLVerify to be false by default")
+	}
+}
+
+func TestProbeConfigDefaults(t *testing.T) {
+	cfg := New()
+	if cfg.ProbeSources() {
+		t.Error("expected ProbeSources to be false by default")
+	}
+	if cfg.ProbeTimeout() != 5*time.Second {
+		t.Errorf("expected ProbeTimeout to be 5s, got %v", cfg.ProbeTimeout())
+	}
+	if cfg.ProbeConcurrency() != 20 {
+		t.Errorf("expected ProbeConcurrency to be 20, got %d", cfg.ProbeConcurrency())
+	}
+	if cfg.MaxChannelVariants() != 1 {
+		t.Errorf("expected MaxChannelVariants to be 1, got %d", cfg.MaxChannelVariants())
+	}
+}
+
+func TestProbeConfigFromEnv(t *testing.T) {
+	os.Setenv("PROBE_SOURCES", "true")
+	os.Setenv("PROBE_TIMEOUT_SECONDS", "3")
+	os.Setenv("PROBE_CONCURRENCY", "1")
+	os.Setenv("MAX_CHANNEL_VARIANTS", "9")
+	defer func() {
+		os.Unsetenv("PROBE_SOURCES")
+		os.Unsetenv("PROBE_TIMEOUT_SECONDS")
+		os.Unsetenv("PROBE_CONCURRENCY")
+		os.Unsetenv("MAX_CHANNEL_VARIANTS")
+	}()
+
+	cfg := New()
+	if !cfg.ProbeSources() {
+		t.Error("expected ProbeSources to be true")
+	}
+	if cfg.ProbeTimeout() != 3*time.Second {
+		t.Errorf("expected ProbeTimeout to be 3s, got %v", cfg.ProbeTimeout())
+	}
+	if cfg.ProbeConcurrency() != 1 {
+		t.Errorf("expected ProbeConcurrency to be 1, got %d", cfg.ProbeConcurrency())
+	}
+	// MAX_CHANNEL_VARIANTS=9 must be clamped to the max of 5.
+	if cfg.MaxChannelVariants() != 5 {
+		t.Errorf("expected MaxChannelVariants clamped to 5, got %d", cfg.MaxChannelVariants())
 	}
 }
 

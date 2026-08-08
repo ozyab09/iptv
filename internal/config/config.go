@@ -7,6 +7,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Config caches all configuration values on creation for fast access.
@@ -21,10 +22,14 @@ type Config struct {
 	s3EPGKey        string
 	localEPGPath    string
 	epgRetention    int
-	outputDir       string
-	categoriesFile  string
-	dryRun          bool
-	skipSSLVerify   bool
+	outputDir        string
+	categoriesFile   string
+	dryRun           bool
+	skipSSLVerify    bool
+	probeSources     bool
+	probeTimeout     time.Duration
+	probeConcurrency int
+	maxChannelVariants int
 }
 
 // New reads all environment variables once and caches them.
@@ -40,10 +45,14 @@ func New() *Config {
 		s3EPGKey:      os.Getenv("S3_EPG_KEY"),
 		localEPGPath:  envOrDefault("LOCAL_EPG_PATH", "epg.xml.gz"),
 		epgRetention:  envIntOrDefault("EPG_RETENTION_DAYS", 3),
-		outputDir:     envOrDefault("OUTPUT_DIR", "output"),
-		categoriesFile: os.Getenv("CATEGORIES_FILE_PATH"),
-		dryRun:        isTruthy(os.Getenv("DRY_RUN")),
-		skipSSLVerify: isTruthy(os.Getenv("SKIP_SSL_VERIFY")),
+		outputDir:        envOrDefault("OUTPUT_DIR", "output"),
+		categoriesFile:   os.Getenv("CATEGORIES_FILE_PATH"),
+		dryRun:           isTruthy(os.Getenv("DRY_RUN")),
+		skipSSLVerify:    isTruthy(os.Getenv("SKIP_SSL_VERIFY")),
+		probeSources:       isTruthy(os.Getenv("PROBE_SOURCES")),
+		probeTimeout:       time.Duration(envIntOrDefault("PROBE_TIMEOUT_SECONDS", 5)) * time.Second,
+		probeConcurrency:   envIntOrDefault("PROBE_CONCURRENCY", 20),
+		maxChannelVariants: envIntClampMax("MAX_CHANNEL_VARIANTS", 1, 5),
 	}
 }
 
@@ -62,6 +71,15 @@ func envIntOrDefault(key string, defaultVal int) int {
 	n, err := strconv.Atoi(val)
 	if err != nil || n < 1 {
 		return defaultVal
+	}
+	return n
+}
+
+// envIntClampMax returns the env int (or defaultVal), clamped to a maximum.
+func envIntClampMax(key string, defaultVal, max int) int {
+	n := envIntOrDefault(key, defaultVal)
+	if n > max {
+		return max
 	}
 	return n
 }
@@ -137,6 +155,19 @@ func (c *Config) EnsureOutputDir() error {
 // DryRun returns true if dry-run mode is enabled.
 func (c *Config) DryRun() bool { return c.dryRun }
 
+// ProbeSources returns whether to probe stream URL availability and keep only
+// working sources (option C). Disabled by default.
+func (c *Config) ProbeSources() bool { return c.probeSources }
+
+// ProbeTimeout returns the per-request timeout used when probing sources.
+func (c *Config) ProbeTimeout() time.Duration { return c.probeTimeout }
+
+// ProbeConcurrency returns the number of parallel probe requests.
+func (c *Config) ProbeConcurrency() int { return c.probeConcurrency }
+
+// MaxChannelVariants returns how many variants to keep per channel (1-5).
+func (c *Config) MaxChannelVariants() int { return c.maxChannelVariants }
+
 // OutputDir returns the local output directory.
 func (c *Config) OutputDir() string { return c.outputDir }
 
@@ -167,6 +198,7 @@ var CategoriesToRemove = []string{
 	"Взрослые",
 	"Adult (18+)",
 	"XXX (18+)",
+	"XXX",
 	// Религия
 	"Религия",
 	"Религиозные",
@@ -192,6 +224,7 @@ var CategoriesToRemove = []string{
 	"TvZaTak",
 	"MavTV ⭐️",                    // trailing emoji — normalization strips it
 	"aleks-u-romki* 😊",            // trailing emoji — normalization strips it
+	"Play-x",
 	// Кино и сериалы (bold unicode)
 	"𝐊𝐢𝐧𝐨",
 	"𝕂иℍ𝕠",
@@ -206,6 +239,8 @@ var CategoriesToRemove = []string{
 // Any category whose name contains one of these substrings will be filtered out.
 var CategoriesToRemoveSubstring = []string{
 
+	// Adult / 18+
+	"xxx",
 	// Спорт (обычный текст)
 	"спорт", "sport", "матч",
 	// Спорт (bold unicode: ℂп𝕠𝕡т)
@@ -228,7 +263,7 @@ var CategoriesToRemoveSubstring = []string{
 	// Служебные / Тестовые
 	"rutube", "cinerama", "watcher", "flussonic",
 	"ngenix", "internet42", "ushba", "sewv",
-	"tvz", "tv s", "tvzotak", "mavtv", "aleks",
+	"tvz", "tv s", "tvzotak", "mavtv", "aleks", "play-x",
 	// Служебные (bold unicode: 𝕋𝕧ℤ𝕒𝕋𝕒𝕜)
 	"𝕋𝕧ℤ",
 	// Поддержка
