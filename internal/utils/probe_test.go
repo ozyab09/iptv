@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -140,6 +141,43 @@ func TestProbeCandidatesPassHeaders(t *testing.T) {
 	}
 	if b.ua != probeUserAgent {
 		t.Errorf("expected default browser UA on /b, got %q", b.ua)
+	}
+}
+
+func TestProbeProgressLine(t *testing.T) {
+	line := probeProgressLine(1234, 4553, 1020, 2*time.Minute+5*time.Second)
+	for _, want := range []string{"1234/4553", "27%", "alive 1020", "dead 214", "2m5s"} {
+		if !strings.Contains(line, want) {
+			t.Errorf("expected progress line to contain %q, got %q", want, line)
+		}
+	}
+	// Zero total must not produce NaN.
+	if z := probeProgressLine(0, 0, 0, 0); strings.Contains(z, "NaN") {
+		t.Errorf("expected no NaN for zero total, got %q", z)
+	}
+}
+
+func TestProbeCandidatesEmitsProgress(t *testing.T) {
+	old := probeProgressInterval
+	probeProgressInterval = 10 * time.Millisecond
+	defer func() { probeProgressInterval = old }()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(60 * time.Millisecond)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	urls := []string{srv.URL + "/1", srv.URL + "/2", srv.URL + "/3", srv.URL + "/4"}
+	got := ProbeURLs(context.Background(), urls, 2, time.Second, false)
+
+	if len(got) != 4 {
+		t.Errorf("expected 4 results, got %d", len(got))
+	}
+	for _, ok := range got {
+		if !ok {
+			t.Error("expected all URLs alive")
+		}
 	}
 }
 
