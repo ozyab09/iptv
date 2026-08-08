@@ -1,6 +1,7 @@
 package m3u
 
 import (
+	"os"
 	"strings"
 	"testing"
 
@@ -1068,6 +1069,67 @@ http://example.com/sd.m3u8`
 	}
 	if c := CountChannels(result); c != 1 {
 		t.Errorf("expected 1 channel, got %d", c)
+	}
+}
+
+func TestParseCategoriesFileStripsEmojiKeys(t *testing.T) {
+	file := t.TempDir() + "/categories.txt"
+	content := `group-title="Общие" tvg-id="146",Первый канал HD
+` +
+		`group-title="Общие" tvg-id="711",Россия 1 🔴🐱
+` +
+		`group-title="Общие" tvg-id="2034" tvg-rec="3",Первый канал +2
+` +
+		`group-title="Кино" tvg-id="999",Канал, с запятой в имени`
+	if err := os.WriteFile(file, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	m := ParseCategoriesFile(file)
+	if _, ok := m["первый канал hd"]; !ok {
+		t.Error("expected plain name key to be present")
+	}
+	if _, ok := m["россия 1"]; !ok {
+		t.Error("expected emoji-suffixed name to be stripped to plain key")
+	}
+	if _, ok := m["россия 1 🔴🐱"]; ok {
+		t.Error("expected emoji NOT to be part of the key")
+	}
+	// Legacy format with extra attributes (tvg-rec) must still parse.
+	if got := m["первый канал +2"]; got == nil || got["tvg_id"] != "2034" {
+		t.Errorf("expected legacy tvg-rec format to parse, got %v", got)
+	}
+	// Names containing commas must be captured whole (first-comma split).
+	if got := m["канал, с запятой в имени"]; got == nil || got["tvg_id"] != "999" {
+		t.Errorf("expected comma-containing name to be captured whole, got %v", got)
+	}
+}
+
+func TestApplyChannelMetadataStripsEmoji(t *testing.T) {
+	content := `#EXTM3U
+#EXTINF:-1 group-title="Старая группа",Первый канал HD 🔴🐱
+http://example.com/1.m3u8
+#EXTINF:-1 group-title="A",Без эмодзи
+http://example.com/2.m3u8`
+
+	mapping := map[string]map[string]string{
+		"первый канал hd": {"group": "Общие", "tvg_id": "146"},
+		"без эмодзи":      {"group": "Общие", "tvg_id": "711"},
+	}
+
+	result := ApplyChannelMetadata(content, mapping)
+
+	if !strings.Contains(result, `group-title="Общие"`) || !strings.Contains(result, `tvg-id="146"`) {
+		t.Error("expected metadata to be applied to emoji-suffixed name")
+	}
+	if !strings.Contains(result, "Первый канал HD 🔴🐱") {
+		t.Error("expected original name with emoji to be preserved in output")
+	}
+	if !strings.Contains(result, `tvg-id="711"`) {
+		t.Error("expected metadata to be applied to plain name")
+	}
+	if strings.Contains(result, `group-title="Старая группа"`) {
+		t.Error("expected old group-title to be overridden")
 	}
 }
 

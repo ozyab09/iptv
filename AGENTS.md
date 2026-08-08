@@ -60,7 +60,8 @@ iptv/
 │       └── utils_test.go          # Retry + sanitization tests
 ├── .github/workflows/filter-m3u.yml  # CI: test+build → filter → S3 upload (dry-run on PRs)
 ├── go.mod / go.sum
-├── categories.txt                 # Channel metadata (group-title/tvg-id/tvg-rec overrides)
+├── analysis/gencat/               # Generator for categories.txt (playlist variants + EPG name→id map)
+├── categories.txt                 # Channel metadata overrides (group-title/tvg-id), EPG-derived
 ├── AGENTS.md                      # This file
 └── README.md
 ```
@@ -140,7 +141,7 @@ Key exported functions:
 - `DeduplicateByName(content, maxVariants, probe, validEPGIDs)` — keeps ≤ `maxVariants` entries per normalized channel name (emoji/quality/separators stripped), ranked by quality (4K/UHD > FHD > HD > SD > none, incl. unicode ᴴᴰ); with `probe` non-nil, candidates (URL + `#EXTVLCOPT` user-agent/referrer) are probed, dead ones skipped, first `maxVariants` alive kept (all-dead groups fall back to best quality; missing probe results treated as alive). Kept entries without a `tvg-id` inherit one from a sibling variant in the same group — only ids present in `validEPGIDs` (nil = no validation, any non-empty id). Deterministic output (groups iterated by key). URL detection uses any `scheme://` (incl. `rtmp://`)
 - `AddTvgIDsToPlaylist()` — adds `tvg-id` from EPG name-to-id map (channel names are emoji-stripped before matching, since `FilterContent` appends emoji pairs)
 - `RemoveOrigSuffix()` — strips trailing " orig"
-- `ParseCategoriesFile()` / `ApplyChannelMetadata()` — categories.txt override
+- `ParseCategoriesFile()` / `ApplyChannelMetadata()` — categories.txt override. Matching strips emoji pairs from playlist names (and from file keys) so plain-name entries match emoji-suffixed channels; the parser regex accepts `tvg-id="ID",Name` and formats with extra attributes (`tvg-rec="7",Name`); category-file keys override existing tvg-ids (EPG-derived entries win over source ids)
 - `CountChannels()` — counts #EXTINF entries
 
 Filtering steps per entry:
@@ -205,7 +206,7 @@ Filtering steps per entry:
 - **Emoji identifiers**: FNV-1a 64-bit hash → first emoji from URL hostname (DNS name, port ignored), second from URL path (query ignored); pools of 100+ emojis each (~10,000+ combinations), appended to channel name
 - **Dedup by URL**: first non-empty attributes merged, longest name wins
 - **Sort**: A-Z case-insensitive stable sort after dedup
-- **Metadata overrides**: `categories.txt` can supply `group-title`/`tvg-id` via `CATEGORIES_FILE_PATH` env var
+- **Metadata overrides**: `categories.txt` can supply `group-title`/`tvg-id` via `CATEGORIES_FILE_PATH` env var (must be set in `.env`/CI — otherwise the file is unused). The maximal list is generated with `go run ./analysis/gencat` (reads `output/playlist-all.m3u` + `output/playlist.m3u` + the local EPG copy): for each surviving channel variant it emits `group-title="<group>" tvg-id="<id>",<name>` with tvg-id resolved as EPG exact name → EPG normalized name → source-provided id; ~2 300 entries covering ~58% of the final playlist (the rest have no id anywhere)
 
 ## EPG processing (internal/epg/)
 

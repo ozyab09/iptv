@@ -912,10 +912,14 @@ func ParseCategoriesFile(filePath string) map[string]map[string]string {
 	}
 	logger.Info("Categories file loaded: %s (%d bytes)", filePath, len(data))
 
-	regCategoriesFile := regexp.MustCompile(`group-title="([^"]+)".*?tvg-id="([^"]+)".+?,(.+)`)
+	// Ленивый `.*?,` останавливается на первой запятой после атрибутов — работает
+	// и для `tvg-id="146",Name`, и для форматов с дополнительными атрибутами
+	// (`tvg-rec="7",Name`); имя (.+) сохраняет внутренние запятые.
+	regCategoriesFile := regexp.MustCompile(`group-title="([^"]+)".*?tvg-id="([^"]+)".*?,(.+)`)
 	matches := regCategoriesFile.FindAllStringSubmatch(string(data), -1)
 	for _, m := range matches {
-		nameLower := strings.ToLower(strings.TrimSpace(m[3]))
+		// Эмодзи-пары из имён плейлиста при сопоставлении срезаются (см. ApplyChannelMetadata).
+		nameLower := strings.ToLower(utils.StripTrailingEmoji(strings.TrimSpace(m[3])))
 		if _, ok := mapping[nameLower]; !ok {
 			mapping[nameLower] = map[string]string{
 				"group":  m[1],
@@ -928,7 +932,10 @@ func ParseCategoriesFile(filePath string) map[string]map[string]string {
 	return mapping
 }
 
-// ApplyChannelMetadata overrides group-title and tvg-id for channels listed in categories.txt.
+// ApplyChannelMetadata overrides group-title and tvg-id for channels listed in
+// categories.txt. Channel names in the playlist carry emoji pairs (added by
+// FilterContent), so they are stripped before matching against the plain-name
+// keys of the categories file.
 func ApplyChannelMetadata(content string, categoriesMapping map[string]map[string]string) string {
 	lines := strings.Split(content, "\n")
 	updatedGroup := 0
@@ -943,8 +950,8 @@ func ApplyChannelMetadata(content string, categoriesMapping map[string]map[strin
 			continue
 		}
 
-		channelName := strings.TrimSpace(parts[1])
-		meta, ok := categoriesMapping[strings.ToLower(channelName)]
+		channelName := strings.ToLower(utils.StripTrailingEmoji(strings.TrimSpace(parts[1])))
+		meta, ok := categoriesMapping[channelName]
 		if !ok {
 			continue
 		}
