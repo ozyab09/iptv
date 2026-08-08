@@ -239,6 +239,9 @@ func run() int {
 	// sources (option C: HEAD/GET availability probing, quality-first). Kept
 	// entries lacking a tvg-id inherit one from sibling variants when the id
 	// exists in the EPG (stale ids are never inherited).
+	// Availability probing is skipped in dry-run: the probe callback stays nil,
+	// so dedup falls back to deterministic quality-first selection (best-quality
+	// variant per channel) without checking source availability.
 	if cfg.ProbeSources() {
 		var epgIDSet map[string]bool
 		if epgNameToIDMap != nil {
@@ -247,9 +250,13 @@ func run() int {
 				epgIDSet[id] = true
 			}
 		}
-		filteredContent = m3u.DeduplicateByName(filteredContent, cfg.MaxChannelVariants(), func(candidates []utils.ProbeCandidate) map[string]bool {
-			return utils.ProbeCandidates(ctx, candidates, cfg.ProbeConcurrency(), cfg.ProbeTimeout(), skipSSL)
-		}, epgIDSet)
+		var probe func(candidates []utils.ProbeCandidate) map[string]bool
+		if !dryRun {
+			probe = func(candidates []utils.ProbeCandidate) map[string]bool {
+				return utils.ProbeCandidates(ctx, candidates, cfg.ProbeConcurrency(), cfg.ProbeTimeout(), skipSSL)
+			}
+		}
+		filteredContent = m3u.DeduplicateByName(filteredContent, cfg.MaxChannelVariants(), probe, epgIDSet)
 	}
 
 	// Step 3: Save files locally.
