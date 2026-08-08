@@ -19,7 +19,6 @@ env:
   S3_EPG_KEY: ${{ secrets.S3_EPG_KEY }}
   EPG_SOURCE_URL: ${{ secrets.EPG_SOURCE_URL }}
   LOCAL_EPG_PATH: ${{ secrets.LOCAL_EPG_PATH  }}
-  CATEGORIES_FILE_PATH: categories.txt
   AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
   AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
 
@@ -58,6 +57,12 @@ jobs:
     if: github.event_name != 'pull_request' || always()
     permissions:
       contents: read
+    # Эти переменные нужны только этому job'у — не кладём их в общий env,
+    # чтобы не ломать TestProbeConfigDefaults в test job (он ждёт default=false).
+    env:
+      CATEGORIES_FILE_PATH: categories.txt
+      # Опрос доступности источников (HEAD+GET Range). В dry-run (PR) probe пропускается.
+      PROBE_SOURCES: "true"
 
     steps:
     - name: Checkout code
