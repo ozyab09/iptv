@@ -145,23 +145,15 @@ func TestProbeCandidatesPassHeaders(t *testing.T) {
 }
 
 func TestProbeProgressLine(t *testing.T) {
-	line := probeProgressLine(1234, 4553, 1020, 2*time.Minute+5*time.Second)
-	for _, want := range []string{"1234/4553", "27%", "alive 1020", "dead 214", "2m5s"} {
+	line := probeProgressLine(30, 780, 2600, 640, 2*time.Minute+5*time.Second)
+	for _, want := range []string{"30%", "780/2600", "alive 640 of 780", "2m5s"} {
 		if !strings.Contains(line, want) {
 			t.Errorf("expected progress line to contain %q, got %q", want, line)
 		}
 	}
-	// Zero total must not produce NaN.
-	if z := probeProgressLine(0, 0, 0, 0); strings.Contains(z, "NaN") {
-		t.Errorf("expected no NaN for zero total, got %q", z)
-	}
 }
 
 func TestProbeCandidatesEmitsProgress(t *testing.T) {
-	old := probeProgressInterval
-	probeProgressInterval = 10 * time.Millisecond
-	defer func() { probeProgressInterval = old }()
-
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(60 * time.Millisecond)
 		w.WriteHeader(http.StatusOK)

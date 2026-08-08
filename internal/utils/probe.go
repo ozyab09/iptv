@@ -16,10 +16,6 @@ import (
 // is used for best reachability.
 const probeUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
-// probeProgressInterval controls how often ProbeCandidates logs a live
-// progress line (N/M URLs, percent, alive/dead counts, elapsed time).
-var probeProgressInterval = 5 * time.Second
-
 var probeLogger = NewSanitizedLoggerWithPrefix("[probe]")
 
 // ProbeCandidate is a URL to probe together with optional headers extracted
@@ -135,19 +131,10 @@ func ProbeCandidates(ctx context.Context, candidates []ProbeCandidate, concurren
 
 	start := time.Now()
 	var done, aliveCount atomic.Int64
-	progressDone := make(chan struct{})
-	go func() {
-		ticker := time.NewTicker(probeProgressInterval)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ticker.C:
-				probeLogger.Info("%s", probeProgressLine(int(done.Load()), len(unique), int(aliveCount.Load()), time.Since(start)))
-			case <-progressDone:
-				return
-			}
-		}
-	}()
+	// Прогресс логируется при пересечении каждого 10%-рубежа (10, 20, ... 100),
+	// вместе с накопленной статистикой: сколько из скольких ресурсов живы.
+	var progressMu sync.Mutex
+	var lastDecile int64
 
 	queue := make(chan ProbeCandidate)
 	var mu sync.Mutex
@@ -166,6 +153,17 @@ func ProbeCandidates(ctx context.Context, candidates []ProbeCandidate, concurren
 				if ok {
 					aliveCount.Add(1)
 				}
+
+				var line string
+				progressMu.Lock()
+				if decile := done.Load() * 10 / int64(len(unique)); decile > lastDecile {
+					lastDecile = decile
+					line = probeProgressLine(int(decile*10), int(done.Load()), len(unique), int(aliveCount.Load()), time.Since(start))
+				}
+				progressMu.Unlock()
+				if line != "" {
+					probeLogger.Info("%s", line)
+				}
 			}
 		}()
 	}
@@ -180,18 +178,13 @@ sendLoop:
 	}
 	close(queue)
 	wg.Wait()
-	close(progressDone)
 
 	return result
 }
 
-// probeProgressLine formats a live availability-probe status line: position,
-// percent done, alive/dead counts and elapsed wall time.
-func probeProgressLine(done, total, alive int, elapsed time.Duration) string {
-	pct := 0.0
-	if total > 0 {
-		pct = float64(done) / float64(total) * 100
-	}
-	return fmt.Sprintf("Probe progress: %d/%d (%.0f%%), alive %d, dead %d, elapsed %s",
-		done, total, pct, alive, done-alive, elapsed.Round(time.Second))
+// probeProgressLine formats a milestone availability-probe status line: percent
+// (10% steps), probed/total, alive-of-probed and elapsed wall time.
+func probeProgressLine(percent, done, total, alive int, elapsed time.Duration) string {
+	return fmt.Sprintf("Probe progress: %d%% (%d/%d URLs, alive %d of %d), elapsed %s",
+		percent, done, total, alive, done, elapsed.Round(time.Second))
 }
