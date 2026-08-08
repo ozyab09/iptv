@@ -188,7 +188,7 @@ Filtering steps per entry:
 
 - `DownloadFile(url, maxSize)` / `DownloadFileWithContext(ctx, url, maxSize, skipSSL)` — HTTP download with size limit
 - `NewHTTPClient(skipSSL)` — configurable SSL verification
-- `URLIsAlive(ctx, client, url, timeout)` / `ProbeCandidates(ctx, candidates, concurrency, timeout, skipSSL)` — availability probing: HEAD → GET+`Range: bytes=0-0` fallback, 2xx/3xx = alive, per-candidate user-agent/referrer (default: browser UA), dedup by URL + worker pool; `ProbeURLs` is the plain-URL wrapper. Logs a start line (`Probe: checking availability of N candidate URLs`) and **live progress every 5 s**: `Probe progress: N/M (%), alive X, dead Y, elapsed T`
+- `URLIsAlive(ctx, client, url, timeout)` / `ProbeCandidates(ctx, candidates, concurrency, timeout, skipSSL)` — availability probing: HEAD → GET+`Range: bytes=0-0` fallback, 2xx/3xx = alive, per-candidate user-agent/referrer (default: browser UA), dedup by URL + worker pool; `ProbeURLs` is the plain-URL wrapper. Logs a start line (`Probe: checking availability of N candidate URLs`) and **progress at 10% milestones** (10, 20, ... 100): `Probe progress: 30% (780/2600 URLs, alive 640 of 780), elapsed 1m30s`
 - `Retry(maxAttempts, delay, backoff, fn)` — exponential backoff (3 attempts, 2s, 2x)
 - `ToLowerSlice(slice)` — lowercase all strings in slice
 - `NormalizeLineEndings(content)` — `\r\n` → `\n`
