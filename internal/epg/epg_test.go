@@ -75,6 +75,83 @@ http://example.com/5`
 	}
 }
 
+func TestExtractChannelInfoFromPlaylistStripsEmoji(t *testing.T) {
+	playlist := `#EXTM3U
+#EXTINF:-1 tvg-id="100" group-title="Новости",Первый канал 🔴🐱
+http://example.com/1
+#EXTINF:-1 group-title="Спорт",Канал SD 🔵💧
+http://example.com/2`
+
+	channelIDs, channelNames := ExtractChannelInfoFromPlaylist(playlist)
+
+	if _, ok := channelNames["Первый канал"]; !ok {
+		t.Error("expected emoji-free name 'Первый канал' in channelNames")
+	}
+	if _, ok := channelNames["Канал SD"]; !ok {
+		t.Error("expected emoji-free name 'Канал SD' in channelNames")
+	}
+	if _, ok := channelNames["Первый канал 🔴🐱"]; ok {
+		t.Error("expected emoji-suffixed name NOT to be stored")
+	}
+	if channelIDs["100"] != "Новости" {
+		t.Errorf("expected channel 100 category 'Новости', got %q", channelIDs["100"])
+	}
+}
+
+func TestFilterEPGContentMatchesEmojiPlaylistNames(t *testing.T) {
+	// Полный путь: имена с эмодзи из плейлиста → ExtractChannelInfoFromPlaylist →
+	// FilterEPGContent должен найти каналы по чистым именам.
+	tStart := getRelativeTimeStr(1)
+	tStop := getRelativeTimeStr(2)
+
+	playlist := `#EXTM3U
+#EXTINF:-1 group-title="Общие",Первый канал 🔴🐱
+http://example.com/1
+#EXTINF:-1 group-title="Общие",НТВ 🔵💧
+http://example.com/2
+#EXTINF:-1 group-title="Спорт",Матч ТВ 🟠🐶
+http://example.com/3`
+
+	epgContent := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
+<tv>
+  <channel id="epg100">
+    <display-name lang="ru">Первый канал</display-name>
+  </channel>
+  <channel id="epg200">
+    <display-name lang="ru">НТВ</display-name>
+  </channel>
+  <channel id="epg300">
+    <display-name lang="ru">Матч ТВ</display-name>
+  </channel>
+  <programme start="%s" stop="%s" channel="epg100">
+    <title lang="ru">Show 1</title>
+  </programme>
+  <programme start="%s" stop="%s" channel="epg200">
+    <title lang="ru">Show 2</title>
+  </programme>
+  <programme start="%s" stop="%s" channel="epg300">
+    <title lang="ru">Show 3</title>
+  </programme>
+</tv>`, tStart, tStop, tStart, tStop, tStart, tStop)
+
+	channelIDs, channelNames := ExtractChannelInfoFromPlaylist(playlist)
+	filtered, err := FilterEPGContent(epgContent, channelIDs, nil, nil, channelNames, 10)
+	if err != nil {
+		t.Fatalf("FilterEPGContent failed: %v", err)
+	}
+
+	var tv TV
+	if err := xml.Unmarshal([]byte(filtered), &tv); err != nil {
+		t.Fatalf("failed to parse filtered EPG: %v", err)
+	}
+	if len(tv.Channels) != 3 {
+		t.Errorf("expected 3 channels matched by name, got %d", len(tv.Channels))
+	}
+	if len(tv.Programmes) != 3 {
+		t.Errorf("expected 3 programmes, got %d", len(tv.Programmes))
+	}
+}
+
 func TestFilterEPGContentBasic(t *testing.T) {
 	tStart := getRelativeTimeStr(1)
 	tStop := getRelativeTimeStr(2)

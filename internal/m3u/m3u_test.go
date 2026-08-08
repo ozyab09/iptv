@@ -3,6 +3,8 @@ package m3u
 import (
 	"strings"
 	"testing"
+
+	"github.com/ozyab/iptv/internal/utils"
 )
 
 func TestRemoveOrigSuffix(t *testing.T) {
@@ -600,6 +602,472 @@ http://example.com/shop`
 				t.Errorf("expected cleaned group-title %q in result", tc.newGroup)
 			}
 		})
+	}
+}
+
+func TestFilterContentKeepsURLAfterEXTVLCOPT(t *testing.T) {
+	// URL после #EXTVLCOPT / #KODIPROP-строк должен привязываться к записи
+	// и не теряться (фикс спаривания строк).
+	content := `#EXTM3U
+#EXTINF:-1 group-title="Wink (VPN 🇷🇺)",Первый канал
+#EXTVLCOPT:http-user-agent=WINK/1.130.1 (AndroidTV/9) HlsWinkPlayer
+https://zabava-htlive.cdn.ngenix.net/hls/CH_1TVSD/variant.m3u8
+#EXTINF:-1 group-title="Россия | Russia",Обычный канал
+#KODIPROP:inputstream.adaptive.license_type=com.widevine.alpha
+http://example.com/normal.m3u8
+#EXTINF:-1 group-title="Россия | Russia",Канал без доп. строк
+http://example.com/plain.m3u8
+#EXTINF:-1 group-title="Россия | Russia",Канал с пустой строкой
+
+https://example.com/blankline.m3u8
+#EXTINF:-1 group-title="Россия | Russia",Канал с двумя URL
+http://example.com/first.m3u8
+http://example.com/second.m3u8`
+
+	result := FilterContent(content, nil, nil, nil, "")
+
+	for _, want := range []string{
+		"Первый канал",
+		"https://zabava-htlive.cdn.ngenix.net/hls/CH_1TVSD/variant.m3u8",
+		`#EXTVLCOPT:http-user-agent=WINK/1.130.1 (AndroidTV/9) HlsWinkPlayer`,
+		"Обычный канал",
+		"http://example.com/normal.m3u8",
+		"Канал без доп. строк",
+		"http://example.com/plain.m3u8",
+		"Канал с пустой строкой",
+		"https://example.com/blankline.m3u8",
+		"Канал с двумя URL",
+		"http://example.com/first.m3u8",
+	} {
+		if !strings.Contains(result, want) {
+			t.Errorf("expected result to contain %q", want)
+		}
+	}
+
+	// Второй URL записи должен быть отброшен (первый URL привязывается).
+	if strings.Contains(result, "http://example.com/second.m3u8") {
+		t.Error("expected second URL line to be dropped")
+	}
+
+	if c := CountChannels(result); c != 5 {
+		t.Errorf("expected 5 channels, got %d", c)
+	}
+}
+
+func TestFilterContentDropsEntryWithoutURL(t *testing.T) {
+	content := `#EXTM3U
+#EXTINF:-1 group-title="Россия | Russia",Канал с URL
+http://example.com/ok.m3u8
+#EXTINF:-1 group-title="Wink (VPN 🇷🇺)",Мёртвая запись
+#EXTINF:-1 group-title="Россия | Russia",Ещё канал с URL
+https://example.com/ok2.m3u8
+#EXTINF:-1 group-title="X",Хвостовая мёртвая запись`
+
+	result := FilterContent(content, nil, nil, nil, "")
+
+	if !strings.Contains(result, "Канал с URL") {
+		t.Error("expected 'Канал с URL' to be kept")
+	}
+	if strings.Contains(result, "Мёртвая запись") {
+		t.Error("expected URL-less entry 'Мёртвая запись' to be dropped")
+	}
+	if !strings.Contains(result, "Ещё канал с URL") {
+		t.Error("expected 'Ещё канал с URL' to be kept")
+	}
+	if strings.Contains(result, "Хвостовая мёртвая запись") {
+		t.Error("expected trailing URL-less entry to be dropped")
+	}
+	if c := CountChannels(result); c != 2 {
+		t.Errorf("expected 2 channels, got %d", c)
+	}
+}
+
+func TestFilterContentKeepsRtmpURL(t *testing.T) {
+	content := `#EXTM3U
+#EXTINF:-1 group-title="Россия | Russia",Rtmp канал
+rtmp://cdn.example.com/live/ch1
+#EXTINF:-1 group-title="Россия | Russia",Http канал
+http://example.com/ch2.m3u8`
+
+	result := FilterContent(content, nil, nil, nil, "")
+
+	if !strings.Contains(result, "Rtmp канал") {
+		t.Error("expected rtmp channel to be kept")
+	}
+	if !strings.Contains(result, "rtmp://cdn.example.com/live/ch1") {
+		t.Error("expected rtmp URL to be kept")
+	}
+	if !strings.Contains(result, "Http канал") {
+		t.Error("expected http channel to be kept")
+	}
+	if c := CountChannels(result); c != 2 {
+		t.Errorf("expected 2 channels, got %d", c)
+	}
+}
+
+func TestAddTvgIDsToPlaylistWithEmojiNames(t *testing.T) {
+	content := `#EXTM3U
+#EXTINF:-1 group-title="A",Первый канал 🔴🐱
+http://example.com/1.m3u8
+#EXTINF:-1 group-title="A",Канал Без Эмодзи
+http://example.com/2.m3u8
+#EXTINF:-1 group-title="A" tvg-id="999",Уже с ID
+http://example.com/3.m3u8`
+
+	epgMap := map[string]string{
+		"первый канал":     "100",
+		"канал без эмодзи": "200",
+	}
+
+	result := AddTvgIDsToPlaylist(content, epgMap)
+
+	if !strings.Contains(result, `tvg-id="100"`) {
+		t.Error("expected tvg-id to be added to emoji-suffixed name")
+	}
+	if !strings.Contains(result, `tvg-id="200"`) {
+		t.Error("expected tvg-id to be added to plain name")
+	}
+	if !strings.Contains(result, `tvg-id="999"`) {
+		t.Error("expected existing tvg-id to be preserved")
+	}
+	if !strings.Contains(result, "Первый канал 🔴🐱") {
+		t.Error("expected original name with emoji to be preserved in output")
+	}
+}
+
+func TestDeduplicateByNameQualityPriority(t *testing.T) {
+	content := `#EXTM3U
+#EXTINF:-1 group-title="A",Канал HD
+http://example.com/hd.m3u8
+#EXTINF:-1 group-title="A",Канал SD
+http://example.com/sd.m3u8
+#EXTINF:-1 group-title="B",Одинокий канал
+http://example.com/one.m3u8`
+
+	result := DeduplicateByName(content, 1, nil, nil)
+
+	if !strings.Contains(result, "Канал HD") {
+		t.Error("expected HD variant to be kept")
+	}
+	if strings.Contains(result, "Канал SD") {
+		t.Error("expected SD variant to be removed")
+	}
+	if !strings.Contains(result, "Одинокий канал") {
+		t.Error("expected single-variant channel to stay untouched")
+	}
+	if c := CountChannels(result); c != 2 {
+		t.Errorf("expected 2 channels, got %d", c)
+	}
+}
+
+func TestDeduplicateByNameStripsEmojiAndUnicodeHD(t *testing.T) {
+	content := `#EXTM3U
+#EXTINF:-1 group-title="A",Канал HD 🔴🐱
+http://example.com/hd.m3u8
+#EXTINF:-1 group-title="A",КАНАЛᴴᴰ
+http://example.com/uhd.m3u8
+#EXTINF:-1 group-title="A",Канал SD 🔵💧
+http://example.com/sd.m3u8`
+
+	result := DeduplicateByName(content, 1, nil, nil)
+
+	// "Канал HD" и "КАНАЛᴴᴰ" оба ранг 2 (HD) — остаётся первый по порядку.
+	if !strings.Contains(result, "Канал HD 🔴🐱") {
+		t.Error("expected HD variant (with emoji) to be kept")
+	}
+	if strings.Contains(result, "КАНАЛᴴᴰ") {
+		t.Error("expected unicode-HD variant to be deduplicated")
+	}
+	if strings.Contains(result, "Канал SD") {
+		t.Error("expected SD variant to be removed")
+	}
+	if c := CountChannels(result); c != 1 {
+		t.Errorf("expected 1 channel, got %d", c)
+	}
+}
+
+func TestDeduplicateByNameProbeSelection(t *testing.T) {
+	content := `#EXTM3U
+#EXTINF:-1 group-title="A",Канал 4K
+http://example.com/4k.m3u8
+#EXTINF:-1 group-title="A",Канал HD
+http://example.com/hd.m3u8
+#EXTINF:-1 group-title="A",Канал SD
+http://example.com/sd.m3u8`
+
+	probe := func(cands []utils.ProbeCandidate) map[string]bool {
+		m := make(map[string]bool)
+		for _, c := range cands {
+			m[c.URL] = strings.Contains(c.URL, "hd")
+		}
+		return m
+	}
+
+	result := DeduplicateByName(content, 1, probe, nil)
+
+	// Мёртвый 4K пропускается в пользу живого HD, несмотря на качество.
+	if !strings.Contains(result, "Канал HD") {
+		t.Error("expected alive HD variant to be kept")
+	}
+	if strings.Contains(result, "Канал 4K") {
+		t.Error("expected dead 4K variant to be removed")
+	}
+	if strings.Contains(result, "Канал SD") {
+		t.Error("expected dead SD variant to be removed")
+	}
+	if c := CountChannels(result); c != 1 {
+		t.Errorf("expected 1 channel, got %d", c)
+	}
+}
+
+func TestDeduplicateByNameDoesNotProbeSingleVariants(t *testing.T) {
+	var probed []string
+	content := `#EXTM3U
+#EXTINF:-1 group-title="A",Дубль HD
+http://example.com/d1.m3u8
+#EXTINF:-1 group-title="A",Дубль SD
+http://example.com/d2.m3u8
+#EXTINF:-1 group-title="B",Одиночка
+http://example.com/single.m3u8`
+
+	probe := func(cands []utils.ProbeCandidate) map[string]bool {
+		for _, c := range cands {
+			probed = append(probed, c.URL)
+		}
+		m := make(map[string]bool)
+		for _, c := range cands {
+			m[c.URL] = true
+		}
+		return m
+	}
+
+	DeduplicateByName(content, 1, probe, nil)
+
+	for _, u := range probed {
+		if u == "http://example.com/single.m3u8" {
+			t.Error("single-variant URL should not be probed")
+		}
+	}
+}
+
+func TestDeduplicateByNameMaxVariants(t *testing.T) {
+	content := `#EXTM3U
+#EXTINF:-1 group-title="A",Канал FHD
+http://example.com/fhd.m3u8
+#EXTINF:-1 group-title="A",Канал HD
+http://example.com/hd.m3u8
+#EXTINF:-1 group-title="A",Канал SD
+http://example.com/sd.m3u8`
+
+	result := DeduplicateByName(content, 2, nil, nil)
+
+	if c := CountChannels(result); c != 2 {
+		t.Errorf("expected 2 channels, got %d", c)
+	}
+	if !strings.Contains(result, "Канал FHD") || !strings.Contains(result, "Канал HD") {
+		t.Error("expected FHD and HD variants to be kept")
+	}
+	if strings.Contains(result, "Канал SD") {
+		t.Error("expected SD variant to be removed")
+	}
+}
+
+func TestDeduplicateByNameAllDeadFallback(t *testing.T) {
+	content := `#EXTM3U
+#EXTINF:-1 group-title="A",Канал 4K
+http://example.com/4k.m3u8
+#EXTINF:-1 group-title="A",Канал SD
+http://example.com/sd.m3u8`
+
+	probe := func(cands []utils.ProbeCandidate) map[string]bool {
+		m := make(map[string]bool)
+		for _, c := range cands {
+			m[c.URL] = false
+		}
+		return m
+	}
+
+	result := DeduplicateByName(content, 1, probe, nil)
+
+	if !strings.Contains(result, "Канал 4K") {
+		t.Error("expected best-quality fallback to be kept when all variants are dead")
+	}
+	if c := CountChannels(result); c != 1 {
+		t.Errorf("expected 1 channel, got %d", c)
+	}
+}
+
+func TestDeduplicateByNameSkipsNonHTTPProbe(t *testing.T) {
+	content := `#EXTM3U
+#EXTINF:-1 group-title="A",Канал
+rtmp://cdn.example.com/live/1
+#EXTINF:-1 group-title="A",Канал HD
+http://example.com/dead.m3u8`
+
+	probe := func(cands []utils.ProbeCandidate) map[string]bool {
+		if len(cands) != 1 || cands[0].URL != "http://example.com/dead.m3u8" {
+			t.Errorf("unexpected probe URLs: %v", cands)
+		}
+		return map[string]bool{cands[0].URL: false}
+	}
+
+	result := DeduplicateByName(content, 1, probe, nil)
+
+	// rtmp не пробируется (считается живым), мёртвый HD удаляется,
+	// несмотря на то что HD по качеству выше.
+	if !strings.Contains(result, "Канал") {
+		t.Error("expected rtmp variant to be kept")
+	}
+	if strings.Contains(result, "Канал HD") {
+		t.Error("expected dead HD variant to be removed")
+	}
+	if c := CountChannels(result); c != 1 {
+		t.Errorf("expected 1 channel, got %d", c)
+	}
+}
+
+func TestDeduplicateByNamePassesUserAgent(t *testing.T) {
+	content := `#EXTM3U
+#EXTINF:-1 group-title="A",Канал HD
+#EXTVLCOPT:http-user-agent=WINK/1.130.1 (AndroidTV/9) HlsWinkPlayer
+#EXTVLCOPT:http-referrer=https://televizor24tochka.ru/
+https://example.com/hd.m3u8
+#EXTINF:-1 group-title="A",Канал SD
+http://example.com/sd.m3u8`
+
+	var gotUA, gotReferer string
+	probe := func(cands []utils.ProbeCandidate) map[string]bool {
+		m := make(map[string]bool)
+		for _, c := range cands {
+			if c.URL == "https://example.com/hd.m3u8" {
+				gotUA = c.UserAgent
+				gotReferer = c.Referer
+			}
+			m[c.URL] = true
+		}
+		return m
+	}
+
+	DeduplicateByName(content, 1, probe, nil)
+
+	if gotUA != "WINK/1.130.1 (AndroidTV/9) HlsWinkPlayer" {
+		t.Errorf("expected #EXTVLCOPT user-agent to be passed to probe, got %q", gotUA)
+	}
+	if gotReferer != "https://televizor24tochka.ru/" {
+		t.Errorf("expected #EXTVLCOPT referrer to be passed to probe, got %q", gotReferer)
+	}
+}
+
+func TestDeduplicateByNamePreservesExtraLines(t *testing.T) {
+	content := `#EXTM3U
+#EXTINF:-1 group-title="A",Канал HD
+#EXTVLCOPT:http-user-agent=WINK/1.0
+https://example.com/hd.m3u8
+#EXTINF:-1 group-title="A",Канал SD
+http://example.com/sd.m3u8`
+
+	result := DeduplicateByName(content, 1, nil, nil)
+
+	if !strings.Contains(result, "#EXTVLCOPT:http-user-agent=WINK/1.0") {
+		t.Error("expected EXTVLCOPT line preserved with the kept variant")
+	}
+	if !strings.Contains(result, "https://example.com/hd.m3u8") {
+		t.Error("expected kept variant URL to be preserved")
+	}
+	if strings.Contains(result, "Канал SD") {
+		t.Error("expected SD variant to be removed")
+	}
+}
+
+func TestDeduplicateByNameMergesTvgID(t *testing.T) {
+	content := `#EXTM3U
+#EXTINF:-1 group-title="A",Канал HD
+http://example.com/hd.m3u8
+#EXTINF:-1 group-title="A" tvg-id="123",Канал SD
+http://example.com/sd.m3u8`
+
+	valid := map[string]bool{"123": true}
+	result := DeduplicateByName(content, 1, nil, valid)
+
+	if !strings.Contains(result, `tvg-id="123"`) {
+		t.Error("expected tvg-id to be inherited from sibling variant")
+	}
+	if !strings.Contains(result, "Канал HD") {
+		t.Error("expected HD variant to be kept")
+	}
+	if strings.Contains(result, "Канал SD") {
+		t.Error("expected SD variant to be removed")
+	}
+	if c := CountChannels(result); c != 1 {
+		t.Errorf("expected 1 channel, got %d", c)
+	}
+}
+
+func TestDeduplicateByNameIgnoresStaleSiblingID(t *testing.T) {
+	content := `#EXTM3U
+#EXTINF:-1 group-title="A",Канал HD
+http://example.com/hd.m3u8
+#EXTINF:-1 group-title="A" tvg-id="stale",Канал SD
+http://example.com/sd.m3u8`
+
+	// validEPGIDs не содержит "stale" → наследовать нельзя.
+	valid := map[string]bool{"456": true}
+	result := DeduplicateByName(content, 1, nil, valid)
+
+	if strings.Contains(result, `tvg-id="stale"`) {
+		t.Error("expected stale sibling tvg-id NOT to be inherited")
+	}
+	if !strings.Contains(result, "Канал HD") {
+		t.Error("expected HD variant to be kept")
+	}
+	for _, line := range strings.Split(result, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "#EXTINF:") && strings.Contains(line, "Канал HD") {
+			if strings.Contains(line, "tvg-id=") {
+				t.Error("expected no tvg-id on winner when sibling id is stale")
+			}
+		}
+	}
+}
+
+func TestDeduplicateByNameMergesAnyIDWithoutEPGSet(t *testing.T) {
+	content := `#EXTM3U
+#EXTINF:-1 group-title="A",Канал HD
+http://example.com/hd.m3u8
+#EXTINF:-1 group-title="A" tvg-id="777",Канал SD
+http://example.com/sd.m3u8`
+
+	// validEPGIDs = nil → наследуется любой непустой id.
+	result := DeduplicateByName(content, 1, nil, nil)
+
+	if !strings.Contains(result, `tvg-id="777"`) {
+		t.Error("expected any sibling tvg-id to be inherited when EPG set is nil")
+	}
+	if !strings.Contains(result, "Канал HD") {
+		t.Error("expected HD variant to be kept")
+	}
+	if c := CountChannels(result); c != 1 {
+		t.Errorf("expected 1 channel, got %d", c)
+	}
+}
+
+func TestDeduplicateByNameMergePreservesNameAndEmoji(t *testing.T) {
+	content := `#EXTM3U
+#EXTINF:-1 group-title="A",Канал HD 🔴🐱
+http://example.com/hd.m3u8
+#EXTINF:-1 group-title="A" tvg-id="123",Канал SD
+http://example.com/sd.m3u8`
+
+	valid := map[string]bool{"123": true}
+	result := DeduplicateByName(content, 1, nil, valid)
+
+	if !strings.Contains(result, "Канал HD 🔴🐱") {
+		t.Error("expected kept variant name with emoji to be preserved")
+	}
+	if !strings.Contains(result, `tvg-id="123"`) {
+		t.Error("expected tvg-id to be inherited")
+	}
+	if c := CountChannels(result); c != 1 {
+		t.Errorf("expected 1 channel, got %d", c)
 	}
 }
 

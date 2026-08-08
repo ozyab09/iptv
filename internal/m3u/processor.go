@@ -33,7 +33,20 @@ var (
 	regTvgIDAttr      = regexp.MustCompile(`tvg-id="[^"]*"`)
 	regTvgLogoAttr    = regexp.MustCompile(`tvg-logo="[^"]*"`)
 	regTvgRecAttr     = regexp.MustCompile(`tvg-rec="[^"]*"`)
+
+	// regStreamURL matches a line that starts with a URL scheme (http, https, rtmp, udp, ...).
+	regStreamURL = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9+.-]*://`)
+
+	// Quality tokens used for ranking channel variants (order matters: full hd before hd).
+	regQualityRank = regexp.MustCompile(`(?i)\b(4k|2160p|uhd|fhd|full\s*hd|fullhd|1080p|720p|576p|480p|hdtv|hd|sd|hq|lq)\b`)
+
+	regSpaces = regexp.MustCompile(`\s+`)
 )
+
+// isStreamURL reports whether the line looks like a stream URL (any scheme:// prefix).
+func isStreamURL(line string) bool {
+	return regStreamURL.MatchString(line)
+}
 
 // ChannelEntry represents a parsed M3U channel entry.
 type ChannelEntry struct {
@@ -59,7 +72,7 @@ func ParseChannelEntries(lines []string) ([]string, []ChannelEntry) {
 			for i < linesLen {
 				nextLine := lines[i]
 				extraLines = append(extraLines, nextLine)
-				if strings.HasPrefix(strings.TrimSpace(nextLine), "http") {
+				if isStreamURL(strings.TrimSpace(nextLine)) {
 					i++
 					break
 				}
@@ -211,61 +224,6 @@ func DownloadM3UWithContext(ctx context.Context, url string, skipSSLVerify bool)
 
 // ─── Normalization ────────────────────────────────────────────────────────────────
 
-func isEmojiRune(r rune) bool {
-	// Regional indicators (flags) — NOT covered by 0x1F300+ range.
-	if r >= 0x1F1E0 && r <= 0x1F1FF {
-		return true
-	}
-	// Main emoji block: misc symbols, pictographs, emoticons, transport.
-	if r >= 0x1F300 && r <= 0x1F9FF {
-		return true
-	}
-	// Additional ranges outside the main emoji block.
-	switch {
-	case r >= 0x2600 && r <= 0x27BF:
-		return true
-	case r >= 0xFE00 && r <= 0xFE0F:
-		return true
-	case r == 0x200D:
-		return true
-	case r == 0x2B50 || r == 0x2B55:
-		return true
-	case r >= 0x20E3 && r <= 0x20E3:
-		return true
-	case r >= 0x231A && r <= 0x231B:
-		return true
-	case r >= 0x23F0 && r <= 0x23F3:
-		return true
-	case r == 0x00A9 || r == 0x00AE:
-		return true
-	case r == 0x2122:
-		return true
-	case r == 0x3030 || r == 0x303D:
-		return true
-	case r == 0x3297 || r == 0x3299:
-		return true
-	default:
-		return false
-	}
-}
-
-func removeTrailingEmojiAndSymbols(s string) string {
-	if s == "" {
-		return s
-	}
-	runes := []rune(s)
-	end := len(runes)
-	for end > 0 {
-		r := runes[end-1]
-		if isEmojiRune(r) || r == ' ' || r == '\t' || r == '\u00A0' {
-			end--
-		} else {
-			break
-		}
-	}
-	return string(runes[:end])
-}
-
 // RemoveOrigSuffix strips trailing " orig" (case-insensitive) from channel name.
 func RemoveOrigSuffix(name string) string {
 	if len(name) >= 5 && strings.HasSuffix(strings.ToLower(name), " orig") {
@@ -300,7 +258,7 @@ func processHeader(line, customEPGURL string) string {
 
 func normalizeGroupTitle(group string) string {
 	normalized := regLeadingNumber.ReplaceAllString(group, "")
-	normalized = removeTrailingEmojiAndSymbols(normalized)
+	normalized = utils.StripTrailingEmoji(normalized)
 	return normalized
 }
 
@@ -411,7 +369,7 @@ func RemoveDuplicateURLs(content string) string {
 		url := ""
 		for _, extraLine := range entry.ExtraLines {
 			trimmed := strings.TrimSpace(extraLine)
-			if strings.HasPrefix(trimmed, "http") {
+			if isStreamURL(trimmed) {
 				url = trimmed
 				break
 			}
@@ -507,6 +465,250 @@ func RemoveDuplicateURLs(content string) string {
 	return strings.Join(finalLines, "\n")
 }
 
+// ─── Pipeline: deduplicate by name (options B/C) ─────────────────────────────────
+
+// qualityRank maps a channel name to a quality priority: 4K/UHD > FHD > HD > SD > none.
+func qualityRank(name string) int {
+	lower := strings.ToLower(name)
+	if m := regQualityRank.FindStringSubmatch(lower); len(m) > 1 {
+		switch m[1] {
+		case "4k", "2160p", "uhd":
+			return 4
+		case "fhd", "full hd", "fullhd", "1080p":
+			return 3
+		case "hd", "hdtv", "720p", "hq":
+			return 2
+		case "sd", "lq":
+			return 1
+		}
+	}
+	// Unicode superscript HD (e.g. "РОССИЯ 24ᴴᴰ").
+	if strings.Contains(name, "ᴴᴰ") {
+		return 2
+	}
+	return 0
+}
+
+// normalizeChannelName reduces a channel name to its base form for grouping:
+// emoji pairs, quality tokens, regional/numeric suffixes, separators and case
+// are stripped so "Канал HD", "КАНАЛᴴᴰ" and "Канал" group together.
+func normalizeChannelName(name string) string {
+	s := utils.StripTrailingEmoji(strings.TrimSpace(name))
+	s = strings.ToLower(s)
+	s = regQualityRank.ReplaceAllString(s, " ")
+	s = strings.ReplaceAll(s, "ᴴ", "")
+	s = strings.ReplaceAll(s, "ᴰ", "")
+	s = strings.ReplaceAll(s, " orig", "")
+	s = regRegional.ReplaceAllString(s, " ")
+	s = strings.ReplaceAll(s, "_", " ")
+	s = strings.ReplaceAll(s, "-", " ")
+	s = regSpaces.ReplaceAllString(s, " ")
+	return strings.TrimSpace(s)
+}
+
+// entryURL returns the first stream URL of an entry, or "".
+func entryURL(entry ChannelEntry) string {
+	for _, extra := range entry.ExtraLines {
+		t := strings.TrimSpace(extra)
+		if isStreamURL(t) {
+			return t
+		}
+	}
+	return ""
+}
+
+// canProbeURL reports whether a URL can be checked over HTTP(S).
+func canProbeURL(u string) bool {
+	return strings.HasPrefix(u, "http://") || strings.HasPrefix(u, "https://")
+}
+
+// extractProbeInfo builds the probe candidate for an entry, carrying the URL
+// plus any per-entry request headers from #EXTVLCOPT lines (http-user-agent,
+// http-referrer) so UA-locked sources are probed with the right identity.
+func extractProbeInfo(entry ChannelEntry) utils.ProbeCandidate {
+	c := utils.ProbeCandidate{URL: entryURL(entry)}
+	for _, extra := range entry.ExtraLines {
+		t := strings.TrimSpace(extra)
+		switch {
+		case strings.HasPrefix(t, "#EXTVLCOPT:http-user-agent="):
+			c.UserAgent = strings.TrimSpace(strings.TrimPrefix(t, "#EXTVLCOPT:http-user-agent="))
+		case strings.HasPrefix(t, "#EXTVLCOPT:http-referrer="):
+			c.Referer = strings.TrimSpace(strings.TrimPrefix(t, "#EXTVLCOPT:http-referrer="))
+		}
+	}
+	return c
+}
+
+// entryTvgID returns the tvg-id attribute of an entry, or "" when absent/empty.
+func entryTvgID(entry ChannelEntry) string {
+	if m := regTvgID.FindStringSubmatch(entry.EXTINFLine); len(m) > 1 {
+		return m[1]
+	}
+	return ""
+}
+
+// dedupCandidate is a parsed channel variant grouped by normalized name.
+type dedupCandidate struct {
+	entry ChannelEntry
+	qual  int
+	probe utils.ProbeCandidate
+	tvgID string
+}
+
+// inheritTvgID returns the first non-empty tvg-id among the group's other
+// candidates. When validEPGIDs is non-nil, only ids present in it are eligible
+// (stale ids are never inherited); a nil set means any id is inherited.
+func inheritTvgID(group []dedupCandidate, selfIdx int, validEPGIDs map[string]bool) string {
+	for i, c := range group {
+		if i == selfIdx || c.tvgID == "" {
+			continue
+		}
+		if validEPGIDs == nil || validEPGIDs[c.tvgID] {
+			return c.tvgID
+		}
+	}
+	return ""
+}
+
+// DeduplicateByName keeps at most maxVariants entries per normalized channel
+// name, preferring higher quality (4K/UHD > FHD > HD > SD > unlabeled). When
+// probe is non-nil, candidates are ranked by quality and only entries whose URL
+// is reported alive are kept. Entries in single-variant groups pass through
+// untouched. If every candidate of a group is dead, the best-quality entry is
+// kept as a fallback so the channel does not disappear. Probe results are keyed
+// by URL; a missing result (e.g. cancelled probe) is treated as alive.
+//
+// Kept entries that lack a tvg-id inherit it from a sibling variant in the same
+// group (option C merge): only ids present in validEPGIDs are inherited; a nil
+// validEPGIDs disables validation and inherits any non-empty id.
+func DeduplicateByName(content string, maxVariants int, probe func(candidates []utils.ProbeCandidate) map[string]bool, validEPGIDs map[string]bool) string {
+	if maxVariants < 1 {
+		maxVariants = 1
+	}
+
+	lines := strings.Split(content, "\n")
+	headers, entries := ParseChannelEntries(lines)
+
+	groups := make(map[string][]dedupCandidate)
+	for _, e := range entries {
+		name := channelNameFromEntry(e)
+		key := normalizeChannelName(name)
+		groups[key] = append(groups[key], dedupCandidate{
+			entry: e,
+			qual:  qualityRank(name),
+			probe: extractProbeInfo(e),
+			tvgID: entryTvgID(e),
+		})
+	}
+
+	// Collect unique probe-able candidate URLs from duplicate groups only.
+	var probeCands []utils.ProbeCandidate
+	probeSet := make(map[string]bool)
+	for _, group := range groups {
+		if len(group) <= 1 {
+			continue
+		}
+		for _, cand := range group {
+			if cand.probe.URL != "" && canProbeURL(cand.probe.URL) && !probeSet[cand.probe.URL] {
+				probeSet[cand.probe.URL] = true
+				probeCands = append(probeCands, cand.probe)
+			}
+		}
+	}
+
+	var alive map[string]bool
+	if probe != nil && len(probeCands) > 0 {
+		alive = probe(probeCands)
+	}
+
+	// Deterministic output: iterate groups by normalized name.
+	keys := make([]string, 0, len(groups))
+	for k := range groups {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	var kept []ChannelEntry
+	removed := 0
+	fallbackKept := 0
+	mergedTvgID := 0
+	groupsProbed := 0
+
+	for _, key := range keys {
+		group := groups[key]
+		if len(group) == 1 {
+			kept = append(kept, group[0].entry)
+			continue
+		}
+
+		// Stable sort by quality (descending), preserving playlist order on ties.
+		sort.SliceStable(group, func(i, j int) bool { return group[i].qual > group[j].qual })
+
+		count := 0
+		best := group[0] // highest-quality fallback
+		for idx, cand := range group {
+			isAlive := true
+			if alive != nil && cand.probe.URL != "" && canProbeURL(cand.probe.URL) {
+				if ok, exists := alive[cand.probe.URL]; exists {
+					isAlive = ok
+				}
+				// Missing result (e.g. cancelled probe) → keep, treat as alive.
+			}
+			if count < maxVariants && isAlive {
+				entry := cand.entry
+				if id := inheritTvgID(group, idx, validEPGIDs); id != "" && entryTvgID(entry) == "" {
+					if parts := strings.SplitN(entry.EXTINFLine, ",", 2); len(parts) == 2 {
+						entry.EXTINFLine = parts[0] + ` tvg-id="` + id + `",` + parts[1]
+						mergedTvgID++
+					}
+				}
+				kept = append(kept, entry)
+				count++
+			} else {
+				removed++
+			}
+		}
+		if count == 0 {
+			// All candidates dead — keep the best-quality one as a fallback.
+			entry := best.entry
+			if id := inheritTvgID(group, 0, validEPGIDs); id != "" && entryTvgID(entry) == "" {
+				if parts := strings.SplitN(entry.EXTINFLine, ",", 2); len(parts) == 2 {
+					entry.EXTINFLine = parts[0] + ` tvg-id="` + id + `",` + parts[1]
+					mergedTvgID++
+				}
+			}
+			kept = append(kept, entry)
+			removed--
+			fallbackKept++
+		}
+		groupsProbed++
+	}
+
+	if probe != nil && len(probeCands) > 0 && alive != nil {
+		aliveCount := 0
+		for _, ok := range alive {
+			if ok {
+				aliveCount++
+			}
+		}
+		logger.Info("Availability probe: %d/%d candidate URLs alive", aliveCount, len(probeCands))
+	}
+	if removed > 0 {
+		logger.Info("DeduplicateByName: processed %d groups, removed %d entries (%d best-quality fallbacks kept)", groupsProbed, removed, fallbackKept)
+	}
+	if mergedTvgID > 0 {
+		logger.Info("DeduplicateByName: inherited tvg-id into %d entries from sibling variants", mergedTvgID)
+	}
+
+	var finalLines []string
+	finalLines = append(finalLines, headers...)
+	for _, e := range kept {
+		finalLines = append(finalLines, e.EXTINFLine)
+		finalLines = append(finalLines, e.ExtraLines...)
+	}
+	return strings.Join(finalLines, "\n")
+}
+
 // SortPlaylistAlphabetically sorts playlist entries alphabetically by channel name.
 func SortPlaylistAlphabetically(content string) string {
 	lines := strings.Split(content, "\n")
@@ -536,7 +738,7 @@ func AddEmojiByURL(content string) string {
 		url := ""
 		for _, extraLine := range entry.ExtraLines {
 			trimmed := strings.TrimSpace(extraLine)
-			if strings.HasPrefix(trimmed, "http") {
+			if isStreamURL(trimmed) {
 				url = trimmed
 				break
 			}
@@ -573,8 +775,10 @@ func AddTvgIDsToPlaylist(content string, epgNameToIDMap map[string]string) strin
 
 			parts := strings.SplitN(line, ",", 2)
 			if len(parts) > 1 {
+				// Эмодзи-пара добавляется к имени на этапе FilterContent;
+				// при сопоставлении с EPG-именами её нужно срезать.
 				channelName := strings.TrimSpace(parts[1])
-				normalizedName := strings.ToLower(channelName)
+				normalizedName := strings.ToLower(utils.StripTrailingEmoji(channelName))
 
 				if tvgID, ok := epgNameToIDMap[normalizedName]; ok {
 					extinfPart := parts[0]
@@ -608,6 +812,23 @@ func FilterContent(content string, categoriesToRemove, categoriesToRemoveSubstri
 	lines := strings.Split(content, "\n")
 	var filteredLines []string
 
+	// Per-entry state: pendingEntry is the index of the current entry's EXTINF
+	// line in filteredLines (-1 = no open entry), entryHasURL tracks whether the
+	// entry has already received its stream URL.
+	pendingEntry := -1
+	entryHasURL := false
+	droppedNoURL := 0
+
+	// closeEntry closes the current entry, dropping it if it never got a stream URL.
+	closeEntry := func() {
+		if pendingEntry >= 0 && !entryHasURL {
+			filteredLines = filteredLines[:pendingEntry]
+			droppedNoURL++
+		}
+		pendingEntry = -1
+		entryHasURL = false
+	}
+
 	for _, line := range lines {
 		if len(line) > 10000 {
 			continue
@@ -615,58 +836,47 @@ func FilterContent(content string, categoriesToRemove, categoriesToRemoveSubstri
 
 		trimmed := strings.TrimSpace(line)
 
-		// Header line: process EPG URL and always keep.
+		// Header line: process EPG URL and always keep; closes any open entry.
 		if strings.HasPrefix(trimmed, "#EXTM3U") {
+			closeEntry()
 			filteredLines = append(filteredLines, processHeader(line, customEPGURL))
 			continue
 		}
 
 		// Channel entry: filter and normalize.
 		if strings.HasPrefix(trimmed, "#EXTINF:") {
+			closeEntry()
 			result := filterEntry(line, exactMatchLower, substringLower, excludeLower)
 			if result.keep {
 				filteredLines = append(filteredLines, result.filteredLine)
+				pendingEntry = len(filteredLines) - 1
 			}
 			continue
 		}
 
-		// URL or other lines: keep if the previous entry was included.
-		if strings.HasPrefix(trimmed, "http") {
-			// We track inclusion via a different approach: we append URLs
-			// only when they follow a kept EXTINF line. But since we're
-			// iterating line-by-line, we need to check if the last kept
-			// line was an EXTINF without a URL.
-			// Simpler: just append all non-EXTINF lines; the subsequent
-			// dedup step will handle orphans. But that's not ideal.
-			//
-			// Better approach: re-add line pairing. Since we removed
-			// the includeEntry flag, let's use a simple heuristic:
-			// a URL line after a kept EXTINF line should be kept.
-			// We'll check if the last added line was an EXTINF (no URL follows it yet).
-			if len(filteredLines) > 0 {
-				lastLine := filteredLines[len(filteredLines)-1]
-				if strings.HasPrefix(lastLine, "#EXTINF:") {
-					filteredLines = append(filteredLines, line)
-				}
-			}
-			continue
-		}
-
-		// Empty lines and other headers: always keep.
-		if trimmed == "" || strings.HasPrefix(trimmed, "#EXTM3U") {
-			filteredLines = append(filteredLines, line)
-			continue
-		}
-
-		// Other non-extinf lines: keep as-is (they'll be associated with an entry later).
-		// This catches things like #KODIPROP lines.
-		// Only keep if they follow an EXTINF line.
-		if len(filteredLines) > 0 {
-			lastLine := filteredLines[len(filteredLines)-1]
-			if strings.HasPrefix(lastLine, "#EXTINF:") {
+		// Stream URL line (any scheme, e.g. http, https, rtmp).
+		// Attach only the first URL of an entry — extra URL lines are dropped.
+		if isStreamURL(trimmed) {
+			if pendingEntry >= 0 && !entryHasURL {
 				filteredLines = append(filteredLines, line)
+				entryHasURL = true
 			}
+			continue
 		}
+
+		// Extra lines (EXTVLCOPT, KODIPROP, blank lines): belong to the current entry.
+		if pendingEntry >= 0 {
+			filteredLines = append(filteredLines, line)
+		} else if trimmed == "" {
+			filteredLines = append(filteredLines, line)
+		}
+	}
+
+	// Close the trailing entry.
+	closeEntry()
+
+	if droppedNoURL > 0 {
+		logger.Info("Removed %d channel entries without stream URL", droppedNoURL)
 	}
 
 	contentNoDups := RemoveDuplicateURLs(strings.Join(filteredLines, "\n"))

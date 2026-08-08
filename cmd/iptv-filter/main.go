@@ -124,19 +124,12 @@ func applyMetadata(content string, cfg *config.Config) string {
 
 // ─── Pipeline step: process EPG ──────────────────────────────────────────────────
 
-func processEPG(ctx context.Context, cfg *config.Config, epgURL string, filteredContent string, s3Client *awss3.Client, dryRun bool) (string, error) {
+// processEPG filters the already-downloaded EPG content. epgContent and
+// epgNameToIDMap are downloaded/built once earlier in the pipeline (step 2b) so
+// the same data can validate tvg-ids inherited during dedup.
+func processEPG(ctx context.Context, cfg *config.Config, epgContent string, epgNameToIDMap map[string]string, filteredContent string, s3Client *awss3.Client, dryRun bool) (string, error) {
 	log.Info("Starting EPG filtering process")
 
-	var epgContent string
-	if err := utils.Retry(3, 2*time.Second, 2.0, func() error {
-		var e error
-		epgContent, e = epg.DownloadEPG(ctx, epgURL, cfg)
-		return e
-	}); err != nil {
-		return filteredContent, err
-	}
-
-	epgNameToIDMap := epg.BuildEPGNameToIDMap(epgContent)
 	filteredContent = m3u.AddTvgIDsToPlaylist(filteredContent, epgNameToIDMap)
 	saveFile(filteredContent, cfg.LocalFilteredPlaylistPath(), cfg)
 
@@ -225,6 +218,40 @@ func run() int {
 	// Step 2: Apply channel metadata.
 	filteredContent = applyMetadata(filteredContent, cfg)
 
+	// Step 2b: Download EPG once, early. Its channel-id set is used to validate
+	// tvg-ids inherited from dropped variants during dedup (option C merge); the
+	// same content feeds the EPG filtering step later.
+	var epgContent string
+	var epgNameToIDMap map[string]string
+	if epgURL != "" {
+		if err := utils.Retry(3, 2*time.Second, 2.0, func() error {
+			var e error
+			epgContent, e = epg.DownloadEPG(ctx, epgURL, cfg)
+			return e
+		}); err != nil {
+			log.Error("Failed to download EPG: %v", err)
+			return 1
+		}
+		epgNameToIDMap = epg.BuildEPGNameToIDMap(epgContent)
+	}
+
+	// Step 2c: Optionally deduplicate by channel name, keeping only working
+	// sources (option C: HEAD/GET availability probing, quality-first). Kept
+	// entries lacking a tvg-id inherit one from sibling variants when the id
+	// exists in the EPG (stale ids are never inherited).
+	if cfg.ProbeSources() {
+		var epgIDSet map[string]bool
+		if epgNameToIDMap != nil {
+			epgIDSet = make(map[string]bool, len(epgNameToIDMap))
+			for _, id := range epgNameToIDMap {
+				epgIDSet[id] = true
+			}
+		}
+		filteredContent = m3u.DeduplicateByName(filteredContent, cfg.MaxChannelVariants(), func(candidates []utils.ProbeCandidate) map[string]bool {
+			return utils.ProbeCandidates(ctx, candidates, cfg.ProbeConcurrency(), cfg.ProbeTimeout(), skipSSL)
+		}, epgIDSet)
+	}
+
 	// Step 3: Save files locally.
 	saveFile(filteredContent, cfg.LocalFilteredPlaylistPath(), cfg)
 	saveFile(originalContent, cfg.LocalAllCategoriesPlaylistPath(), cfg)
@@ -240,10 +267,10 @@ func run() int {
 		}
 	}
 
-	// Step 5: Process EPG.
+	// Step 5: Process EPG (content downloaded once in step 2b).
 	if epgURL != "" {
 		var err error
-		filteredContent, err = processEPG(ctx, cfg, epgURL, filteredContent, s3Client, dryRun)
+		filteredContent, err = processEPG(ctx, cfg, epgContent, epgNameToIDMap, filteredContent, s3Client, dryRun)
 		if err != nil {
 			log.Error("EPG processing failed: %v", err)
 			return 1
