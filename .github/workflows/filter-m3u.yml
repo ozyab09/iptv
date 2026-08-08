@@ -20,6 +20,8 @@ env:
   EPG_SOURCE_URL: ${{ secrets.EPG_SOURCE_URL }}
   LOCAL_EPG_PATH: ${{ secrets.LOCAL_EPG_PATH  }}
   CATEGORIES_FILE_PATH: categories.txt
+  # Опрос доступности источников (HEAD+GET Range). В dry-run (PR) probe пропускается.
+  PROBE_SOURCES: "true"
   AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
   AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
 
