@@ -39,6 +39,28 @@ func TestEnvironmentVariableOverride(t *testing.T) {
 	}
 }
 
+func TestValidateAllowsOptionalEPGAndDryRunWithoutS3(t *testing.T) {
+	production := &Config{
+		m3uSourceURL:  "https://example.test/playlist.m3u",
+		s3BucketName:  "test-bucket",
+		s3FilteredKey: "playlist.m3u",
+		s3EndpointURL: "https://storage.example.test",
+		s3Region:      "us-east-1",
+	}
+	if errs := production.Validate(); len(errs) != 0 {
+		t.Fatalf("EPG should be optional, got validation errors: %v", errs)
+	}
+
+	dryRun := &Config{
+		m3uSourceURL:  "https://example.test/playlist.m3u",
+		s3FilteredKey: "playlist.m3u",
+		dryRun:        true,
+	}
+	if errs := dryRun.Validate(); len(errs) != 0 {
+		t.Fatalf("dry run should not require S3 settings, got validation errors: %v", errs)
+	}
+}
+
 func TestLocalPlaylistPaths(t *testing.T) {
 	cfg := New()
 	if cfg.LocalFilteredPlaylistPath() != "playlist.m3u" {
@@ -219,5 +241,232 @@ func TestSkipSSLVerifyFromEnv(t *testing.T) {
 	cfg := New()
 	if !cfg.SkipSSLVerify() {
 		t.Error("expected SkipSSLVerify to be true when SKIP_SSL_VERIFY=true")
+	}
+}
+
+// validConfig returns a Config that passes Validate() unchanged.
+func validConfig() *Config {
+	return &Config{
+		m3uSourceURL:  "https://example.test/playlist.m3u",
+		s3BucketName:  "test-bucket",
+		s3FilteredKey: "playlist.m3u",
+		s3EndpointURL: "https://storage.example.test",
+		s3Region:      "us-east-1",
+	}
+}
+
+func containsErr(errs []string, substr string) bool {
+	for _, e := range errs {
+		if strings.Contains(e, substr) {
+			return true
+		}
+	}
+	return false
+}
+
+func TestValidateM3UPlaceholder(t *testing.T) {
+	cfg := validConfig()
+	cfg.m3uSourceURL = "https://your-provider.com/playlist.m3u"
+	if errs := cfg.Validate(); !containsErr(errs, "placeholder") {
+		t.Errorf("expected placeholder error, got %v", errs)
+	}
+}
+
+func TestValidateM3UInvalidScheme(t *testing.T) {
+	cfg := validConfig()
+	cfg.m3uSourceURL = "ftp://example.test/playlist.m3u"
+	if errs := cfg.Validate(); !containsErr(errs, "invalid URL") {
+		t.Errorf("expected invalid URL error, got %v", errs)
+	}
+}
+
+func TestValidateM3UCommaSeparated(t *testing.T) {
+	cfg := validConfig()
+	cfg.m3uSourceURL = " https://a.test/1.m3u , https://b.test/2.m3u "
+	if errs := cfg.Validate(); len(errs) != 0 {
+		t.Errorf("expected no errors for valid comma list, got %v", errs)
+	}
+
+	// One bad entry in the list must be rejected.
+	cfg.m3uSourceURL = "https://a.test/1.m3u,ftp://b.test/2.m3u"
+	if errs := cfg.Validate(); !containsErr(errs, "invalid URL") {
+		t.Errorf("expected invalid URL error in list, got %v", errs)
+	}
+
+	// Only separators/whitespace: no usable URL at all.
+	cfg.m3uSourceURL = " , , "
+	if errs := cfg.Validate(); !containsErr(errs, "at least one valid") {
+		t.Errorf("expected at-least-one-valid error, got %v", errs)
+	}
+}
+
+func TestValidateBucketNameLength(t *testing.T) {
+	tooShort := validConfig()
+	tooShort.s3BucketName = "ab"
+	if errs := tooShort.Validate(); !containsErr(errs, "between 3 and 63") {
+		t.Errorf("expected bucket length error, got %v", errs)
+	}
+
+	tooLong := validConfig()
+	tooLong.s3BucketName = strings.Repeat("b", 64)
+	if errs := tooLong.Validate(); !containsErr(errs, "between 3 and 63") {
+		t.Errorf("expected bucket length error, got %v", errs)
+	}
+
+	// Boundary values are valid.
+	min := validConfig()
+	min.s3BucketName = "abc"
+	if errs := min.Validate(); len(errs) != 0 {
+		t.Errorf("3-char bucket should be valid, got %v", errs)
+	}
+	max := validConfig()
+	max.s3BucketName = strings.Repeat("c", 63)
+	if errs := max.Validate(); len(errs) != 0 {
+		t.Errorf("63-char bucket should be valid, got %v", errs)
+	}
+}
+
+func TestValidateObjectKeyRules(t *testing.T) {
+	for _, key := range []string{"", "../evil.m3u", "/abs.m3u"} {
+		cfg := validConfig()
+		cfg.s3FilteredKey = key
+		if errs := cfg.Validate(); !containsErr(errs, "S3_OBJECT_KEY") {
+			t.Errorf("key %q: expected S3_OBJECT_KEY error, got %v", key, errs)
+		}
+	}
+}
+
+func TestValidateEPGKeyRequiredWhenEPGSet(t *testing.T) {
+	cfg := validConfig()
+	cfg.epgSourceURL = "https://epg.example.test/epg.xml.gz"
+	if errs := cfg.Validate(); !containsErr(errs, "S3_EPG_KEY") {
+		t.Errorf("expected S3_EPG_KEY error when EPG set, got %v", errs)
+	}
+
+	// EPG with a valid key passes.
+	cfg.s3EPGKey = "epg.xml.gz"
+	if errs := cfg.Validate(); len(errs) != 0 {
+		t.Errorf("expected no errors with EPG key, got %v", errs)
+	}
+}
+
+func TestValidateEPGPlaceholder(t *testing.T) {
+	cfg := validConfig()
+	cfg.epgSourceURL = "https://your-epg-provider.com/epg.xml"
+	cfg.s3EPGKey = "epg.xml.gz"
+	if errs := cfg.Validate(); !containsErr(errs, "placeholder") {
+		t.Errorf("expected EPG placeholder error, got %v", errs)
+	}
+}
+
+func TestValidateEndpointScheme(t *testing.T) {
+	cfg := validConfig()
+	cfg.s3EndpointURL = "storage.example.test"
+	if errs := cfg.Validate(); !containsErr(errs, "S3_ENDPOINT_URL") {
+		t.Errorf("expected endpoint scheme error, got %v", errs)
+	}
+}
+
+func TestValidateEndpointCredentialsInURL(t *testing.T) {
+	cfg := validConfig()
+	cfg.s3EndpointURL = "https://user:pass@storage.example.test"
+	if errs := cfg.Validate(); !containsErr(errs, "credentials") {
+		t.Errorf("expected credentials-in-URL error, got %v", errs)
+	}
+}
+
+func TestValidateRegionRequired(t *testing.T) {
+	cfg := validConfig()
+	cfg.s3Region = ""
+	if errs := cfg.Validate(); !containsErr(errs, "S3_REGION") {
+		t.Errorf("expected S3_REGION error, got %v", errs)
+	}
+
+	// Dry-run does not require the region.
+	cfg.dryRun = true
+	if errs := cfg.Validate(); len(errs) != 0 {
+		t.Errorf("dry-run should not require region, got %v", errs)
+	}
+}
+
+func TestBuildCustomEPGURLHostStyle(t *testing.T) {
+	cfg := validConfig()
+	cfg.s3EPGKey = "epg.xml.gz"
+	got := cfg.BuildCustomEPGURL()
+	want := "https://test-bucket.storage.example.test/epg.xml.gz"
+	if got != want {
+		t.Errorf("BuildCustomEPGURL() = %q, want %q", got, want)
+	}
+}
+
+func TestBuildCustomEPGURLPathStyle(t *testing.T) {
+	cfg := validConfig()
+	cfg.s3EndpointURL = "https://storage.example.test/base"
+	cfg.s3EPGKey = "epg.xml.gz"
+	got := cfg.BuildCustomEPGURL()
+	want := "https://storage.example.test/base/test-bucket/epg.xml.gz"
+	if got != want {
+		t.Errorf("BuildCustomEPGURL() = %q, want %q", got, want)
+	}
+}
+
+func TestBuildCustomEPGURLParseErrorFallback(t *testing.T) {
+	cfg := validConfig()
+	cfg.s3EndpointURL = "://bad"
+	cfg.s3EPGKey = "epg.xml.gz"
+	got := cfg.BuildCustomEPGURL()
+	want := "https://test-bucket.bad/epg.xml.gz"
+	if got != want {
+		t.Errorf("BuildCustomEPGURL() = %q, want %q", got, want)
+	}
+}
+
+func TestLocalFilteredEPGPath(t *testing.T) {
+	cfg := validConfig()
+	cfg.s3EPGKey = "epg.xml.gz"
+	if got := cfg.LocalFilteredEPGPath(); got != "epg.xml-filtered.gz" {
+		t.Errorf("LocalFilteredEPGPath() = %q, want %q", got, "epg.xml-filtered.gz")
+	}
+
+	cfg.s3EPGKey = "epg"
+	if got := cfg.LocalFilteredEPGPath(); got != "epg-filtered" {
+		t.Errorf("LocalFilteredEPGPath() = %q, want %q", got, "epg-filtered")
+	}
+}
+
+func TestIsTruthy(t *testing.T) {
+	for _, v := range []string{"true", "TRUE", "1", "yes", "on"} {
+		if !isTruthy(v) {
+			t.Errorf("isTruthy(%q) = false, want true", v)
+		}
+	}
+	for _, v := range []string{"", "false", "0", "no", "off", "banana"} {
+		if isTruthy(v) {
+			t.Errorf("isTruthy(%q) = true, want false", v)
+		}
+	}
+}
+
+func TestEnvIntOrDefaultInvalid(t *testing.T) {
+	t.Setenv("EPG_RETENTION_DAYS", "abc")
+	if got := New().EPGRetentionDays(); got != 3 {
+		t.Errorf("invalid retention should fall back to 3, got %d", got)
+	}
+
+	t.Setenv("EPG_RETENTION_DAYS", "0")
+	if got := New().EPGRetentionDays(); got != 3 {
+		t.Errorf("zero retention should fall back to 3, got %d", got)
+	}
+}
+
+func TestEnvIntClampMax(t *testing.T) {
+	t.Setenv("MAX_CHANNEL_VARIANTS", "99")
+	if got := New().MaxChannelVariants(); got != 5 {
+		t.Errorf("expected MaxChannelVariants clamped to 5, got %d", got)
+	}
+
+	t.Setenv("MAX_CHANNEL_VARIANTS", "-3")
+	if got := New().MaxChannelVariants(); got != 1 {
+		t.Errorf("negative variants should fall back to 1, got %d", got)
 	}
 }

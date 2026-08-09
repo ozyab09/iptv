@@ -7,11 +7,11 @@ A robust and secure IPTV M3U playlist filtering application written in Go. Downl
 
 ## Features
 
-- **Secure Download**: Downloads M3U/EPG files with size validation (100MB / 500MB limits)
+- **Safe Download**: Rejects non-2xx HTTP responses and enforces 100 MB M3U / 500 MB EPG limits, including after EPG decompression
 - **Category Filtering**: Deny-list approach — removes specified categories, keeps everything else
 - **Channel Name Processing**: Removes `orig` suffix, excludes regional `+N` variants, excludes number suffixes
-- **No Deduplication**: All channel variants kept with `#1`/`#2` suffixes for duplicates
-- **EPG Processing**: Downloads (gzip/zip), filters by channel, time-based retention (configurable days)
+- **Optional Source Deduplication**: Can retain the highest-quality working source(s) for each channel after bounded concurrent probing
+- **EPG Processing**: Streams gzip/zip/XML EPG data through filtering and gzip output, with configurable time retention
 - **S3 Upload**: Playlists, EPG, and gzip archives uploaded to S3-compatible storage
 - **Dry-Run Mode**: Test without uploading (`DRY_RUN=true`)
 - **Log Sanitization**: Sensitive data (URLs, AWS keys) masked in logs
@@ -49,18 +49,22 @@ Set these environment variables:
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `M3U_SOURCE_URL` | Source URL(s) for M3U playlist (comma-separated) | required |
-| `S3_BUCKET_NAME` | S3 bucket name | required |
+| `S3_BUCKET_NAME` | S3 bucket name | required except `DRY_RUN=true` |
 | `S3_OBJECT_KEY` | S3 object key for filtered playlist | `playlist.m3u` |
-| `S3_ENDPOINT_URL` | S3 endpoint URL | required |
+| `S3_ENDPOINT_URL` | S3 endpoint URL | required except `DRY_RUN=true` |
 | `S3_REGION` | S3 region | `us-east-1` |
-| `S3_EPG_KEY` | S3 object key for EPG file | required |
-| `EPG_SOURCE_URL` | EPG XML source URL | required |
+| `S3_EPG_KEY` | S3 object key for EPG file | required when `EPG_SOURCE_URL` is set |
+| `EPG_SOURCE_URL` | EPG XML source URL | optional |
 | `AWS_ACCESS_KEY_ID` | S3 access key | required |
 | `AWS_SECRET_ACCESS_KEY` | S3 secret key | required |
 | `DRY_RUN` | Skip S3 upload | (unset) |
 | `OUTPUT_DIR` | Local output directory | `output` |
 | `EPG_RETENTION_DAYS` | EPG retention window | `3` |
 | `CATEGORIES_FILE_PATH` | Path to categories.txt | (optional) |
+| `PROBE_SOURCES` | Probe duplicate HTTP(S) stream sources before deduplication | `false` |
+| `PROBE_TIMEOUT_SECONDS` | Timeout per HEAD/GET availability probe | `5` |
+| `PROBE_CONCURRENCY` | Maximum concurrent source probes | `20` |
+| `MAX_CHANNEL_VARIANTS` | Working source variants retained per channel (1–5) | `1` |
 
 Load with:
 ```bash
@@ -81,13 +85,15 @@ DRY_RUN=true go run ./cmd/iptv-filter/
 
 ```bash
 go test ./... -v -count=1
+go vet ./...
+make build
 ```
 
 ## CI/CD
 
 GitHub Actions workflow in `.github/workflows/filter-m3u.yml`:
 - **test**: Runs `go test ./... -v -count=1`
-- **filter-m3u**: Runs `go run ./cmd/iptv-filter/` (dry-run for PRs)
+- **filter-m3u**: Builds and runs the binary (dry-run for PRs); probe checks are disabled in dry-run
 
 Required secrets: `M3U_SOURCE_URL`, `S3_BUCKET_NAME`, `S3_OBJECT_KEY`, `S3_ENDPOINT_URL`, `S3_REGION`, `S3_EPG_KEY`, `EPG_SOURCE_URL`, `LOCAL_EPG_PATH`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`.
 
