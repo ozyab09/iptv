@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/signal"
 	"path"
@@ -34,15 +35,15 @@ func gracefulCtx() (context.Context, context.CancelFunc) {
 }
 
 // saveFile writes content to a file in the output directory.
-func saveFile(content, filename string, cfg *config.Config) {
+func saveFile(content, filename string, cfg *config.Config) error {
 	filepath := path.Join(cfg.OutputDir(), filename)
 	if err := os.WriteFile(filepath, []byte(content), 0644); err != nil {
-		log.Error("Failed to save file: %v", err)
-		return
+		return fmt.Errorf("write %s: %w", filepath, err)
 	}
 	if fi, err := os.Stat(filepath); err == nil {
 		log.Info("Saved locally as %s (size: %.2f KB)", filepath, float64(fi.Size())/1024)
 	}
+	return nil
 }
 
 // mergeParts combines multiple M3U playlists, keeping only the first #EXTM3U header.
@@ -89,7 +90,7 @@ func parseM3USources(m3uURL string) []string {
 func downloadM3U(ctx context.Context, urlStr string, skipSSLVerify bool) (string, error) {
 	log.Info("Downloading M3U source: %s", urlStr)
 	var original string
-	err := utils.Retry(3, 2*time.Second, 2.0, func() error {
+	err := utils.RetryWithContext(ctx, 3, 2*time.Second, 2.0, func() error {
 		var e error
 		original, e = m3u.DownloadM3UWithContext(ctx, urlStr, skipSSLVerify)
 		return e
@@ -127,24 +128,25 @@ func applyMetadata(content string, cfg *config.Config) string {
 // processEPG filters the already-downloaded EPG content. epgContent and
 // epgNameToIDMap are downloaded/built once earlier in the pipeline (step 2b) so
 // the same data can validate tvg-ids inherited during dedup.
-func processEPG(ctx context.Context, cfg *config.Config, epgContent string, epgNameToIDMap map[string]string, filteredContent string, s3Client *awss3.Client, dryRun bool) (string, error) {
+func processEPG(ctx context.Context, cfg *config.Config, epgPath string, epgNameToIDMap map[string]string, filteredContent string, s3Client *awss3.Client, dryRun bool) (string, error) {
 	log.Info("Starting EPG filtering process")
 
 	filteredContent = m3u.AddTvgIDsToPlaylist(filteredContent, epgNameToIDMap)
-	saveFile(filteredContent, cfg.LocalFilteredPlaylistPath(), cfg)
-
-	chIDs, chNames := epg.ExtractChannelInfoFromPlaylist(filteredContent)
-	filteredEPG, err := epg.FilterEPGContent(epgContent, chIDs, config.EPGExcludedCategories, config.EPGExcludedChannelIDs, chNames, cfg.EPGRetentionDays())
-	if err != nil {
+	if err := saveFile(filteredContent, cfg.LocalFilteredPlaylistPath(), cfg); err != nil {
 		return filteredContent, err
 	}
 
-	epg.SaveFilteredEPGLocally(filteredEPG, cfg.LocalFilteredEPGPath(), cfg)
+	chIDs, chNames := epg.ExtractChannelInfoFromPlaylist(filteredContent)
+	if err := epg.FilterEPGFile(epgPath, path.Join(cfg.OutputDir(), cfg.LocalFilteredEPGPath()), chIDs, config.EPGExcludedCategories, config.EPGExcludedChannelIDs, chNames, cfg.EPGRetentionDays()); err != nil {
+		return filteredContent, err
+	}
 
 	if !dryRun && s3Client != nil {
-		uploadWithRetry(ctx, func() error {
+		if err := uploadWithRetry(ctx, func() error {
 			return s3.UploadFileToS3(ctx, s3Client, cfg.LocalFilteredEPGPath(), cfg.S3DefaultBucketName(), cfg.S3EPGKey(), cfg.OutputDir(), "application/gzip")
-		})
+		}); err != nil {
+			return filteredContent, err
+		}
 	}
 
 	return filteredContent, nil
@@ -152,14 +154,15 @@ func processEPG(ctx context.Context, cfg *config.Config, epgContent string, epgN
 
 // ─── Pipeline step: upload ──────────────────────────────────────────────────────
 
-func uploadWithRetry(ctx context.Context, fn func() error) {
-	if err := utils.Retry(3, 2*time.Second, 2.0, fn); err != nil {
-		log.Error("Upload failed after retries: %v", err)
+func uploadWithRetry(ctx context.Context, fn func() error) error {
+	if err := utils.RetryWithContext(ctx, 3, 2*time.Second, 2.0, fn); err != nil {
+		return fmt.Errorf("upload failed after retries: %w", err)
 	}
+	return nil
 }
 
-func uploadBoth(ctx context.Context, client *awss3.Client, content, bucket, key string) {
-	uploadWithRetry(ctx, func() error {
+func uploadBoth(ctx context.Context, client *awss3.Client, content, bucket, key string) error {
+	return uploadWithRetry(ctx, func() error {
 		return s3.UploadBoth(ctx, client, content, bucket, key, "")
 	})
 }
@@ -192,7 +195,10 @@ func run() int {
 	s3AllKey := cfg.S3AllCategoriesPlaylistKey()
 	dryRun := cfg.DryRun()
 	s3Endpoint := cfg.S3EndpointURL()
-	customEPGURL := cfg.BuildCustomEPGURL()
+	customEPGURL := ""
+	if epgURL != "" && cfg.S3DefaultBucketName() != "" && cfg.S3EndpointURL() != "" {
+		customEPGURL = cfg.BuildCustomEPGURL()
+	}
 	skipSSL := cfg.SkipSSLVerify()
 
 	m3uURLs := parseM3USources(m3uURL)
@@ -221,18 +227,28 @@ func run() int {
 	// Step 2b: Download EPG once, early. Its channel-id set is used to validate
 	// tvg-ids inherited from dropped variants during dedup (option C merge); the
 	// same content feeds the EPG filtering step later.
-	var epgContent string
+	var epgPath string
 	var epgNameToIDMap map[string]string
 	if epgURL != "" {
-		if err := utils.Retry(3, 2*time.Second, 2.0, func() error {
+		if err := utils.RetryWithContext(ctx, 3, 2*time.Second, 2.0, func() error {
 			var e error
-			epgContent, e = epg.DownloadEPG(ctx, epgURL, cfg)
+			epgPath, e = epg.DownloadEPGToFile(ctx, epgURL, cfg)
 			return e
 		}); err != nil {
 			log.Error("Failed to download EPG: %v", err)
 			return 1
 		}
-		epgNameToIDMap = epg.BuildEPGNameToIDMap(epgContent)
+		var err error
+		epgNameToIDMap, err = epg.BuildEPGNameToIDMapFromFile(epgPath)
+		if err != nil {
+			log.Error("Failed to build EPG name-to-id map: %v", err)
+			return 1
+		}
+		defer func() {
+			if err := os.Remove(epgPath); err != nil && !os.IsNotExist(err) {
+				log.Warning("Failed to remove temporary EPG XML: %v", err)
+			}
+		}()
 	}
 
 	// Step 2c: Optionally deduplicate by channel name, keeping only working
@@ -260,8 +276,14 @@ func run() int {
 	}
 
 	// Step 3: Save files locally.
-	saveFile(filteredContent, cfg.LocalFilteredPlaylistPath(), cfg)
-	saveFile(originalContent, cfg.LocalAllCategoriesPlaylistPath(), cfg)
+	if err := saveFile(filteredContent, cfg.LocalFilteredPlaylistPath(), cfg); err != nil {
+		log.Error("Failed to save filtered playlist: %v", err)
+		return 1
+	}
+	if err := saveFile(originalContent, cfg.LocalAllCategoriesPlaylistPath(), cfg); err != nil {
+		log.Error("Failed to save unfiltered playlist: %v", err)
+		return 1
+	}
 
 	// Step 4: Create reusable S3 client (if not dry-run).
 	var s3Client *awss3.Client
@@ -277,7 +299,7 @@ func run() int {
 	// Step 5: Process EPG (content downloaded once in step 2b).
 	if epgURL != "" {
 		var err error
-		filteredContent, err = processEPG(ctx, cfg, epgContent, epgNameToIDMap, filteredContent, s3Client, dryRun)
+		filteredContent, err = processEPG(ctx, cfg, epgPath, epgNameToIDMap, filteredContent, s3Client, dryRun)
 		if err != nil {
 			log.Error("EPG processing failed: %v", err)
 			return 1
@@ -290,8 +312,14 @@ func run() int {
 	}
 
 	// Step 6: Upload everything to S3 (reusing client).
-	uploadBoth(ctx, s3Client, filteredContent, s3Bucket, s3FilteredKey)
-	uploadBoth(ctx, s3Client, originalContent, s3Bucket, s3AllKey)
+	if err := uploadBoth(ctx, s3Client, filteredContent, s3Bucket, s3FilteredKey); err != nil {
+		log.Error("Failed to upload filtered playlist: %v", err)
+		return 1
+	}
+	if err := uploadBoth(ctx, s3Client, originalContent, s3Bucket, s3AllKey); err != nil {
+		log.Error("Failed to upload unfiltered playlist: %v", err)
+		return 1
+	}
 
 	log.Info("Process completed successfully")
 	return 0

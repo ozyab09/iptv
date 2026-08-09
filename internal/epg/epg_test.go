@@ -1,9 +1,13 @@
 package epg
 
 import (
+	"archive/zip"
+	"bytes"
+	"compress/gzip"
 	"encoding/xml"
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -419,6 +423,161 @@ func TestBuildEPGNameToIDMap(t *testing.T) {
 	}
 	if nameMap["russia 1"] != "ch2" {
 		t.Errorf("expected 'russia 1' -> 'ch2', got '%s'", nameMap["russia 1"])
+	}
+}
+
+func TestFilterEPGContentExcludesNameMatchedChannelCategory(t *testing.T) {
+	start := getRelativeTimeStr(1)
+	stop := getRelativeTimeStr(2)
+	content := fmt.Sprintf(`<?xml version="1.0"?><tv>
+<channel id="movie"><display-name>Movie Channel</display-name></channel>
+<programme channel="movie" start="%s" stop="%s"><title>Film</title></programme>
+</tv>`, start, stop)
+
+	filtered, err := FilterEPGContent(content, nil, []string{"Кино"}, nil, map[string]string{"Movie Channel": "Кино"}, 3)
+	if err != nil {
+		t.Fatalf("FilterEPGContent failed: %v", err)
+	}
+	if strings.Contains(filtered, "Movie Channel") || strings.Contains(filtered, "Film") {
+		t.Fatalf("name-matched channel in excluded category was retained: %s", filtered)
+	}
+}
+
+func TestFilterEPGFileWritesGzip(t *testing.T) {
+	tmpDir := t.TempDir()
+	sourcePath := tmpDir + "/source.xml"
+	outputPath := tmpDir + "/filtered.xml.gz"
+	start := getRelativeTimeStr(1)
+	stop := getRelativeTimeStr(2)
+	content := fmt.Sprintf(`<?xml version="1.0"?><tv source-info-name="test">
+<channel id="one"><display-name>One</display-name><icon src="https://example.test/one.png"/></channel>
+<programme channel="one" start="%s" stop="%s"><title>News</title></programme>
+</tv>`, start, stop)
+	if err := os.WriteFile(sourcePath, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := FilterEPGFile(sourcePath, outputPath, map[string]string{"one": "News"}, nil, nil, nil, 3); err != nil {
+		t.Fatalf("FilterEPGFile failed: %v", err)
+	}
+	file, err := os.Open(outputPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	reader, err := gzip.NewReader(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+	decoded := TV{}
+	if err := xml.NewDecoder(reader).Decode(&decoded); err != nil {
+		t.Fatalf("filtered XML is invalid: %v", err)
+	}
+	if len(decoded.Channels) != 1 || len(decoded.Programmes) != 1 {
+		t.Fatalf("expected one channel and programme, got %d and %d", len(decoded.Channels), len(decoded.Programmes))
+	}
+	if decoded.Channels[0].Icon[0].Src != "https://example.test/one.png" {
+		t.Fatalf("channel metadata was not preserved: %+v", decoded.Channels[0])
+	}
+}
+
+func TestExpandEPGFileRejectsGzipBomb(t *testing.T) {
+	tmpDir := t.TempDir()
+	sourcePath := tmpDir + "/bomb.xml.gz"
+
+	// A tiny gzip archive that decompresses to far more than maxSize.
+	var buf bytes.Buffer
+	gw := gzip.NewWriter(&buf)
+	if _, err := gw.Write(bytes.Repeat([]byte("a"), 1024*1024)); err != nil {
+		t.Fatal(err)
+	}
+	if err := gw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(sourcePath, buf.Bytes(), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	var out bytes.Buffer
+	err := expandEPGFile(sourcePath, &out, 1024) // 1 KB limit vs 1 MB payload
+	if err == nil {
+		t.Fatal("expected gzip bomb to be rejected")
+	}
+	if !strings.Contains(err.Error(), "maximum allowed size") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestExpandEPGFileRejectsZipBomb(t *testing.T) {
+	tmpDir := t.TempDir()
+	sourcePath := tmpDir + "/bomb.zip"
+
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	entry, err := zw.Create("epg.xml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := entry.Write(bytes.Repeat([]byte("a"), 1024*1024)); err != nil {
+		t.Fatal(err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(sourcePath, buf.Bytes(), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	var out bytes.Buffer
+	err = expandEPGFile(sourcePath, &out, 1024) // 1 KB limit vs 1 MB payload
+	if err == nil {
+		t.Fatal("expected zip bomb to be rejected")
+	}
+	if !strings.Contains(err.Error(), "maximum allowed size") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestExpandEPGFilePlainXML(t *testing.T) {
+	tmpDir := t.TempDir()
+	sourcePath := tmpDir + "/epg.xml"
+	content := `<?xml version="1.0"?><tv><channel id="one"><display-name>One</display-name></channel></tv>`
+	if err := os.WriteFile(sourcePath, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	var out bytes.Buffer
+	if err := expandEPGFile(sourcePath, &out, 1024); err != nil {
+		t.Fatalf("expandEPGFile failed: %v", err)
+	}
+	if out.String() != content {
+		t.Fatalf("plain XML was altered: got %q", out.String())
+	}
+}
+
+func TestExpandEPGFileGzipUnderLimit(t *testing.T) {
+	tmpDir := t.TempDir()
+	sourcePath := tmpDir + "/epg.xml.gz"
+	content := `<?xml version="1.0"?><tv><channel id="one"><display-name>One</display-name></channel></tv>`
+
+	var buf bytes.Buffer
+	gw := gzip.NewWriter(&buf)
+	if _, err := gw.Write([]byte(content)); err != nil {
+		t.Fatal(err)
+	}
+	if err := gw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(sourcePath, buf.Bytes(), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	var out bytes.Buffer
+	if err := expandEPGFile(sourcePath, &out, 1024); err != nil {
+		t.Fatalf("expandEPGFile failed: %v", err)
+	}
+	if out.String() != content {
+		t.Fatalf("gzip content mismatch: got %q", out.String())
 	}
 }
 

@@ -12,43 +12,43 @@ import (
 
 // Config caches all configuration values on creation for fast access.
 type Config struct {
-	m3uSourceURL    string
-	s3BucketName    string
-	s3FilteredKey   string
-	s3AllKey        string
-	s3EndpointURL   string
-	s3Region        string
-	epgSourceURL    string
-	s3EPGKey        string
-	localEPGPath    string
-	epgRetention    int
-	outputDir        string
-	categoriesFile   string
-	dryRun           bool
-	skipSSLVerify    bool
-	probeSources     bool
-	probeTimeout     time.Duration
-	probeConcurrency int
+	m3uSourceURL       string
+	s3BucketName       string
+	s3FilteredKey      string
+	s3AllKey           string
+	s3EndpointURL      string
+	s3Region           string
+	epgSourceURL       string
+	s3EPGKey           string
+	localEPGPath       string
+	epgRetention       int
+	outputDir          string
+	categoriesFile     string
+	dryRun             bool
+	skipSSLVerify      bool
+	probeSources       bool
+	probeTimeout       time.Duration
+	probeConcurrency   int
 	maxChannelVariants int
 }
 
 // New reads all environment variables once and caches them.
 func New() *Config {
 	return &Config{
-		m3uSourceURL:  os.Getenv("M3U_SOURCE_URL"),
-		s3BucketName:  os.Getenv("S3_BUCKET_NAME"),
-		s3FilteredKey: envOrDefault("S3_OBJECT_KEY", "playlist.m3u"),
-		s3AllKey:      "playlist-all.m3u",
-		s3EndpointURL: os.Getenv("S3_ENDPOINT_URL"),
-		s3Region:      envOrDefault("S3_REGION", "us-east-1"),
-		epgSourceURL:  os.Getenv("EPG_SOURCE_URL"),
-		s3EPGKey:      os.Getenv("S3_EPG_KEY"),
-		localEPGPath:  envOrDefault("LOCAL_EPG_PATH", "epg.xml.gz"),
-		epgRetention:  envIntOrDefault("EPG_RETENTION_DAYS", 3),
-		outputDir:        envOrDefault("OUTPUT_DIR", "output"),
-		categoriesFile:   os.Getenv("CATEGORIES_FILE_PATH"),
-		dryRun:           isTruthy(os.Getenv("DRY_RUN")),
-		skipSSLVerify:    isTruthy(os.Getenv("SKIP_SSL_VERIFY")),
+		m3uSourceURL:       os.Getenv("M3U_SOURCE_URL"),
+		s3BucketName:       os.Getenv("S3_BUCKET_NAME"),
+		s3FilteredKey:      envOrDefault("S3_OBJECT_KEY", "playlist.m3u"),
+		s3AllKey:           "playlist-all.m3u",
+		s3EndpointURL:      os.Getenv("S3_ENDPOINT_URL"),
+		s3Region:           envOrDefault("S3_REGION", "us-east-1"),
+		epgSourceURL:       os.Getenv("EPG_SOURCE_URL"),
+		s3EPGKey:           os.Getenv("S3_EPG_KEY"),
+		localEPGPath:       envOrDefault("LOCAL_EPG_PATH", "epg.xml.gz"),
+		epgRetention:       envIntOrDefault("EPG_RETENTION_DAYS", 3),
+		outputDir:          envOrDefault("OUTPUT_DIR", "output"),
+		categoriesFile:     os.Getenv("CATEGORIES_FILE_PATH"),
+		dryRun:             isTruthy(os.Getenv("DRY_RUN")),
+		skipSSLVerify:      isTruthy(os.Getenv("SKIP_SSL_VERIFY")),
 		probeSources:       isTruthy(os.Getenv("PROBE_SOURCES")),
 		probeTimeout:       time.Duration(envIntOrDefault("PROBE_TIMEOUT_SECONDS", 5)) * time.Second,
 		probeConcurrency:   envIntOrDefault("PROBE_CONCURRENCY", 20),
@@ -203,7 +203,7 @@ var CategoriesToRemove = []string{
 	"Религия",
 	"Религиозные",
 	// Поддержка / INFO
-	"💲💲💲Поддержи Проект💲💲💲",   // leading emojis — normalization only strips trailing
+	"💲💲💲Поддержи Проект💲💲💲", // leading emojis — normalization only strips trailing
 	"🔺 INFO",
 	// АнтиРоссия / Украина
 	"АнтиРОССИЙСКИЕ",
@@ -222,8 +222,8 @@ var CategoriesToRemove = []string{
 	"32",
 	"TVS",
 	"TvZaTak",
-	"MavTV ⭐️",                    // trailing emoji — normalization strips it
-	"aleks-u-romki* 😊",            // trailing emoji — normalization strips it
+	"MavTV ⭐️",         // trailing emoji — normalization strips it
+	"aleks-u-romki* 😊", // trailing emoji — normalization strips it
 	"Play-x",
 	// Кино и сериалы (bold unicode)
 	"𝐊𝐢𝐧𝐨",
@@ -360,9 +360,7 @@ func (c *Config) Validate() []string {
 		}
 	}
 
-	if c.epgSourceURL == "" {
-		errors = append(errors, "EPG_SOURCE_URL must be specified")
-	} else {
+	if c.epgSourceURL != "" {
 		lower := strings.ToLower(c.epgSourceURL)
 		for _, p := range placeholderPatterns {
 			if strings.Contains(lower, p) {
@@ -375,9 +373,9 @@ func (c *Config) Validate() []string {
 		}
 	}
 
-	if c.s3BucketName == "" {
+	if !c.dryRun && c.s3BucketName == "" {
 		errors = append(errors, "S3_BUCKET_NAME must be specified")
-	} else if len(c.s3BucketName) < 3 || len(c.s3BucketName) > 63 {
+	} else if c.s3BucketName != "" && (len(c.s3BucketName) < 3 || len(c.s3BucketName) > 63) {
 		errors = append(errors, "S3_BUCKET_NAME must be between 3 and 63 characters")
 	}
 
@@ -385,22 +383,22 @@ func (c *Config) Validate() []string {
 		errors = append(errors, "S3_OBJECT_KEY must not contain '..' or start with '/'")
 	}
 
-	if c.s3EPGKey == "" || strings.Contains(c.s3EPGKey, "..") || strings.HasPrefix(c.s3EPGKey, "/") {
+	if c.epgSourceURL != "" && (c.s3EPGKey == "" || strings.Contains(c.s3EPGKey, "..") || strings.HasPrefix(c.s3EPGKey, "/")) {
 		errors = append(errors, "S3_EPG_KEY must not contain '..' or start with '/'")
 	}
 
-	if c.s3EndpointURL == "" {
+	if !c.dryRun && c.s3EndpointURL == "" {
 		errors = append(errors, "S3_ENDPOINT_URL must be specified")
-	} else if !strings.HasPrefix(c.s3EndpointURL, "http://") && !strings.HasPrefix(c.s3EndpointURL, "https://") {
+	} else if c.s3EndpointURL != "" && !strings.HasPrefix(c.s3EndpointURL, "http://") && !strings.HasPrefix(c.s3EndpointURL, "https://") {
 		errors = append(errors, "S3_ENDPOINT_URL must be a valid HTTP/HTTPS URL")
 	} else {
 		parsed, err := url.Parse(c.s3EndpointURL)
-		if err == nil && strings.Contains(parsed.Host, "@") {
+		if err == nil && parsed.User != nil {
 			errors = append(errors, "S3_ENDPOINT_URL should not contain credentials in the URL")
 		}
 	}
 
-	if c.s3Region == "" {
+	if !c.dryRun && c.s3Region == "" {
 		errors = append(errors, "S3_REGION must be specified")
 	}
 
