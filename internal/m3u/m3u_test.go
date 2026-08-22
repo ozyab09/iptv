@@ -1658,3 +1658,24 @@ func TestMatchWordBoundary(t *testing.T) {
 		}
 	}
 }
+
+// TestShouldFilterByNameDateSuffixes verifies that a date-bearing name like
+// "ОБНОВЛЕНО 20.08" is matched by the "обновлено" substring regardless of the
+// date value — future runs with "ОБНОВЛЕНО 21.08" or any other date are
+// covered without config changes.
+func TestShouldFilterByNameDateSuffixes(t *testing.T) {
+	excludeLower := utils.ToLowerSlice(config.ChannelNamesToExclude)
+	for _, name := range []string{
+		"ОБНОВЛЕНО 20.08",
+		"ОБНОВЛЕНО 21.08",
+		"обновлено 15.09.2024",
+		"Channel ОБНОВЛЕНО 01.01",
+	} {
+		if !shouldFilterByName(name, excludeLower) {
+			t.Errorf("expected %q to be filtered by 'обновлено' pattern", name)
+		}
+	}
+	if shouldFilterByName("Обычный канал", excludeLower) {
+		t.Error("ordinary channel must not be filtered")
+	}
+}
