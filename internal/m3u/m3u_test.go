@@ -1365,3 +1365,150 @@ http://example.com/xhd.m3u8`
 		t.Errorf("expected Channel X to inherit valid sibling id, got:\n%s", result2)
 	}
 }
+
+// TestDeduplicateByNameMergesNumericSuffixVariants verifies that playlist
+// authors' duplicate variants like "360 (2)" / "360 (3)" group together with
+// the plain "360" channel and are collapsed to one entry.
+func TestDeduplicateByNameMergesNumericSuffixVariants(t *testing.T) {
+	content := `#EXTM3U
+#EXTINF:-1 group-title="Новости",360 (2) 🌦️🥔
+http://example.com/360-2.m3u8
+#EXTINF:-1 group-title="Новости",360 (3) ⬛🧀
+http://example.com/360-3.m3u8
+#EXTINF:-1 group-title="Новости",360 HD ◻️🌷
+http://example.com/360-hd.m3u8
+#EXTINF:-1 group-title="Региональные",360 (Армавир) 💟🦒
+http://example.com/360-armavir.m3u8`
+
+	result := DeduplicateByName(content, 1, nil, nil)
+
+	// (2), (3) и HD-вариант склеиваются в один канал "360" (остаётся лучший — HD).
+	if c := CountChannels(result); c != 2 {
+		t.Errorf("expected 2 channels (360 merged + 360 Армавир), got %d:\n%s", c, result)
+	}
+	for _, gone := range []string{"360 (2)", "360 (3)"} {
+		if strings.Contains(result, gone) {
+			t.Errorf("expected %q to be merged away:\n%s", gone, result)
+		}
+	}
+	// Победитель — лучший по качеству вариант "360 HD".
+	if !strings.Contains(result, "360 HD ◻️🌷") {
+		t.Errorf("expected best-quality 360 HD variant to be kept:\n%s", result)
+	}
+	// Региональный вариант с текстовым суффиксом не трогается.
+	if !strings.Contains(result, "360 (Армавир) 💟🦒") {
+		t.Errorf("expected regional variant to stay:\n%s", result)
+	}
+}
+
+// TestCleanChannelName verifies display-name tidying: record badge,
+// [Geo-blocked], resolution parens, leading junk, double spaces and the
+// "| Region" separator are normalized while HD/country tokens survive.
+func TestCleanChannelName(t *testing.T) {
+	tests := []struct{ in, want string }{
+		{"100% NL TV HD ⏺ʳᵉᶜ", "100% NL TV HD"},
+		{"RTR Planeta Europe [Geo-blocked]", "RTR Planeta Europe"},
+		{"Belarus-1 (1080p)", "Belarus-1"},
+		{"#dabeiTV HD DE", "dabeiTV HD DE"},
+		{"&Pictures HD IN", "Pictures HD IN"},
+		{".sci-fi HD", "sci-fi HD"},
+		{"10 канал  (Саранск) SD", "10 канал (Саранск) SD"},
+		{"Liberty Занавес  HD", "Liberty Занавес HD"},
+		{"10 канал | Новокузнецк", "10 канал (Новокузнецк)"},
+		{"10 канал (2) | Новокузнецк", "10 канал (2) (Новокузнецк)"},
+		{"Просто имя HD", "Просто имя HD"},
+		{"", ""},
+	}
+	for _, tc := range tests {
+		if got := CleanChannelName(tc.in); got != tc.want {
+			t.Errorf("CleanChannelName(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+// TestNormalizeChannelNameVariants verifies that duplicate variants from
+// different sources collapse to the same grouping key: pipe regions, paren
+// numbers anywhere, domain suffixes and latin/ukrainian spellings.
+func TestNormalizeChannelNameVariants(t *testing.T) {
+	groups := map[string][]string{
+		"360":                  {"360 (2) 🌦️🥔", "360 (3) ⬛🧀", "360 HD ◻️🌷", "360"},
+		"10 канал новокузнецк": {"10 канал | Новокузнецк", "10 канал (Новокузнецк) HD", "10 канал (2) | Новокузнецк"},
+		"1 2 3 tv":             {"1-2-3 TV", "1-2-3.tv HD TV"},
+		"1+1 украина":          {"1+1 Украина", "1+1 Україна HD"},
+		"россия 1":             {"Россия 1 FHD", "Rossiya 1 HD", "Россия 1ᴴᴰ"},
+	}
+	for key, names := range groups {
+		first := normalizeChannelName(names[0])
+		if first != key {
+			t.Errorf("normalizeChannelName(%q) = %q, want %q", names[0], first, key)
+		}
+		for _, n := range names[1:] {
+			if got := normalizeChannelName(n); got != first {
+				t.Errorf("normalizeChannelName(%q) = %q, want same as %q (%q)", n, got, names[0], first)
+			}
+		}
+	}
+}
+
+// TestNormalizeChannelNameKeepsTimeShifts verifies that time-shift markers
+// (+N)/(-N) are NOT collapsed: "Россия 1 (+2)" and "Россия 1 (+3)" are
+// distinct channels and must stay in separate groups.
+func TestNormalizeChannelNameKeepsTimeShifts(t *testing.T) {
+	a := normalizeChannelName("Россия 1ᴴᴰ (+2)")
+	b := normalizeChannelName("Россия 1 (+3) FD")
+	if a == b {
+		t.Errorf("expected time-shift variants to differ, both normalized to %q", a)
+	}
+	// Формат унифицируется: "Россия 1ᴴᴰ (+2)" и "Россия 1 (+2) FD" — один канал.
+	c := normalizeChannelName("Россия 1 (+2) FD")
+	if a != c {
+		t.Errorf("expected same time-shift channel, got %q vs %q", a, c)
+	}
+}
+
+// TestRegistrableDomain verifies that subdomains of one resource collapse to
+// the same registrable domain, and that common second-level domains under
+// country-code TLDs keep three labels.
+func TestRegistrableDomain(t *testing.T) {
+	tests := []struct{ host, want string }{
+		{"bsttv.bonus-tv.ru", "bonus-tv.ru"},
+		{"cdn-01.bonus-tv.ru", "bonus-tv.ru"},
+		{"bonus-tv.ru", "bonus-tv.ru"},
+		{"cdn.example.com", "example.com"},
+		{"video.rt.com", "rt.com"},
+		{"www.bbc.co.uk", "bbc.co.uk"},
+		{"mail.google.com.ru", "google.com.ru"},
+		{"a.b.c.d.e.org", "e.org"},
+		{"192.168.1.1", "192.168.1.1"},
+		{"localhost", "localhost"},
+	}
+	for _, tc := range tests {
+		if got := registrableDomain(tc.host); got != tc.want {
+			t.Errorf("registrableDomain(%q) = %q, want %q", tc.host, got, tc.want)
+		}
+	}
+}
+
+// TestEmojiFromHostnameUsesRegistrableDomain verifies that different subdomains
+// of the same resource produce the same first emoji (bonus-tv.ru case from the
+// issue), while different registrable domains produce (with overwhelming
+// probability) different emoji.
+func TestEmojiFromHostnameUsesRegistrableDomain(t *testing.T) {
+	a := emojiFromHostname("https://bsttv.bonus-tv.ru/cdn/kurai/playlist.m3u8")
+	b := emojiFromHostname("http://cdn-01.bonus-tv.ru:80/prosveschenie_edge/index.m3u8")
+	if a != b {
+		t.Errorf("subdomains of bonus-tv.ru should share the first emoji: %q vs %q", a, b)
+	}
+
+	c := emojiFromHostname("http://cdn.example.com/live/ch1.m3u8")
+	d := emojiFromHostname("http://cdn.example.org/live/ch1.m3u8")
+	if c == d {
+		t.Logf("note: different registrable domains produced same emoji %q (possible but unlikely)", c)
+	}
+
+	// Порт и путь не влияют на первый эмодзи — только регистрируемый домен.
+	e := emojiFromHostname("http://bsttv.bonus-tv.ru:8080/cdn/other/playlist.m3u8")
+	if a != e {
+		t.Errorf("port/path must not affect hostname emoji: %q vs %q", a, e)
+	}
+}
