@@ -1594,3 +1594,67 @@ func TestFuzzyMatchTvgID(t *testing.T) {
 		t.Errorf("unrelated name should not match, got %q", got)
 	}
 }
+
+// TestMatchCategoryKeywordWordBoundary verifies that short keywords (<= 3
+// runes) match on word boundaries only, so "рок" does not fire inside
+// "Прокопьевск" and "ю" inside "Южно-Сахалинск", while longer morphological
+// stems keep substring matching.
+func TestMatchCategoryKeywordWordBoundary(t *testing.T) {
+	tests := []struct {
+		name string
+		kw   []string
+		want string
+	}{
+		// «рок» (3 runes) — граница слова.
+		{"рок тв", []string{"рок"}, "рок"},
+		{"27 канал Прокопьевск (Кемеровская обл.)", []string{"рок"}, ""},
+		{"Про жизнь (Прокопьевск) HD", []string{"рок"}, ""},
+		// «ю» (1 rune) — граница слова.
+		{"Ю", []string{"ю"}, "ю"},
+		{"Ю HD", []string{"ю"}, "ю"},
+		{"Россия 1 (Южно-Сахалинск)", []string{"ю"}, ""},
+		{"АСТВ (Южно-Сахалинск) HD", []string{"ю"}, ""},
+		// «че» (2 runes) — граница слова («ЧЕ!» ок, «Чебоксары» нет).
+		{"ЧЕ!", []string{"че"}, "че"},
+		{"Россия 1 (Чебоксары)", []string{"че"}, ""},
+		{"Архыз 24 (Черкеск) HD", []string{"че"}, ""},
+		{"12 канал Череповец", []string{"че"}, ""},
+		// Длинные морфологические корни — подстрока как раньше.
+		{"музыкальный канал", []string{"музык"}, "музык"},
+		{"Детский мир", []string{"детск"}, "детск"},
+		{"Канал Новости 24", []string{"новост"}, "новост"},
+		// «mtv» (3 runes) — граница.
+		{"MTV Hits", []string{"mtv"}, "mtv"},
+		{"Karaoke World", []string{"mtv"}, ""},
+	}
+	for _, tt := range tests {
+		got := matchCategoryKeyword(strings.ToLower(tt.name), tt.kw)
+		if got != tt.want {
+			t.Errorf("matchCategoryKeyword(%q, %v) = %q, want %q", tt.name, tt.kw, got, tt.want)
+		}
+	}
+}
+
+// TestMatchWordBoundary covers runewise boundary detection incl. Cyrillic.
+func TestMatchWordBoundary(t *testing.T) {
+	tests := []struct {
+		name, kw string
+		want     bool
+	}{
+		{"рок тв", "рок", true},
+		{"роктв", "рок", false},
+		{"прокопьевск", "рок", false},
+		{"ю", "ю", true},
+		{"южно", "ю", false},
+		{"че!", "че", true},
+		{"чебоксары", "че", false},
+		{"mtv hits", "mtv", true},
+		{"xxmtv", "mtv", false},
+		{"abc рок def", "рок", true},
+	}
+	for _, tt := range tests {
+		if got := matchWordBoundary(tt.name, tt.kw); got != tt.want {
+			t.Errorf("matchWordBoundary(%q, %q) = %v, want %v", tt.name, tt.kw, got, tt.want)
+		}
+	}
+}

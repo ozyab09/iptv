@@ -9,6 +9,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/ozyab/iptv/internal/config"
 	"github.com/ozyab/iptv/internal/utils"
@@ -1425,13 +1427,58 @@ func ClassifyFallbackCategories(content string, keywords map[string][]string, al
 // matchCategoryKeyword returns the longest keyword found in name, or "".
 // Longer keywords are checked first so "viasat sport" wins over "sport" and
 // "russia 24" over "24".
+//
+// Short keywords (<= 3 runes, e.g. "ю", "че", "рок", "mtv") are matched on
+// word boundaries only — otherwise "рок" would match inside "Прокопьевск" and
+// "ю" inside "Южно-Сахалинск". Longer keywords are morphological stems
+// ("музык", "детск", "новост") and keep substring matching.
 func matchCategoryKeyword(name string, keywords []string) string {
 	var best string
 	for _, kw := range keywords {
 		kwLower := strings.ToLower(kw)
-		if strings.Contains(name, kwLower) && len(kwLower) > len(best) {
+		matched := false
+		if utf8.RuneCountInString(kwLower) <= 3 {
+			matched = matchWordBoundary(name, kwLower)
+		} else {
+			matched = strings.Contains(name, kwLower)
+		}
+		if matched && len(kwLower) > len(best) {
 			best = kwLower
 		}
 	}
 	return best
+}
+
+// matchWordBoundary reports whether kw occurs in name as a standalone word
+// (surrounded by non-letter runes or string edges). Runewise so Cyrillic
+// letters are treated as letters too.
+func matchWordBoundary(name, kw string) bool {
+	nameRunes := []rune(name)
+	kwRunes := []rune(kw)
+	if len(kwRunes) == 0 || len(kwRunes) > len(nameRunes) {
+		return false
+	}
+	for i := 0; i+len(kwRunes) <= len(nameRunes); i++ {
+		if !equalRuneSlice(nameRunes[i:i+len(kwRunes)], kwRunes) {
+			continue
+		}
+		beforeOK := i == 0 || !unicode.IsLetter(nameRunes[i-1])
+		afterOK := i+len(kwRunes) == len(nameRunes) || !unicode.IsLetter(nameRunes[i+len(kwRunes)])
+		if beforeOK && afterOK {
+			return true
+		}
+	}
+	return false
+}
+
+func equalRuneSlice(a, b []rune) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }

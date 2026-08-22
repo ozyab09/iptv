@@ -491,7 +491,7 @@ var CategoryKeywords = map[string][]string{
 		"discovery", "дискавери", "viasat", "nat geo", "национальная географи",
 		"history", "история", "наука", "science", "документал", "documentary",
 		"познават", "cosmos", "космос", "universe", "вселенная", "образование",
-		"education", "умный", "smart tv", "зоо", "zoo tv",
+		"education", "умный", "smart tv", "зоо", "зоопарк", "zoo tv",
 	},
 	// Путешествия.
 	"Путешествия": {
