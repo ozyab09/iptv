@@ -763,34 +763,122 @@ func AddEmojiByURL(content string) string {
 }
 
 // AddTvgIDsToPlaylist adds tvg-id from EPG name-to-id map to channels that lack it.
+// Matching is done twice: exact lowercase name (emoji-stripped) first, then a
+// normalized match (quality markers, regional suffixes, "orig" and separators
+// stripped) so e.g. "BBC News HD" resolves via EPG display name "BBC News".
+// Only lines with a non-empty tvg-id are skipped (tvg-id="" is filled).
 func AddTvgIDsToPlaylist(content string, epgNameToIDMap map[string]string) string {
 	lines := strings.Split(content, "\n")
 	addedCount := 0
 
-	for i, line := range lines {
-		if strings.HasPrefix(strings.TrimSpace(line), "#EXTINF:") {
-			if regTvgID.MatchString(line) {
-				continue
-			}
-
-			parts := strings.SplitN(line, ",", 2)
-			if len(parts) > 1 {
-				// Эмодзи-пара добавляется к имени на этапе FilterContent;
-				// при сопоставлении с EPG-именами её нужно срезать.
-				channelName := strings.TrimSpace(parts[1])
-				normalizedName := strings.ToLower(utils.StripTrailingEmoji(channelName))
-
-				if tvgID, ok := epgNameToIDMap[normalizedName]; ok {
-					extinfPart := parts[0]
-					lines[i] = fmt.Sprintf(`%s tvg-id="%s",%s`, extinfPart, tvgID, parts[1])
-					addedCount++
-				}
+	// Normalized display-name → id lookup, built once from the exact-name map.
+	// Exact names take priority when both match; on normalized collisions the
+	// first EPG channel wins.
+	normalizedMap := make(map[string]string)
+	for name, id := range epgNameToIDMap {
+		if nk := normalizeChannelName(name); nk != "" {
+			if _, ok := normalizedMap[nk]; !ok {
+				normalizedMap[nk] = id
 			}
 		}
 	}
 
+	for i, line := range lines {
+		if !strings.HasPrefix(strings.TrimSpace(line), "#EXTINF:") {
+			continue
+		}
+		if m := regTvgID.FindStringSubmatch(line); len(m) > 1 && m[1] != "" {
+			continue // уже есть непустой tvg-id
+		}
+
+		parts := strings.SplitN(line, ",", 2)
+		if len(parts) < 2 {
+			continue
+		}
+		channelName := strings.TrimSpace(parts[1])
+		exactName := strings.ToLower(utils.StripTrailingEmoji(channelName))
+
+		tvgID, ok := epgNameToIDMap[exactName]
+		if !ok {
+			tvgID, ok = normalizedMap[normalizeChannelName(channelName)]
+		}
+		if !ok {
+			continue
+		}
+		lines[i] = fmt.Sprintf(`%s tvg-id="%s",%s`, parts[0], tvgID, parts[1])
+		addedCount++
+	}
+
 	if addedCount > 0 {
 		logger.Info("Added tvg-id to %d channels", addedCount)
+	}
+	return strings.Join(lines, "\n")
+}
+
+// InheritTvgIDsFromSiblings assigns a tvg-id to channels that lack one by
+// copying it from another variant of the same channel (same normalized name)
+// already present in the playlist — e.g. "Channel SD" inherits the id of
+// "Channel HD". Only ids present in validEPGIDs are inherited (nil disables
+// validation), so stale/placeholder ids never leak. Entries that already carry
+// a non-empty tvg-id are untouched.
+func InheritTvgIDsFromSiblings(content string, validEPGIDs map[string]bool) string {
+	lines := strings.Split(content, "\n")
+
+	type groupMember struct {
+		lineIdx int
+		tvgID   string
+	}
+	groups := make(map[string][]groupMember)
+	for i, line := range lines {
+		if !strings.HasPrefix(strings.TrimSpace(line), "#EXTINF:") {
+			continue
+		}
+		parts := strings.SplitN(line, ",", 2)
+		if len(parts) < 2 {
+			continue
+		}
+		name := normalizeChannelName(parts[1])
+		if name == "" {
+			continue
+		}
+		id := ""
+		if m := regTvgID.FindStringSubmatch(line); len(m) > 1 {
+			id = m[1]
+		}
+		groups[name] = append(groups[name], groupMember{lineIdx: i, tvgID: id})
+	}
+
+	inherited := 0
+	for _, members := range groups {
+		// First eligible id in playlist order (deterministic).
+		inheritedID := ""
+		for _, m := range members {
+			if m.tvgID == "" {
+				continue
+			}
+			if validEPGIDs == nil || validEPGIDs[m.tvgID] {
+				inheritedID = m.tvgID
+				break
+			}
+		}
+		if inheritedID == "" {
+			continue
+		}
+		for _, m := range members {
+			if m.tvgID != "" {
+				continue
+			}
+			parts := strings.SplitN(lines[m.lineIdx], ",", 2)
+			if len(parts) < 2 {
+				continue
+			}
+			lines[m.lineIdx] = fmt.Sprintf(`%s tvg-id="%s",%s`, parts[0], inheritedID, parts[1])
+			inherited++
+		}
+	}
+
+	if inherited > 0 {
+		logger.Info("InheritTvgIDsFromSiblings: added tvg-id to %d channels from sibling variants", inherited)
 	}
 	return strings.Join(lines, "\n")
 }

@@ -80,7 +80,7 @@ iptv/
 | `S3AllCategoriesPlaylistKey()` | — (hardcoded) | `playlist-all.m3u` |
 | `S3EndpointURL()` | `S3_ENDPOINT_URL` | — |
 | `S3Region()` | `S3_REGION` | `us-east-1` |
-| `EPGSourceURL()` | `EPG_SOURCE_URL` | — |
+| `EPGSourceURL()` | `EPG_SOURCE_URL` (comma-separated = multiple sources merged) | — |
 | `S3EPGKey()` | `S3_EPG_KEY` | — |
 | `BuildCustomEPGURL()` | — (derived) | public S3 EPG URL injected into `#EXTM3U` header |
 | `EPGRetentionDays()` | `EPG_RETENTION_DAYS` | `3` |
@@ -124,7 +124,7 @@ Runtime flow (`run()` in `main.go`):
 4. If `EPG_SOURCE_URL` set: download EPG **once, early** (`DownloadEPG` + `BuildEPGNameToIDMap`) so its channel-id set can validate inherited tvg-ids during dedup; the same content is reused by the EPG filtering step later (no double download)
 5. If `PROBE_SOURCES=true`: `m3u.DeduplicateByName(..., validEPGIDs)` — groups by normalized name, ranks by quality, probes candidate URLs of duplicate groups (HEAD + GET fallback, `PROBE_CONCURRENCY` workers, `PROBE_TIMEOUT_SECONDS` per request, per-entry `#EXTVLCOPT` user-agent/referrer sent when present), keeps `MAX_CHANNEL_VARIANTS` working sources per channel; single-variant channels pass through unprobed; all-dead groups fall back to the best-quality variant; kept entries lacking a `tvg-id` inherit one from sibling variants when the id exists in the EPG (stale ids are never inherited). **In dry-run (`DRY_RUN=true`) availability probing is skipped** — the probe callback is nil, so dedup keeps the best-quality variant per channel without checking sources (no network probing)
 6. Save `playlist.m3u` (filtered) and `playlist-all.m3u` (unfiltered) into `OUTPUT_DIR`
-7. If `EPG_SOURCE_URL` set: `m3u.AddTvgIDsToPlaylist` → re-save → `ExtractChannelInfoFromPlaylist` → `FilterEPGContent` → save `epg.xml-filtered.gz` → upload EPG to S3
+7. If `EPG_SOURCE_URL` set: `m3u.AddTvgIDsToPlaylist` (exact + normalized EPG-name matching) → `m3u.InheritTvgIDsFromSiblings` (EPG-validated id copying between variants) → re-save → `ExtractChannelInfoFromPlaylist` → `FilterEPGContent` → save `epg.xml-filtered.gz` → upload EPG to S3
 8. Not dry-run: create one reusable `s3.Client`, then `UploadBoth` the filtered + all-categories playlists (archive + direct each)
 
 ### internal/m3u/processor.go
@@ -142,7 +142,8 @@ Key exported functions:
 - `SortPlaylistAlphabetically()` — A-Z by channel name (case-insensitive, stable sort)
 - `AddEmojiByURL()` — appends FNV-1a based emoji pair (🔴🐱) to each channel name; first emoji derived from URL hostname, second from URL path; 100+×100+ pools = ~10,000+ combinations
 - `DeduplicateByName(content, maxVariants, probe, validEPGIDs)` — keeps ≤ `maxVariants` entries per normalized channel name (emoji/quality/separators stripped), ranked by quality (4K/UHD > FHD > HD > SD > none, incl. unicode ᴴᴰ); with `probe` non-nil, candidates (URL + `#EXTVLCOPT` user-agent/referrer) are probed, dead ones skipped, first `maxVariants` alive kept (all-dead groups fall back to best quality; missing probe results treated as alive). Kept entries without a `tvg-id` inherit one from a sibling variant in the same group — only ids present in `validEPGIDs` (nil = no validation, any non-empty id). Deterministic output (groups iterated by key). URL detection uses any `scheme://` (incl. `rtmp://`)
-- `AddTvgIDsToPlaylist()` — adds `tvg-id` from EPG name-to-id map (channel names are emoji-stripped before matching, since `FilterContent` appends emoji pairs)
+- `AddTvgIDsToPlaylist()` — adds `tvg-id` from EPG name-to-id map to channels that lack it. Matches exact lowercase name (emoji-stripped) first, then a normalized match (quality markers, regional suffixes, `orig` stripped) so e.g. `BBC News HD` resolves via EPG display name `BBC News`; lines with a non-empty `tvg-id` are skipped (`tvg-id=""` is filled)
+- `InheritTvgIDsFromSiblings()` — copies a `tvg-id` from another variant of the same channel (same normalized name) in the playlist (e.g. `Channel SD` inherits from `Channel HD`); only ids present in the EPG id set are inherited (nil disables validation), stale/placeholder ids never leak
 - `RemoveOrigSuffix()` — strips trailing " orig"
 - `ParseCategoriesFile()` / `ApplyChannelMetadata()` — categories.txt override.
 - `NormalizeCategories(content, aliases, allowed, fallback)` — rewrites group-title via alias map, then keeps only allow-listed categories (everything else → fallback). Channels are kept, only categories change Matching strips emoji pairs from playlist names (and from file keys) so plain-name entries match emoji-suffixed channels; the parser regex accepts `tvg-id="ID",Name` and formats with extra attributes (`tvg-rec="7",Name`); category-file keys override existing tvg-ids (EPG-derived entries win over source ids)
@@ -163,6 +164,7 @@ Filtering steps per entry:
 **EPG processing** (streaming XML parser, single-pass):
 
 - `DownloadEPG(ctx, url, cfg)` — downloads with gzip/zip decompression, 500MB limit, context-aware
+- `DownloadEPGToFile(ctx, url, cfg)` — comma-separated `EPG_SOURCE_URL` is split; with multiple sources each is downloaded to a bounded temp XML and merged by `mergeEPGFiles` into one file: `<channel>` deduplicated by id (display-names unioned across sources, first icon kept), `<programme>` copied from all sources (deduplicated by channel+start), all channels before all programmes so the streaming filter resolves ids in time. **Tolerant to failing sources**: each source is downloaded with its own retry (3 attempts, 2s, 2x); a source that keeps failing (403/5xx/timeout) is logged as a warning and skipped so the remaining sources still produce the merged EPG — the run fails only when *all* sources fail. The single-source path uses the same per-source retry (retry lives inside `DownloadEPGToFile`, not in `main.go`)
 - `ExtractChannelInfoFromPlaylist()` — extracts `tvg-id` → category and channel name → category from M3U (channel names are emoji-stripped so they match EPG display names)
 - `BuildEPGNameToIDMap()` — full-file `xml.Unmarshal` (retains only `<channel>` elements) to build lowercase display-name → channel-id map. This is the ONE non-streaming parse of the (up to 463MB) EPG — do not extend it to pull `<programme>` data.
 - `FilterEPGContent()` — **single-pass streaming** `xml.Decoder` parsing:
@@ -196,7 +198,7 @@ Filtering steps per entry:
 - `Retry(maxAttempts, delay, backoff, fn)` — exponential backoff (3 attempts, 2s, 2x)
 - `ToLowerSlice(slice)` — lowercase all strings in slice
 - `NormalizeLineEndings(content)` — `\r\n` → `\n`
-- `StripTrailingEmoji(s)` — removes trailing emoji pairs + whitespace from channel/group names (used by m3u and epg for name matching)
+- `StripTrailingEmoji(s)` — removes trailing emoji pairs + whitespace from channel/group names (used by m3u and epg for name matching). `isEmojiRune` covers `0x1F000-0x1FAFF` (incl. extended-A block 🪗/🪕) — pool emojis beyond the classic `1F300-1F9FF` block are stripped too
 - `IsGzipped()` / `DecompressGZip()` / `DecompressZip()` — compression detection/helpers
 - `SanitizedWriter` — log wrapper masking: URLs → `https://****/****`, AWS/Yandex keys → `YCAJ****abcd` / `AKIA****xxxx`
 

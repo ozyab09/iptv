@@ -2,12 +2,10 @@ package utils
 
 // isEmojiRune reports whether r is an emoji or emoji-related code point.
 func isEmojiRune(r rune) bool {
-	// Regional indicators (flags) — NOT covered by 0x1F300+ range.
-	if r >= 0x1F1E0 && r <= 0x1F1FF {
-		return true
-	}
-	// Main emoji block: misc symbols, pictographs, emoticons, transport.
-	if r >= 0x1F300 && r <= 0x1F9FF {
+	// Main emoji blocks: Mahjong/Dominoes/Playing cards, enclosed alphanumerics,
+	// regional indicators (flags), misc symbols, pictographs, emoticons,
+	// transport, supplemental symbols and pictographs extended-A (e.g. 🪗 🪕).
+	if r >= 0x1F000 && r <= 0x1FAFF {
 		return true
 	}
 	// Additional ranges outside the main emoji block.

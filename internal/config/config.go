@@ -452,8 +452,21 @@ func (c *Config) Validate() []string {
 				break
 			}
 		}
-		if len(errors) == 0 && !strings.HasPrefix(c.epgSourceURL, "http://") && !strings.HasPrefix(c.epgSourceURL, "https://") {
-			errors = append(errors, "EPG_SOURCE_URL must be a valid HTTP/HTTPS URL")
+		if len(errors) == 0 {
+			urls := strings.Split(c.epgSourceURL, ",")
+			hasValid := false
+			for _, u := range urls {
+				u = strings.TrimSpace(u)
+				if u != "" {
+					hasValid = true
+					if !strings.HasPrefix(u, "http://") && !strings.HasPrefix(u, "https://") {
+						errors = append(errors, fmt.Sprintf("EPG_SOURCE_URL contains invalid URL: %s", u))
+					}
+				}
+			}
+			if !hasValid {
+				errors = append(errors, "EPG_SOURCE_URL must contain at least one valid HTTP/HTTPS URL")
+			}
 		}
 	}
 
