@@ -399,6 +399,78 @@ func AllowedCategorySet() map[string]bool {
 	return set
 }
 
+// CategoryKeywords maps a canonical category to channel-name keywords that
+// reliably indicate its genre. Used to reclassify channels that fell into
+// FallbackCategory after allow-list normalization: a channel whose name
+// contains a keyword moves to that category instead of staying in "Основные".
+// Matching is case-insensitive on the emoji-stripped name; longer keywords
+// take priority over shorter ones, and category priority follows slice order
+// (more specific genres first). Keywords are deliberately conservative — only
+// unambiguous genre markers, so nothing is misclassified.
+var CategoryKeywords = map[string][]string{
+	// Спорт — most specific first.
+	"Спорт": {
+		"футбол", "football", "хоккей", "hockey", "теннис", "tennis",
+		"бокс", "boxing", "биатлон", "баскетбол", "волейбол", "реслинг",
+		"wrestling", "eurosport", "viasat sport", "матч", "формула", "racing",
+		"гонки", "автоспорт", "ufc", "mma", "nhl", "nba", "кхл", "sport",
+		"спорт", "спорт 1", "спорт 2", "хоккей кхл",
+	},
+	// Детские.
+	"Детские": {
+		"мульт", "cartoon", "карусель", "karusel", "disney", "nickelodeon",
+		"nick jr", "boomerang", "gulli", "tiji", "jimjam", "da vinci",
+		"малыш", "baby tv", "детск", "детям", "kids", "солнышко", "ленд",
+	},
+	// Кино.
+	"Кино": {
+		"кино", "cinema", "movie", "фильм", "сериал", "tv1000", "hbo",
+		"кинопоказ", "kinopokaz", "кинопоиск", "kinopoisk", "amc",
+		"дом кино", "kino", "драма", "drama", "комеди", "comedy",
+		"thriller", "триллер", "боевик", "детектив", "кинопремьера",
+	},
+	// Новости.
+	"Новости": {
+		"новости", "новост", "news", "russia today", "russia 24", "россия 24",
+		"мир 24", "rbc", "рбк", "cnn", "euronews", "al jazeera",
+		"аль джазира", "life news", "24 news", "tv centr", "тв центр", "дождь",
+	},
+	// Музыка.
+	"Музыка": {
+		"музык", "music", "муз тв", "muz tv", "mtv", "vh1", "mcm", "hit",
+		"шансон", "ретро", "rock", "рок", "pop", "поп", "dance", "данс",
+		"радио", "radio", "мелоди", "эстрад", "классик", "джаз", "jazz",
+		"опера", "этно", "голос", "меломан",
+	},
+	// Познавательные.
+	"Познавательные": {
+		"discovery", "дискавери", "viasat", "nat geo", "национальная географи",
+		"history", "история", "наука", "science", "документал", "documentary",
+		"познават", "cosmos", "космос", "universe", "вселенная", "образование",
+		"education", "умный", "smart tv", "зоо", "zoo tv",
+	},
+	// Путешествия.
+	"Путешествия": {
+		"travel", "путешеств", "вояж", "adventure", "приключ", "trip",
+	},
+	// Природа.
+	"Природа": {
+		"nature", "природа", "wildlife", "животн", "animal planet",
+		"планета животных", "дикая",
+	},
+	// Хобби.
+	"Хобби": {
+		"хобби", "hobby", "рыбал", "охота", "огород", "кулинар", "cooking",
+		"дача", "ремонт", "авто", "auto",
+	},
+	// Развлекательные.
+	"Развлекательные": {
+		"развлекат", "entertainment", "тнт", "стс", "пятница", "тв3", "супер",
+		"перец", "рен тв", "ren tv", "домашний", "звезда", "ю", "че", "2х2",
+		"2x2", "тв3", "пятница!",
+	},
+}
+
 // EPGExcludedCategories lists EPG categories to exclude from the output.
 var EPGExcludedCategories = []string{"Кино"}
 

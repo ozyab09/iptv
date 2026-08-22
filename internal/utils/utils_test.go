@@ -175,3 +175,25 @@ func TestStripTrailingEmojiExtendedBlocks(t *testing.T) {
 		}
 	}
 }
+
+func TestLevenshteinDistance(t *testing.T) {
+	tests := []struct {
+		a, b string
+		want int
+	}{
+		{"", "", 0},
+		{"abc", "", 3},
+		{"", "abc", 3},
+		{"abc", "abc", 0},
+		{"kitten", "sitting", 3},
+		{"flaw", "lawn", 2},
+		{"eurospor", "eurosport", 1},
+		{"discoery", "discovery", 1},
+		{"футбол", "футболл", 1},
+	}
+	for _, tc := range tests {
+		if got := LevenshteinDistance(tc.a, tc.b); got != tc.want {
+			t.Errorf("LevenshteinDistance(%q, %q) = %d, want %d", tc.a, tc.b, got, tc.want)
+		}
+	}
+}

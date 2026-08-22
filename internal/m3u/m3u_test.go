@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/ozyab/iptv/internal/config"
 	"github.com/ozyab/iptv/internal/utils"
 )
 
@@ -1510,5 +1511,73 @@ func TestEmojiFromHostnameUsesRegistrableDomain(t *testing.T) {
 	e := emojiFromHostname("http://bsttv.bonus-tv.ru:8080/cdn/other/playlist.m3u8")
 	if a != e {
 		t.Errorf("port/path must not affect hostname emoji: %q vs %q", a, e)
+	}
+}
+
+// TestClassifyFallbackCategories verifies that channels in the fallback
+// category are reclassified by unambiguous name keywords, longer keywords win,
+// and only allow-listed categories are used.
+func TestClassifyFallbackCategories(t *testing.T) {
+	content := `#EXTM3U
+#EXTINF:-1 group-title="Основные",Матч! Футбол 1 HD
+http://example.com/football.m3u8
+#EXTINF:-1 group-title="Основные",Discovery Sport HD
+http://example.com/disc-sport.m3u8
+#EXTINF:-1 group-title="Основные",Карусель
+http://example.com/karusel.m3u8
+#EXTINF:-1 group-title="Основные",Непонятный канал
+http://example.com/unknown.m3u8
+#EXTINF:-1 group-title="Спорт",Уже спорт
+http://example.com/already-sport.m3u8
+#EXTINF:-1 group-title="Основные",Кинопоказ HD
+http://example.com/kino.m3u8
+`
+	allowed := map[string]bool{"Спорт": true, "Детские": true, "Кино": true, "Познавательные": true, "Основные": true}
+	result := ClassifyFallbackCategories(content, config.CategoryKeywords, allowed, "Основные")
+
+	if !strings.Contains(result, `group-title="Спорт",Матч! Футбол 1 HD`) {
+		t.Errorf("expected football channel → Спорт:\n%s", result)
+	}
+	// Discovery Sport → Спорт (приоритет Спорт выше Познавательных), а не Познавательные.
+	if !strings.Contains(result, `group-title="Спорт",Discovery Sport HD`) {
+		t.Errorf("expected Discovery Sport → Спорт (priority), got:\n%s", result)
+	}
+	if !strings.Contains(result, `group-title="Детские",Карусель`) {
+		t.Errorf("expected Карусель → Детские:\n%s", result)
+	}
+	if !strings.Contains(result, `group-title="Основные",Непонятный канал`) {
+		t.Errorf("expected unknown channel to stay in fallback:\n%s", result)
+	}
+	if !strings.Contains(result, `group-title="Спорт",Уже спорт`) {
+		t.Errorf("expected already-categorized channel untouched:\n%s", result)
+	}
+	if !strings.Contains(result, `group-title="Кино",Кинопоказ HD`) {
+		t.Errorf("expected Кинопоказ → Кино:\n%s", result)
+	}
+}
+
+// TestFuzzyMatchTvgID verifies the edit-distance fallback catches typos but
+// does not match unrelated names.
+func TestFuzzyMatchTvgID(t *testing.T) {
+	byLength := map[int][]fuzzyCandidate{
+		7:  {{norm: "discovery", id: "discovery"}},
+		10: {{norm: "eurosport 1", id: "eurosport1"}, {norm: "discovery x", id: "discx"}},
+	}
+	if got := fuzzyMatchTvgID("Discoery Channel", byLength); got != "" {
+		t.Errorf("Discoery Channel (len 16) should not match short candidates, got %q", got)
+	}
+	// Точный/нормализованный матч уже обработан до fuzzy — здесь просто проверяем
+	// что кандидат на расстоянии 1 находится.
+	byLen2 := map[int][]fuzzyCandidate{
+		9: {{norm: "eurosport", id: "eurosport"}},
+	}
+	if got := fuzzyMatchTvgID("Eurosport", byLen2); got != "eurosport" {
+		t.Errorf("exact fuzzy candidate should match, got %q", got)
+	}
+	if got := fuzzyMatchTvgID("Eurospor", byLen2); got != "eurosport" {
+		t.Errorf("edit-distance 1 typo should match, got %q", got)
+	}
+	if got := fuzzyMatchTvgID("Football", byLen2); got != "" {
+		t.Errorf("unrelated name should not match, got %q", got)
 	}
 }
