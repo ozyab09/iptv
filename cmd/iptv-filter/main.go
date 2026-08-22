@@ -7,6 +7,7 @@ import (
 	"os/signal"
 	"path"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -213,18 +214,41 @@ func run() int {
 	m3uURLs := parseM3USources(m3uURL)
 	log.Info("Processing %d M3U source(s)", len(m3uURLs))
 
-	// Step 1: Download and filter M3U sources.
-	var allFiltered []string
-	var allOriginal []string
-	for _, urlStr := range m3uURLs {
-		original, err := downloadM3U(ctx, urlStr, skipSSL)
-		if err != nil {
-			log.Error("Failed to download M3U from %s: %v", urlStr, err)
+	// Step 1: Download and filter M3U sources in parallel (bounded concurrency,
+	// source order preserved via index). Each source keeps its own retry, so one
+	// slow/failing source does not block the others.
+	type m3uResult struct {
+		idx      int
+		original string
+		filtered string
+		err      error
+	}
+	results := make(chan m3uResult, len(m3uURLs))
+	var wg sync.WaitGroup
+	for i, urlStr := range m3uURLs {
+		wg.Add(1)
+		go func(i int, urlStr string) {
+			defer wg.Done()
+			original, err := downloadM3U(ctx, urlStr, skipSSL)
+			if err != nil {
+				results <- m3uResult{idx: i, err: err}
+				return
+			}
+			results <- m3uResult{idx: i, original: original, filtered: filterM3U(original, cfg, customEPGURL)}
+		}(i, urlStr)
+	}
+	wg.Wait()
+	close(results)
+
+	allOriginal := make([]string, len(m3uURLs))
+	allFiltered := make([]string, len(m3uURLs))
+	for res := range results {
+		if res.err != nil {
+			log.Error("Failed to download M3U from %s: %v", m3uURLs[res.idx], res.err)
 			return 1
 		}
-		filtered := filterM3U(original, cfg, customEPGURL)
-		allOriginal = append(allOriginal, original)
-		allFiltered = append(allFiltered, filtered)
+		allOriginal[res.idx] = res.original
+		allFiltered[res.idx] = res.filtered
 	}
 
 	filteredContent := mergeParts(allFiltered)
@@ -236,6 +260,14 @@ func run() int {
 	// are never removed — only their group-title changes.
 	filteredContent = applyMetadata(filteredContent, cfg)
 	filteredContent = normalizeCategories(filteredContent)
+	// Reclassify channels that fell into the fallback category when their name
+	// carries an unambiguous genre keyword (e.g. "...Футбол..." → Спорт).
+	filteredContent = m3u.ClassifyFallbackCategories(
+		filteredContent,
+		config.CategoryKeywords,
+		config.AllowedCategorySet(),
+		config.FallbackCategory,
+	)
 
 	// Step 2b: Download EPG once, early. Its channel-id set is used to validate
 	// tvg-ids inherited from dropped variants during dedup (option C merge); the

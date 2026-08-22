@@ -914,6 +914,20 @@ func AddEmojiByURL(content string) string {
 // normalized match (quality markers, regional suffixes, "orig" and separators
 // stripped) so e.g. "BBC News HD" resolves via EPG display name "BBC News".
 // Only lines with a non-empty tvg-id are skipped (tvg-id="" is filled).
+// fuzzyCandidate is a normalized EPG display name with its channel id, kept in
+// a length-bucketed index for O(length-window) fuzzy lookup.
+type fuzzyCandidate struct {
+	norm string
+	id   string
+}
+
+// AddTvgIDsToPlaylist adds tvg-id from EPG name-to-id map to channels that lack it.
+// Matching is done in three passes: exact lowercase name (emoji-stripped) first,
+// then a normalized match (quality markers, regional suffixes, "orig" and
+// separators stripped) so e.g. "BBC News HD" resolves via EPG display name
+// "BBC News", and finally a fuzzy edit-distance match (Levenshtein ≤ 1, or ≤ 2
+// for names of 10+ runes) to catch typos like "Discoery Channel". Only lines
+// with a non-empty tvg-id are skipped (tvg-id="" is filled).
 func AddTvgIDsToPlaylist(content string, epgNameToIDMap map[string]string) string {
 	lines := strings.Split(content, "\n")
 	addedCount := 0
@@ -922,12 +936,22 @@ func AddTvgIDsToPlaylist(content string, epgNameToIDMap map[string]string) strin
 	// Exact names take priority when both match; on normalized collisions the
 	// first EPG channel wins.
 	normalizedMap := make(map[string]string)
+	// Length-bucketed index of normalized names for fuzzy lookup.
+	byLength := make(map[int][]fuzzyCandidate)
 	for name, id := range epgNameToIDMap {
-		if nk := normalizeChannelName(name); nk != "" {
-			if _, ok := normalizedMap[nk]; !ok {
-				normalizedMap[nk] = id
-			}
+		nk := normalizeChannelName(name)
+		if nk == "" {
+			continue
 		}
+		if _, ok := normalizedMap[nk]; !ok {
+			normalizedMap[nk] = id
+		}
+		l := len([]rune(nk))
+		byLength[l] = append(byLength[l], fuzzyCandidate{norm: nk, id: id})
+	}
+	// Deterministic candidate order for fuzzy ties.
+	for l := range byLength {
+		sort.Slice(byLength[l], func(i, j int) bool { return byLength[l][i].norm < byLength[l][j].norm })
 	}
 
 	for i, line := range lines {
@@ -950,6 +974,10 @@ func AddTvgIDsToPlaylist(content string, epgNameToIDMap map[string]string) strin
 			tvgID, ok = normalizedMap[normalizeChannelName(channelName)]
 		}
 		if !ok {
+			tvgID = fuzzyMatchTvgID(channelName, byLength)
+			ok = tvgID != ""
+		}
+		if !ok {
 			continue
 		}
 		lines[i] = fmt.Sprintf(`%s tvg-id="%s",%s`, parts[0], tvgID, parts[1])
@@ -960,6 +988,34 @@ func AddTvgIDsToPlaylist(content string, epgNameToIDMap map[string]string) strin
 		logger.Info("Added tvg-id to %d channels", addedCount)
 	}
 	return strings.Join(lines, "\n")
+}
+
+// fuzzyMatchTvgID finds the closest EPG display name within edit distance 1
+// (or 2 for long names) and returns its channel id. Only names differing in
+// length by at most 2 runes are considered, keeping the lookup local to a few
+// length buckets and avoiding spurious matches.
+func fuzzyMatchTvgID(channelName string, byLength map[int][]fuzzyCandidate) string {
+	norm := normalizeChannelName(channelName)
+	n := len([]rune(norm))
+	if n < 4 {
+		return ""
+	}
+	bestID := ""
+	bestDist := 3 // strictly worse than any accepted distance
+	for l := n - 2; l <= n+2; l++ {
+		for _, cand := range byLength[l] {
+			maxDist := 1
+			if n >= 10 || l >= 10 {
+				maxDist = 2
+			}
+			d := utils.LevenshteinDistance(norm, cand.norm)
+			if d <= maxDist && d < bestDist {
+				bestDist = d
+				bestID = cand.id
+			}
+		}
+	}
+	return bestID
 }
 
 // InheritTvgIDsFromSiblings assigns a tvg-id to channels that lack one by
@@ -1260,4 +1316,92 @@ func NormalizeCategories(content string, aliases map[string]string, allowed map[
 		logger.Info("NormalizeCategories: %d group-titles updated (%d moved to fallback %q)", updated, movedToFallback, fallback)
 	}
 	return strings.Join(lines, "\n")
+}
+
+// ClassifyFallbackCategories reclassifies channels sitting in the fallback
+// category ("Основные") into a genre category when their channel name contains
+// an unambiguous keyword (e.g. "Спорт": "футбол"). Runs after
+// NormalizeCategories so only channels that failed the allow-list are
+// considered; category order follows the map's value slice (specific genres
+// first) and within a category longer keywords win. Only keywords mapping to
+// categories on the allow-list are applied. Channels without a group-title or
+// without a match stay untouched.
+func ClassifyFallbackCategories(content string, keywords map[string][]string, allowed map[string]bool, fallback string) string {
+	if len(keywords) == 0 {
+		return content
+	}
+
+	lines := strings.Split(content, "\n")
+	// Deterministic category iteration: specific genres (Спорт, Детские, Кино)
+	// are checked before broad ones (Познавательные, Развлекательные) so e.g.
+	// "Discovery Sport" lands in Спорт, not Познавательные.
+	categoryPriority := map[string]int{
+		"Спорт": 1, "Детские": 2, "Кино": 3, "Новости": 4, "Музыка": 5,
+		"Путешествия": 6, "Природа": 7, "Хобби": 8,
+		"Познавательные": 9, "Развлекательные": 10,
+	}
+	type catRule struct {
+		cat      string
+		keywords []string
+	}
+	var rules []catRule
+	for cat, words := range keywords {
+		if !allowed[cat] {
+			continue
+		}
+		rules = append(rules, catRule{cat: cat, keywords: words})
+	}
+	sort.Slice(rules, func(i, j int) bool {
+		pi := categoryPriority[rules[i].cat]
+		pj := categoryPriority[rules[j].cat]
+		if pi != pj {
+			return pi < pj
+		}
+		return rules[i].cat < rules[j].cat
+	})
+
+	classified := 0
+	for i, line := range lines {
+		if !strings.HasPrefix(strings.TrimSpace(line), "#EXTINF:") {
+			continue
+		}
+		gm := regGroupTitle.FindStringSubmatch(line)
+		if gm == nil || gm[1] != fallback {
+			continue // только каналы в fallback-категории
+		}
+		parts := strings.SplitN(line, ",", 2)
+		if len(parts) < 2 {
+			continue
+		}
+		channelName := strings.ToLower(utils.StripTrailingEmoji(parts[1]))
+		if channelName == "" {
+			continue
+		}
+		for _, rule := range rules {
+			if matched := matchCategoryKeyword(channelName, rule.keywords); matched != "" {
+				lines[i] = regGroupTitleAttr.ReplaceAllString(line, fmt.Sprintf(`group-title="%s"`, rule.cat))
+				classified++
+				break
+			}
+		}
+	}
+
+	if classified > 0 {
+		logger.Info("ClassifyFallbackCategories: reclassified %d channels out of %q", classified, fallback)
+	}
+	return strings.Join(lines, "\n")
+}
+
+// matchCategoryKeyword returns the longest keyword found in name, or "".
+// Longer keywords are checked first so "viasat sport" wins over "sport" and
+// "russia 24" over "24".
+func matchCategoryKeyword(name string, keywords []string) string {
+	var best string
+	for _, kw := range keywords {
+		kwLower := strings.ToLower(kw)
+		if strings.Contains(name, kwLower) && len(kwLower) > len(best) {
+			best = kwLower
+		}
+	}
+	return best
 }
