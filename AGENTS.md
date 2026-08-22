@@ -106,10 +106,10 @@ Local filenames are derived from S3 keys, not from `OUTPUT_DIR`: `LocalFilteredP
   - Service/Test (bold unicode: 𝕋𝕧ℤ𝕒𝕋𝕒𝕜, 32, TVS, TvZaTak, MavTV, aleks-u-romki*)
   - Cinema (bold unicode: 𝐊𝐢𝐧𝐨, 𝕂иℍ𝕠)
   - Regional: РОССИЯ+
-- `CategoriesToRemoveSubstring` — ~100 substrings matched against group-title. Covers: sport, kids, music, religion, relax, fashion, anti-Russia/Ukraine, service/test, countries/regions (~60), cinema/series, specific TV shows
+- `CategoriesToRemoveSubstring` — ~100 substrings matched against group-title. Covers: sport, kids, music, religion, relax, fashion, anti-Russia/Ukraine, service/test, non-European/Asian countries/regions, cinema/series, specific TV shows. European countries are **not** in the deny-list — they pass through to the allow-list (Germany, Italy, France, Spain, Poland, Romania, Moldova, Bulgaria, Netherlands, Portugal, Greece, Slovakia, Belgium, Norway, Serbia, Austria, Hungary, Switzerland, Ireland, Czechia, Finland, Denmark, Sweden, Latvia, Lithuania, Estonia, Croatia)
 - `ChannelNamesToExclude` — channel names excluded by substring (Fashion, СПАС, Три ангела, ЛДПР, UA, Sports)
 - `CategoryAliases` — map of source group-title → canonical name (provider spellings, emoji variants, country duplicates: РЕГИОНАЛЬНЫЕ→Региональные, NEWS 🆕→Новости, Германия | Germany→Германия)
-- `AllowedCategories` — allow-list of group-titles kept as-is; any other category is renamed to `FallbackCategory` (`Основные`). Applied by `NormalizeCategories` after `applyMetadata` — channels are never removed, only their group-title changes (98 → ~33 categories in practice)
+- `AllowedCategories` — allow-list of group-titles kept as-is; any other category is renamed to `FallbackCategory` (`Основные`). Applied by `NormalizeCategories` after `applyMetadata` — channels are never removed, only their group-title changes (98 → ~55 categories in practice, incl. European + English-speaking country categories: США, Канада, Великобритания, Австралия, Новая Зеландия, Ирландия, Германия, Италия, Франция, Испания, Польша, Румыния, Молдавия, Болгария, Нидерланды, Португалия, Греция, Словакия, Бельгия, Норвегия, Сербия, Австрия, Венгрия, Швейцария, Чехия, Финляндия, Дания, Швеция, Латвия, Литва, Эстония, Хорватия)
 - `FallbackCategory` / `AllowedCategorySet()` — fallback category name and O(1) allow-list lookup
 - `EPGExcludedCategories` — EPG categories excluded (default: `Кино`)
 - `EPGExcludedChannelIDs` — 30 specific EPG channel IDs excluded
