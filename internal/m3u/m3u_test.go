@@ -1276,3 +1276,92 @@ http://example.com/mezzo.m3u8`
 		t.Errorf("expected alias to map to allowed category, got:\n%s", got)
 	}
 }
+
+func TestAddTvgIDsToPlaylistNormalizedMatch(t *testing.T) {
+	content := `#EXTM3U
+#EXTINF:-1 group-title="A",BBC News HD 🔴🐱
+http://example.com/bbc.m3u8
+#EXTINF:-1 group-title="B" tvg-id="",Eurosport 4K
+http://example.com/eu.m3u8
+#EXTINF:-1 group-title="C",Channel Unknown
+http://example.com/u.m3u8
+#EXTINF:-1 group-title="D" tvg-id="keep",Already Has HD
+http://example.com/k.m3u8`
+
+	// Нормализованные ключи: "bbc news" и "eurosport" (HD/4K срезаны).
+	epgMap := map[string]string{
+		"bbc news":  "100",
+		"eurosport": "200",
+	}
+
+	result := AddTvgIDsToPlaylist(content, epgMap)
+
+	if !strings.Contains(result, `tvg-id="100",BBC News HD 🔴🐱`) {
+		t.Errorf("expected normalized match BBC News HD → 100, got:\n%s", result)
+	}
+	if !strings.Contains(result, `tvg-id="200",Eurosport 4K`) {
+		t.Errorf("expected empty tvg-id=\"\" to be filled via normalized match, got:\n%s", result)
+	}
+	if strings.Contains(result, "Channel Unknown") && strings.Contains(result, `tvg-id="",Channel Unknown`) == false {
+		// Channel Unknown без id — строка не должна получить id.
+		if strings.Contains(result, `tvg-id="`) && strings.Contains(strings.Split(result, "Channel Unknown")[0], `tvg-id="")`) {
+			t.Errorf("unexpected id added to unmatched channel:\n%s", result)
+		}
+	}
+	if !strings.Contains(result, `tvg-id="keep",Already Has HD`) {
+		t.Errorf("expected existing non-empty tvg-id to be preserved, got:\n%s", result)
+	}
+}
+
+func TestInheritTvgIDsFromSiblings(t *testing.T) {
+	content := `#EXTM3U
+#EXTINF:-1 group-title="A",Channel SD
+http://example.com/sd.m3u8
+#EXTINF:-1 group-title="A" tvg-id="100",Channel HD
+http://example.com/hd.m3u8
+#EXTINF:-1 group-title="B",Single Channel
+http://example.com/single.m3u8
+#EXTINF:-1 group-title="C" tvg-id="200",Channel FHD
+http://example.com/fhd.m3u8
+#EXTINF:-1 group-title="C",Channel UHD
+http://example.com/uhd.m3u8`
+
+	// Все четыре варианта (SD/HD/FHD/UHD) нормализуются в одну группу «channel»;
+	// первый подходящий id в порядке плейлиста — «100» (от HD). UHD тоже получает «100».
+	result := InheritTvgIDsFromSiblings(content, nil)
+	if !strings.Contains(result, `tvg-id="100",Channel SD`) {
+		t.Errorf("expected SD to inherit id from sibling, got:\n%s", result)
+	}
+	if !strings.Contains(result, `tvg-id="100",Channel UHD`) {
+		t.Errorf("expected UHD to inherit group id from sibling, got:\n%s", result)
+	}
+	if !strings.Contains(result, `tvg-id="100",Channel HD`) {
+		t.Errorf("expected existing HD id to be preserved, got:\n%s", result)
+	}
+	if !strings.Contains(result, `tvg-id="200",Channel FHD`) {
+		t.Errorf("expected existing FHD id to be preserved, got:\n%s", result)
+	}
+	if !strings.Contains(result, `#EXTINF:-1 group-title="B",Single Channel`) {
+		t.Errorf("expected single-variant channel untouched, got:\n%s", result)
+	}
+}
+
+func TestInheritTvgIDsFromSiblingsEPGValidation(t *testing.T) {
+	content := `#EXTM3U
+#EXTINF:-1,Channel X
+http://example.com/x.m3u8
+#EXTINF:-1 tvg-id="stale",Channel X HD
+http://example.com/xhd.m3u8`
+
+	// "stale" нет в EPG — наследование не происходит, строка Channel X без атрибутов.
+	result := InheritTvgIDsFromSiblings(content, map[string]bool{"100": true})
+	if !strings.Contains(result, "#EXTINF:-1,Channel X\n") {
+		t.Errorf("expected Channel X line untouched (stale not inherited), got:\n%s", result)
+	}
+
+	// С валидным id в наборе — наследование работает.
+	result2 := InheritTvgIDsFromSiblings(content, map[string]bool{"stale": true})
+	if !strings.Contains(result2, "#EXTINF:-1 tvg-id=\"stale\",Channel X\n") {
+		t.Errorf("expected Channel X to inherit valid sibling id, got:\n%s", result2)
+	}
+}

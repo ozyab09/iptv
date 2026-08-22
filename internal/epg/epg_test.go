@@ -599,3 +599,100 @@ func TestSaveFilteredEPGLocally(t *testing.T) {
 		t.Fatalf("SaveFilteredEPGLocally gz failed: %v", err)
 	}
 }
+
+func TestParseEPGSourceURLs(t *testing.T) {
+	tests := []struct {
+		in   string
+		want int
+	}{
+		{"https://a.example/epg.xml.gz", 1},
+		{"https://a.example/epg.xml.gz,http://b.example/epg2.xml.gz", 2},
+		{"  https://a.example/epg.xml.gz , http://b.example/epg2.xml.gz ", 2},
+		{"https://a.example/epg.xml.gz,,http://b.example/epg2.xml.gz", 2},
+		{"", 0},
+		{"   ", 0},
+	}
+	for _, tc := range tests {
+		got := parseEPGSourceURLs(tc.in)
+		if len(got) != tc.want {
+			t.Errorf("parseEPGSourceURLs(%q) = %d urls, want %d", tc.in, len(got), tc.want)
+		}
+	}
+}
+
+func TestMergeEPGFiles(t *testing.T) {
+	dir := t.TempDir()
+	src1 := dir + "/a.xml"
+	src2 := dir + "/b.xml"
+	merged := dir + "/merged.xml"
+
+	a := `<?xml version='1.0' encoding='utf-8'?>
+<tv>
+<channel id="bbc"><display-name>BBC News</display-name><icon src="http://a/bbc.png"/></channel>
+<channel id="cnn"><display-name>CNN</display-name><display-name>CNN Int</display-name></channel>
+<programme start="20260822090000 +0000" stop="20260822100000 +0000" channel="bbc"><title>Breakfast</title></programme>
+<programme start="20260822080000 +0000" stop="20260822090000 +0000" channel="cnn"><title>Morning</title></programme>
+</tv>`
+	b := `<?xml version='1.0' encoding='utf-8'?>
+<tv>
+<channel id="bbc"><display-name>BBC World</display-name></channel>
+<channel id="euronews"><display-name>Euronews</display-name></channel>
+<programme start="20260822090000 +0000" stop="20260822100000 +0000" channel="bbc"><title>Breakfast (b)</title></programme>
+<programme start="20260822060000 +0000" stop="20260822070000 +0000" channel="euronews"><title>News</title></programme>
+</tv>`
+
+	if err := os.WriteFile(src1, []byte(a), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(src2, []byte(b), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := mergeEPGFiles([]string{src1, src2}, merged); err != nil {
+		t.Fatalf("mergeEPGFiles: %v", err)
+	}
+
+	data, err := os.ReadFile(merged)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := string(data)
+
+	// Каналы объединены: bbc (имена из обоих источников), cnn, euronews.
+	if !strings.Contains(out, `<channel id="bbc">`) ||
+		!strings.Contains(out, `<display-name>BBC News</display-name>`) ||
+		!strings.Contains(out, `<display-name>BBC World</display-name>`) {
+		t.Errorf("expected bbc channel with unioned display names:\n%s", out)
+	}
+	if !strings.Contains(out, `<channel id="cnn">`) || !strings.Contains(out, `<channel id="euronews">`) {
+		t.Errorf("expected cnn and euronews channels:\n%s", out)
+	}
+	if !strings.Contains(out, `<icon src="http://a/bbc.png"`) {
+		t.Errorf("expected icon preserved from first source:\n%s", out)
+	}
+	// bbc встречается ровно один раз.
+	if c := strings.Count(out, `<channel id="bbc">`); c != 1 {
+		t.Errorf("expected exactly one bbc channel, got %d:\n%s", c, out)
+	}
+	// Программы: дубль (bbc, 09:00) схлопнут, остальные сохранены.
+	if c := strings.Count(out, `channel="bbc"`); c != 1 {
+		t.Errorf("expected bbc programmes deduplicated to 1, got %d:\n%s", c, out)
+	}
+	if !strings.Contains(out, `channel="cnn"`) || !strings.Contains(out, `channel="euronews"`) {
+		t.Errorf("expected cnn and euronews programmes:\n%s", out)
+	}
+	// Все каналы идут до программ.
+	chIdx := strings.Index(out, `<channel id="euronews">`)
+	prIdx := strings.Index(out, `<programme start=`+`"20260822060000`)
+	if chIdx == -1 || prIdx == -1 || chIdx > prIdx {
+		t.Errorf("expected all channels before programmes:\n%s", out)
+	}
+
+	// Результат — валидный XML.
+	var tv struct {
+		XMLName xml.Name `xml:"tv"`
+	}
+	if err := xml.Unmarshal(data, &tv); err != nil {
+		t.Errorf("merged output is not valid XML: %v", err)
+	}
+}

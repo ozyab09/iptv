@@ -158,3 +158,18 @@ func TestStripTrailingEmoji(t *testing.T) {
 		}
 	}
 }
+
+func TestStripTrailingEmojiExtendedBlocks(t *testing.T) {
+	tests := []struct{ in, want string }{
+		{"Cartoon Network 💢🪗", "Cartoon Network"},
+		{"Карусель ⚪🪕", "Карусель"},
+		{"Канал 🌟🐱", "Канал"},
+		{"Просто имя", "Просто имя"},
+		{"", ""},
+	}
+	for _, tc := range tests {
+		if got := StripTrailingEmoji(tc.in); got != tc.want {
+			t.Errorf("StripTrailingEmoji(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}

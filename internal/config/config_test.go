@@ -385,6 +385,23 @@ func TestValidateEPGKeyRequiredWhenEPGSet(t *testing.T) {
 	}
 }
 
+func TestValidateEPGMultipleSources(t *testing.T) {
+	cfg := validConfig()
+	cfg.s3EPGKey = "epg.xml.gz"
+
+	// Несколько валидных источников через запятую проходят.
+	cfg.epgSourceURL = "https://a.example/epg.xml.gz,http://b.example/epg2.xml.gz"
+	if errs := cfg.Validate(); len(errs) != 0 {
+		t.Errorf("expected no errors for multiple EPG sources, got %v", errs)
+	}
+
+	// Невалидная вторая ссылка ловится.
+	cfg.epgSourceURL = "https://a.example/epg.xml.gz,ftp://b.example/epg2.xml"
+	if errs := cfg.Validate(); !containsErr(errs, "invalid URL: ftp://b.example/epg2.xml") {
+		t.Errorf("expected invalid second EPG URL error, got %v", errs)
+	}
+}
+
 func TestValidateEPGPlaceholder(t *testing.T) {
 	cfg := validConfig()
 	cfg.epgSourceURL = "https://your-epg-provider.com/epg.xml"

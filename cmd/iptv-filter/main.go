@@ -134,10 +134,13 @@ func normalizeCategories(content string) string {
 // processEPG filters the already-downloaded EPG content. epgContent and
 // epgNameToIDMap are downloaded/built once earlier in the pipeline (step 2b) so
 // the same data can validate tvg-ids inherited during dedup.
-func processEPG(ctx context.Context, cfg *config.Config, epgPath string, epgNameToIDMap map[string]string, filteredContent string, s3Client *awss3.Client, dryRun bool) (string, error) {
+func processEPG(ctx context.Context, cfg *config.Config, epgPath string, epgNameToIDMap map[string]string, epgIDSet map[string]bool, filteredContent string, s3Client *awss3.Client, dryRun bool) (string, error) {
 	log.Info("Starting EPG filtering process")
 
 	filteredContent = m3u.AddTvgIDsToPlaylist(filteredContent, epgNameToIDMap)
+	// Каналы без id наследуют его от соседних вариантов того же канала
+	// (например "Channel SD" от "Channel HD"), но только если id есть в EPG.
+	filteredContent = m3u.InheritTvgIDsFromSiblings(filteredContent, epgIDSet)
 	if err := saveFile(filteredContent, cfg.LocalFilteredPlaylistPath(), cfg); err != nil {
 		return filteredContent, err
 	}
@@ -239,6 +242,7 @@ func run() int {
 	// same content feeds the EPG filtering step later.
 	var epgPath string
 	var epgNameToIDMap map[string]string
+	var epgIDSet map[string]bool
 	if epgURL != "" {
 		if err := utils.RetryWithContext(ctx, 3, 2*time.Second, 2.0, func() error {
 			var e error
@@ -253,6 +257,10 @@ func run() int {
 		if err != nil {
 			log.Error("Failed to build EPG name-to-id map: %v", err)
 			return 1
+		}
+		epgIDSet = make(map[string]bool, len(epgNameToIDMap))
+		for _, id := range epgNameToIDMap {
+			epgIDSet[id] = true
 		}
 		defer func() {
 			if err := os.Remove(epgPath); err != nil && !os.IsNotExist(err) {
@@ -269,13 +277,6 @@ func run() int {
 	// so dedup falls back to deterministic quality-first selection (best-quality
 	// variant per channel) without checking source availability.
 	if cfg.ProbeSources() {
-		var epgIDSet map[string]bool
-		if epgNameToIDMap != nil {
-			epgIDSet = make(map[string]bool, len(epgNameToIDMap))
-			for _, id := range epgNameToIDMap {
-				epgIDSet[id] = true
-			}
-		}
 		var probe func(candidates []utils.ProbeCandidate) map[string]bool
 		if !dryRun {
 			probe = func(candidates []utils.ProbeCandidate) map[string]bool {
@@ -309,7 +310,7 @@ func run() int {
 	// Step 5: Process EPG (content downloaded once in step 2b).
 	if epgURL != "" {
 		var err error
-		filteredContent, err = processEPG(ctx, cfg, epgPath, epgNameToIDMap, filteredContent, s3Client, dryRun)
+		filteredContent, err = processEPG(ctx, cfg, epgPath, epgNameToIDMap, epgIDSet, filteredContent, s3Client, dryRun)
 		if err != nil {
 			log.Error("EPG processing failed: %v", err)
 			return 1
