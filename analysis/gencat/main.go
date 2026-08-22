@@ -115,12 +115,15 @@ func main() {
 	fmt.Printf("EPG: %d plain names, %d normalized names\n", len(epgPlain), len(epgNorm))
 
 	// Base pool: filtered content (all surviving quality variants) from the
-	// merged source playlist. Reuses the exact pipeline deny-lists.
+	// merged source playlist. Reuses the exact pipeline deny-lists, then
+	// normalizes categories the same way as the main pipeline (alias map +
+	// allow-list → fallback) so categories.txt emits canonical group-titles.
 	allData, err := os.ReadFile("output/playlist-all.m3u")
 	if err != nil {
 		panic(err)
 	}
 	filtered := m3u.FilterContent(string(allData), config.CategoriesToRemove, config.CategoriesToRemoveSubstring, config.ChannelNamesToExclude, "")
+	filtered = m3u.NormalizeCategories(filtered, config.CategoryAliases, config.AllowedCategorySet(), config.FallbackCategory)
 	_, entries := m3u.ParseChannelEntries(strings.Split(filtered, "\n"))
 	fmt.Printf("Pool after filter: %d entries\n", len(entries))
 
@@ -179,7 +182,11 @@ func main() {
 	var finalData []byte
 	if d, err := os.ReadFile("output/playlist.m3u"); err == nil {
 		finalData = d
-		_, finalEntries := m3u.ParseChannelEntries(strings.Split(string(d), "\n"))
+		// The final playlist is already normalized by the pipeline, but applying
+		// normalization again keeps the file self-consistent when regenerated
+		// from an older (pre-normalization) playlist.m3u.
+		normalizedFinal := m3u.NormalizeCategories(string(d), config.CategoryAliases, config.AllowedCategorySet(), config.FallbackCategory)
+		_, finalEntries := m3u.ParseChannelEntries(strings.Split(normalizedFinal, "\n"))
 		for _, e := range finalEntries {
 			parts := strings.SplitN(e.EXTINFLine, ",", 2)
 			if len(parts) < 2 {

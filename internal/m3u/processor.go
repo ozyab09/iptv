@@ -18,15 +18,15 @@ var logger = utils.NewSanitizedLoggerWithPrefix("[m3u]")
 
 // Pre-compiled regexps for efficient filtering.
 var (
-	regRegional       = regexp.MustCompile(`\s\+\d+(?:\s+HD)?(?:\s*\([^)]+\))?\s*$`)
-	regNumberSuffix   = regexp.MustCompile(`\s\d{2,}$`)
-	regLeadingNumber  = regexp.MustCompile(`^\d+\.\s*`)
-	regGroupTitle     = regexp.MustCompile(`group-title="([^"]*)"`)
-	regTvgID          = regexp.MustCompile(`tvg-id="([^"]*)"`)
-	regURLTVG         = regexp.MustCompile(`url-tvg="[^"]*"`)
-	regTVGURL         = regexp.MustCompile(`tvg-url="[^"]*"`)
-	regTvgLogo        = regexp.MustCompile(`tvg-logo="([^"]*)"`)
-	regTvgRec         = regexp.MustCompile(`tvg-rec="([^"]*)"`)
+	regRegional      = regexp.MustCompile(`\s\+\d+(?:\s+HD)?(?:\s*\([^)]+\))?\s*$`)
+	regNumberSuffix  = regexp.MustCompile(`\s\d{2,}$`)
+	regLeadingNumber = regexp.MustCompile(`^\d+\.\s*`)
+	regGroupTitle    = regexp.MustCompile(`group-title="([^"]*)"`)
+	regTvgID         = regexp.MustCompile(`tvg-id="([^"]*)"`)
+	regURLTVG        = regexp.MustCompile(`url-tvg="[^"]*"`)
+	regTVGURL        = regexp.MustCompile(`tvg-url="[^"]*"`)
+	regTvgLogo       = regexp.MustCompile(`tvg-logo="([^"]*)"`)
+	regTvgRec        = regexp.MustCompile(`tvg-rec="([^"]*)"`)
 
 	// Replacement-only regexps (no capture groups).
 	regGroupTitleAttr = regexp.MustCompile(`group-title="[^"]*"`)
@@ -977,6 +977,52 @@ func ApplyChannelMetadata(content string, categoriesMapping map[string]map[strin
 
 	if updatedGroup > 0 || updatedTvgID > 0 {
 		logger.Info("Updated metadata: %d group-title, %d tvg-id from categories file", updatedGroup, updatedTvgID)
+	}
+	return strings.Join(lines, "\n")
+}
+
+// NormalizeCategories rewrites group-title attributes: first applies the alias
+// map (provider-specific spellings → canonical names), then keeps only
+// categories present in the allow-list; any other category is renamed to
+// fallback. This reduces the number of distinct categories in the final
+// playlist without removing channels. Non-#EXTINF lines and lines without a
+// group-title attribute are left untouched.
+func NormalizeCategories(content string, aliases map[string]string, allowed map[string]bool, fallback string) string {
+	if len(allowed) == 0 {
+		return content
+	}
+
+	lines := strings.Split(content, "\n")
+	updated := 0
+	movedToFallback := 0
+
+	for i, line := range lines {
+		if !strings.HasPrefix(strings.TrimSpace(line), "#EXTINF:") {
+			continue
+		}
+		m := regGroupTitle.FindStringSubmatch(line)
+		if m == nil || m[1] == "" {
+			continue
+		}
+
+		original := m[1]
+		category := original
+		if canonical, ok := aliases[category]; ok {
+			category = canonical
+		}
+		target := category
+		if !allowed[category] {
+			target = fallback
+			movedToFallback++
+		}
+		if target != original {
+			lines[i] = regGroupTitleAttr.ReplaceAllString(line, fmt.Sprintf(`group-title="%s"`, target))
+			updated++
+		}
+	}
+
+	if updated > 0 {
+		logger.Info("NormalizeCategories: %d group-titles updated (%d moved to fallback %q)", updated, movedToFallback, fallback)
 	}
 	return strings.Join(lines, "\n")
 }
