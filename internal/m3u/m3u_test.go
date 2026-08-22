@@ -43,9 +43,9 @@ http://example.com/3`
 
 func TestSortPlaylistAlphabetically(t *testing.T) {
 	tests := []struct {
-		name     string
-		input    string
-		order    []string // expected channel name order
+		name  string
+		input string
+		order []string // expected channel name order
 	}{
 		{
 			name: "sort A-Z",
@@ -121,10 +121,10 @@ http://example.com/2.m3u8`,
 
 func TestRemoveDuplicateURLs(t *testing.T) {
 	tests := []struct {
-		name     string
-		input    string
-		wantURLs int // expected number of unique URLs
-		checks   []string // substrings that must be present
+		name      string
+		input     string
+		wantURLs  int      // expected number of unique URLs
+		checks    []string // substrings that must be present
 		notChecks []string // substrings that must NOT be present
 	}{
 		{
@@ -134,8 +134,8 @@ func TestRemoveDuplicateURLs(t *testing.T) {
 http://example.com/otr.m3u8
 #EXTINF:-1 tvg-rec="7",ОТР
 http://example.com/otr.m3u8`,
-			wantURLs: 1,
-			checks:   []string{`group-title="Общие"`, `tvg-id="1000"`, `tvg-logo="http://epg.one/img/1000.png"`, `tvg-rec="0"`, `ОТР HD`},
+			wantURLs:  1,
+			checks:    []string{`group-title="Общие"`, `tvg-id="1000"`, `tvg-logo="http://epg.one/img/1000.png"`, `tvg-rec="0"`, `ОТР HD`},
 			notChecks: nil,
 		},
 		{
@@ -145,8 +145,8 @@ http://example.com/otr.m3u8`,
 http://example.com/a.m3u8
 #EXTINF:-1 group-title="Новости" tvg-id="2000",Channel B
 http://example.com/b.m3u8`,
-			wantURLs: 2,
-			checks:   []string{`Channel A`, `Channel B`, `http://example.com/a.m3u8`, `http://example.com/b.m3u8`},
+			wantURLs:  2,
+			checks:    []string{`Channel A`, `Channel B`, `http://example.com/a.m3u8`, `http://example.com/b.m3u8`},
 			notChecks: nil,
 		},
 		{
@@ -156,8 +156,8 @@ http://example.com/b.m3u8`,
 http://example.com/x.m3u8
 #EXTINF:-1 tvg-id="500",Channel X Long Name Version
 http://example.com/x.m3u8`,
-			wantURLs: 1,
-			checks:   []string{`tvg-logo="http://epg.one/img/500.png"`, `Channel X Long Name Version`},
+			wantURLs:  1,
+			checks:    []string{`tvg-logo="http://epg.one/img/500.png"`, `Channel X Long Name Version`},
 			notChecks: []string{`Channel X\nhttp`}, // only the longest name should appear
 		},
 		{
@@ -169,8 +169,8 @@ http://example.com/1.m3u8
 http://example.com/2.m3u8
 #EXTINF:-1 group-title="Спорт" tvg-id="300",Channel 3
 http://example.com/3.m3u8`,
-			wantURLs: 3,
-			checks:   []string{`Channel 1`, `Channel 2`, `Channel 3`},
+			wantURLs:  3,
+			checks:    []string{`Channel 1`, `Channel 2`, `Channel 3`},
 			notChecks: nil,
 		},
 		{
@@ -182,8 +182,8 @@ http://example.com/same.m3u8
 http://example.com/same.m3u8
 #EXTINF:-1 tvg-id="3" tvg-logo="http://logo.png",The Longest Channel Name Here
 http://example.com/same.m3u8`,
-			wantURLs: 1,
-			checks:   []string{`The Longest Channel Name Here`, `tvg-rec="0"`, `group-title="A"`, `tvg-logo="http://logo.png"`},
+			wantURLs:  1,
+			checks:    []string{`The Longest Channel Name Here`, `tvg-rec="0"`, `group-title="A"`, `tvg-logo="http://logo.png"`},
 			notChecks: []string{`Short`, `Medium Name`},
 		},
 	}
@@ -1170,5 +1170,109 @@ http://example.com/test`
 				t.Errorf("expected '%s' to be filtered out, but it was kept", tc.channel)
 			}
 		})
+	}
+}
+
+func TestNormalizeCategories(t *testing.T) {
+	aliases := map[string]string{
+		"РЕГИОНАЛЬНЫЕ":       "Региональные",
+		"ЭФИРНЫЕ ⓵":          "Эфирные",
+		"Германия | Germany": "Германия",
+		"NEWS 🆕":             "Новости",
+		"Onair8k2*":          "Onair8k2",
+		"*MUZICA":            "Музыка",
+	}
+	allowed := map[string]bool{
+		"Региональные": true, "Эфирные": true, "Германия": true, "Новости": true,
+		"Познавательные": true, "Музыка": true, "Основные": true,
+	}
+	const fallback = "Основные"
+
+	input := `#EXTM3U
+#EXTINF:-1 group-title="РЕГИОНАЛЬНЫЕ" tvg-id="100",Channel A
+http://example.com/a.m3u8
+#EXTINF:-1 group-title="ЭФИРНЫЕ ⓵",Channel B
+http://example.com/b.m3u8
+#EXTINF:-1 group-title="Познавательные" tvg-id="300" tvg-logo="http://example.com/logo.png",Channel C
+http://example.com/c.m3u8
+#EXTINF:-1 group-title="TEST*" tvg-id="400",Channel D
+http://example.com/d.m3u8
+#EXTINF:-1 group-title="Onair8k2*",Channel E
+http://example.com/e.m3u8
+#EXTINF:-1 group-title="*MUZICA",Channel F
+http://example.com/f.m3u8
+#EXTINF:-1 group-title="Германия | Germany",Channel G
+http://example.com/g.m3u8`
+
+	want := map[string]string{
+		"Channel A": `group-title="Региональные"`,
+		"Channel B": `group-title="Эфирные"`,
+		"Channel C": `group-title="Познавательные"`,
+		"Channel D": `group-title="Основные"`,
+		"Channel E": `group-title="Основные"`, // alias Onair8k2* → Onair8k2 не в allow-list → fallback
+		"Channel F": `group-title="Музыка"`,
+		"Channel G": `group-title="Германия"`,
+	}
+
+	got := NormalizeCategories(input, aliases, allowed, fallback)
+
+	for ch, wantAttr := range want {
+		line := ""
+		for _, l := range strings.Split(got, "\n") {
+			if strings.Contains(l, ch) {
+				line = l
+				break
+			}
+		}
+		if line == "" {
+			t.Errorf("channel %q missing from output", ch)
+			continue
+		}
+		if !strings.Contains(line, wantAttr) {
+			t.Errorf("channel %q: expected %q, got line %q", ch, wantAttr, line)
+		}
+	}
+	// Категории на allow-list сохраняют атрибуты (tvg-id, tvg-logo).
+	if !strings.Contains(got, `tvg-id="300"`) || !strings.Contains(got, `tvg-logo="http://example.com/logo.png"`) {
+		t.Errorf("attributes of allow-listed channel were not preserved:\n%s", got)
+	}
+	// Заголовок и URL-строки не меняются.
+	if !strings.HasPrefix(got, "#EXTM3U\n") {
+		t.Errorf("header was modified:\n%s", got)
+	}
+	if !strings.Contains(got, "http://example.com/d.m3u8") {
+		t.Errorf("stream URL line was modified")
+	}
+}
+
+func TestNormalizeCategoriesLeavesLinesWithoutGroupTitle(t *testing.T) {
+	input := `#EXTM3U
+#EXTINF:-1 tvg-id="100",Channel A
+http://example.com/a.m3u8
+#EXTVLCOPT:http-user-agent=foo`
+	got := NormalizeCategories(input, map[string]string{}, map[string]bool{"Основные": true}, "Основные")
+	if got != input {
+		t.Errorf("expected unchanged output, got:\n%s", got)
+	}
+}
+
+func TestNormalizeCategoriesEmptyAllowList(t *testing.T) {
+	input := `#EXTM3U
+#EXTINF:-1 group-title="TEST*",Channel A
+http://example.com/a.m3u8`
+	got := NormalizeCategories(input, nil, map[string]bool{}, "Основные")
+	if got != input {
+		t.Errorf("expected unchanged output when allow-list is empty, got:\n%s", got)
+	}
+}
+
+func TestNormalizeCategoriesAliasedCategoryOnAllowListKept(t *testing.T) {
+	// *MUZICA → Музыка (в allow-list) — канал сохраняет осмысленную категорию.
+	input := `#EXTM3U
+#EXTINF:-1 group-title="*MUZICA",Mezzo HD
+http://example.com/mezzo.m3u8`
+	got := NormalizeCategories(input, map[string]string{"*MUZICA": "Музыка"}, map[string]bool{"Музыка": true}, "Основные")
+	if !strings.Contains(got, `group-title="Музыка"`) {
+		t.Errorf("expected alias to map to allowed category, got:\n%s", got)
 	}
 }

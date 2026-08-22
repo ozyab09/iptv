@@ -315,6 +315,90 @@ var ChannelNamesToExclude = []string{
 	"Sports",
 }
 
+// CategoryAliases maps source group-title values (provider-specific spellings,
+// emoji variants, duplicate country names) to canonical names. Applied before
+// the allow-list check so known-good variants collapse into a single category
+// (e.g. РЕГИОНАЛЬНЫЕ → Региональные, NEWS 🆕 → Новости).
+var CategoryAliases = map[string]string{
+	// Региональные
+	"РЕГИОНАЛЬНЫЕ":              "Региональные",
+	"Основные (региональные)":   "Региональные",
+	"Популярные (региональные)": "Региональные",
+	// Эфирные
+	"ЭФИРНЫЕ ⓵":    "Эфирные",
+	"ЭФИРНЫЕ":      "Эфирные",
+	"ЭФИРНЫЕ Int.": "Эфирные",
+	// Контентные
+	"ПОЗНАВАТЕЛЬНЫЕ":    "Познавательные",
+	"РАЗВЛЕКАТЕЛЬНЫЕ":   "Развлекательные",
+	"NEWS 🆕":            "Новости",
+	"НОВОСТИ":           "Новости",
+	"Новостные":         "Новости",
+	"Информационные":    "Новости",
+	"ПУТЕШЕСТВИЯ":       "Путешествия",
+	"ПРИРОДА":           "Природа",
+	"ХОББИ И УВЛЕЧЕНИЯ": "Хобби",
+	"РОССИЙСКИЕ":        "Российские",
+	"*MUZICA":           "Музыка",
+	// Страны
+	"США | USA":                       "США",
+	"Германия | Germany":              "Германия",
+	"Канада | Canada":                 "Канада",
+	"Индия | India":                   "Индия",
+	"Швеция | Sweden":                 "Швеция",
+	"Великобритания | United Kingdom": "Великобритания",
+	"БЕЛАРУСЬ":                        "Беларусь",
+	"Беларусь | Беларускія":           "Беларусь",
+	"Австралия | Australia":           "Австралия",
+	"Латвия | Latvia":                 "Латвия",
+	"Литва | Lithuania":               "Литва",
+	"Хорватия | Croatia":              "Хорватия",
+	"Эстония | Estonia":               "Эстония",
+	"Чехия | Czech Republic":          "Чехия",
+	"Дания | Denmark":                 "Дания",
+	"Европа | Europe":                 "Европа",
+	"Объединенные Арабские Эмираты":   "ОАЭ",
+	"Арабские | عربي":                 "Арабские",
+	// Качество
+	"4K VIDEO":       "4K",
+	"4K VIDEO (VPN)": "4K",
+	// Провайдерские дубли (одна и та же категория в разных написаниях)
+	"Onair8k2*":      "Onair8k2",
+	"С сайтов (VPN)": "С сайтов",
+	"Квант-Телеком (VPN 🇷🇺)": "Квант-Телеком",
+	"↕️ Торрент ТВ ↕":        "Торрент ТВ",
+}
+
+// AllowedCategories is the allow-list of group-titles kept as-is after
+// normalization. Channels in any other category are moved to FallbackCategory.
+// This keeps only quality content categories while preserving every channel.
+var AllowedCategories = []string{
+	// Контентные
+	"Познавательные", "Развлекательные", "Кино", "Новости", "Спорт", "Детские",
+	"Музыка", "Путешествия", "Природа", "Хобби",
+	// География / вещание
+	"Региональные", "Эфирные", "Российские",
+	// Общие
+	"Популярные", "Общие", "Основные", "4K",
+	// Страны
+	"Германия", "США", "Канада", "Индия", "Швеция", "Великобритания", "Беларусь",
+	"Австралия", "Латвия", "Литва", "Хорватия", "Эстония", "Китай", "Чехия",
+	"Дания", "Новая Зеландия", "Европа", "ОАЭ", "Арабские",
+}
+
+// FallbackCategory is the group-title assigned to channels whose category is
+// not on the allow-list.
+const FallbackCategory = "Основные"
+
+// AllowedCategorySet returns the allow-list as a set for O(1) lookup.
+func AllowedCategorySet() map[string]bool {
+	set := make(map[string]bool, len(AllowedCategories))
+	for _, c := range AllowedCategories {
+		set[c] = true
+	}
+	return set
+}
+
 // EPGExcludedCategories lists EPG categories to exclude from the output.
 var EPGExcludedCategories = []string{"Кино"}
 

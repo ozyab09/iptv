@@ -9,6 +9,7 @@ A robust and secure IPTV M3U playlist filtering application written in Go. Downl
 
 - **Safe Download**: Rejects non-2xx HTTP responses and enforces 100 MB M3U / 500 MB EPG limits, including after EPG decompression
 - **Category Filtering**: Deny-list approach — removes specified categories, keeps everything else
+- **Category Normalization**: Allow-list keeps only quality categories (aliases merge duplicates like `РЕГИОНАЛЬНЫЕ`→`Региональные`, everything else moves to `Основные`) — channels are never removed
 - **Channel Name Processing**: Removes `orig` suffix, excludes regional `+N` variants, excludes number suffixes
 - **Optional Source Deduplication**: Can retain the highest-quality working source(s) for each channel after bounded concurrent probing
 - **EPG Processing**: Streams gzip/zip/XML EPG data through filtering and gzip output, with configurable time retention

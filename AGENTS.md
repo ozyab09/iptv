@@ -108,6 +108,9 @@ Local filenames are derived from S3 keys, not from `OUTPUT_DIR`: `LocalFilteredP
   - Regional: РОССИЯ+
 - `CategoriesToRemoveSubstring` — ~100 substrings matched against group-title. Covers: sport, kids, music, religion, relax, fashion, anti-Russia/Ukraine, service/test, countries/regions (~60), cinema/series, specific TV shows
 - `ChannelNamesToExclude` — channel names excluded by substring (Fashion, СПАС, Три ангела, ЛДПР, UA, Sports)
+- `CategoryAliases` — map of source group-title → canonical name (provider spellings, emoji variants, country duplicates: РЕГИОНАЛЬНЫЕ→Региональные, NEWS 🆕→Новости, Германия | Germany→Германия)
+- `AllowedCategories` — allow-list of group-titles kept as-is; any other category is renamed to `FallbackCategory` (`Основные`). Applied by `NormalizeCategories` after `applyMetadata` — channels are never removed, only their group-title changes (98 → ~33 categories in practice)
+- `FallbackCategory` / `AllowedCategorySet()` — fallback category name and O(1) allow-list lookup
 - `EPGExcludedCategories` — EPG categories excluded (default: `Кино`)
 - `EPGExcludedChannelIDs` — 30 specific EPG channel IDs excluded
 - `Validate()` — validates all required env vars, URL format, bucket/key length
@@ -117,7 +120,7 @@ Local filenames are derived from S3 keys, not from `OUTPUT_DIR`: `LocalFilteredP
 Runtime flow (`run()` in `main.go`):
 1. `config.New()` → `Validate()` (exits with 1 on validation errors)
 2. `M3U_SOURCE_URL` is **comma-separated**; each source is downloaded + `FilterContent`-ed independently, then merged via `mergeParts` (keeps only the first `#EXTM3U` header line, drops blank lines)
-3. `applyMetadata` — runs `categories.txt` overrides (only if `CATEGORIES_FILE_PATH` set)
+3. `applyMetadata` — runs `categories.txt` overrides (only if `CATEGORIES_FILE_PATH` set); then `NormalizeCategories` — collapses duplicate/provider categories into canonical names (`CategoryAliases`) and moves anything not on the `AllowedCategories` allow-list to `FallbackCategory`
 4. If `EPG_SOURCE_URL` set: download EPG **once, early** (`DownloadEPG` + `BuildEPGNameToIDMap`) so its channel-id set can validate inherited tvg-ids during dedup; the same content is reused by the EPG filtering step later (no double download)
 5. If `PROBE_SOURCES=true`: `m3u.DeduplicateByName(..., validEPGIDs)` — groups by normalized name, ranks by quality, probes candidate URLs of duplicate groups (HEAD + GET fallback, `PROBE_CONCURRENCY` workers, `PROBE_TIMEOUT_SECONDS` per request, per-entry `#EXTVLCOPT` user-agent/referrer sent when present), keeps `MAX_CHANNEL_VARIANTS` working sources per channel; single-variant channels pass through unprobed; all-dead groups fall back to the best-quality variant; kept entries lacking a `tvg-id` inherit one from sibling variants when the id exists in the EPG (stale ids are never inherited). **In dry-run (`DRY_RUN=true`) availability probing is skipped** — the probe callback is nil, so dedup keeps the best-quality variant per channel without checking sources (no network probing)
 6. Save `playlist.m3u` (filtered) and `playlist-all.m3u` (unfiltered) into `OUTPUT_DIR`
@@ -141,7 +144,8 @@ Key exported functions:
 - `DeduplicateByName(content, maxVariants, probe, validEPGIDs)` — keeps ≤ `maxVariants` entries per normalized channel name (emoji/quality/separators stripped), ranked by quality (4K/UHD > FHD > HD > SD > none, incl. unicode ᴴᴰ); with `probe` non-nil, candidates (URL + `#EXTVLCOPT` user-agent/referrer) are probed, dead ones skipped, first `maxVariants` alive kept (all-dead groups fall back to best quality; missing probe results treated as alive). Kept entries without a `tvg-id` inherit one from a sibling variant in the same group — only ids present in `validEPGIDs` (nil = no validation, any non-empty id). Deterministic output (groups iterated by key). URL detection uses any `scheme://` (incl. `rtmp://`)
 - `AddTvgIDsToPlaylist()` — adds `tvg-id` from EPG name-to-id map (channel names are emoji-stripped before matching, since `FilterContent` appends emoji pairs)
 - `RemoveOrigSuffix()` — strips trailing " orig"
-- `ParseCategoriesFile()` / `ApplyChannelMetadata()` — categories.txt override. Matching strips emoji pairs from playlist names (and from file keys) so plain-name entries match emoji-suffixed channels; the parser regex accepts `tvg-id="ID",Name` and formats with extra attributes (`tvg-rec="7",Name`); category-file keys override existing tvg-ids (EPG-derived entries win over source ids)
+- `ParseCategoriesFile()` / `ApplyChannelMetadata()` — categories.txt override.
+- `NormalizeCategories(content, aliases, allowed, fallback)` — rewrites group-title via alias map, then keeps only allow-listed categories (everything else → fallback). Channels are kept, only categories change Matching strips emoji pairs from playlist names (and from file keys) so plain-name entries match emoji-suffixed channels; the parser regex accepts `tvg-id="ID",Name` and formats with extra attributes (`tvg-rec="7",Name`); category-file keys override existing tvg-ids (EPG-derived entries win over source ids)
 - `CountChannels()` — counts #EXTINF entries
 
 Filtering steps per entry:
@@ -206,7 +210,7 @@ Filtering steps per entry:
 - **Emoji identifiers**: FNV-1a 64-bit hash → first emoji from URL hostname (DNS name, port ignored), second from URL path (query ignored); pools of 100+ emojis each (~10,000+ combinations), appended to channel name
 - **Dedup by URL**: first non-empty attributes merged, longest name wins
 - **Sort**: A-Z case-insensitive stable sort after dedup
-- **Metadata overrides**: `categories.txt` can supply `group-title`/`tvg-id` via `CATEGORIES_FILE_PATH` env var (must be set in `.env`/CI — otherwise the file is unused). The maximal list is generated with `go run ./analysis/gencat` (reads `output/playlist-all.m3u` + `output/playlist.m3u` + the local EPG copy): for each surviving channel variant it emits `group-title="<group>" tvg-id="<id>",<name>` with tvg-id resolved as EPG exact name → EPG normalized name → source-provided id; ~2 300 entries covering ~58% of the final playlist (the rest have no id anywhere)
+- **Metadata overrides**: `categories.txt` can supply `group-title`/`tvg-id` via `CATEGORIES_FILE_PATH` env var (must be set in `.env`/CI — otherwise the file is unused). The maximal list is generated with `go run ./analysis/gencat` (reads `output/playlist-all.m3u` + `output/playlist.m3u` + the local EPG copy): for each surviving channel variant it emits `group-title="<group>" tvg-id="<id>",<name>` with tvg-id resolved as EPG exact name → EPG normalized name → source-provided id. `gencat` applies the same category normalization as the pipeline (`NormalizeCategories` with `CategoryAliases`/`AllowedCategories`), so the generated file carries canonical group-titles and the runtime normalization step stays idempotent (~3 000 entries covering ~80% of the final playlist; the rest have no id anywhere)
 
 ## EPG processing (internal/epg/)
 

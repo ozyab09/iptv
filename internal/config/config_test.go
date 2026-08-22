@@ -162,6 +162,41 @@ func TestEPGExcludedCategories(t *testing.T) {
 	}
 }
 
+func TestCategoryAliases(t *testing.T) {
+	if len(CategoryAliases) == 0 {
+		t.Error("expected at least one category alias")
+	}
+	for source, target := range CategoryAliases {
+		if source == "" || target == "" {
+			t.Errorf("alias with empty source or target: %q → %q", source, target)
+		}
+	}
+}
+
+func TestAllowedCategories(t *testing.T) {
+	if len(AllowedCategories) == 0 {
+		t.Error("expected at least one allowed category")
+	}
+	if FallbackCategory == "" {
+		t.Error("FallbackCategory must not be empty")
+	}
+	allowed := AllowedCategorySet()
+	if len(allowed) != len(AllowedCategories) {
+		t.Error("AllowedCategorySet returned wrong size")
+	}
+	if !allowed[FallbackCategory] {
+		t.Errorf("fallback category %q must be on the allow-list itself", FallbackCategory)
+	}
+	// Алиасы не должны указывать на категории вне allow-list (иначе канал
+	// гарантированно уедет в fallback) — кроме намеренных случаев.
+	for _, target := range CategoryAliases {
+		if !allowed[target] && target != "Onair8k2" && target != "С сайтов" &&
+			target != "Квант-Телеком" && target != "Торрент ТВ" {
+			t.Errorf("alias target %q is not on the allow-list", target)
+		}
+	}
+}
+
 func TestEPGExcludedChannelIDs(t *testing.T) {
 	if len(EPGExcludedChannelIDs) == 0 {
 		t.Error("expected at least one EPG excluded channel ID")

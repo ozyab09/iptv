@@ -123,6 +123,12 @@ func applyMetadata(content string, cfg *config.Config) string {
 	return content
 }
 
+// ─── Pipeline step: normalize categories (allow-list) ─────────────────────────
+
+func normalizeCategories(content string) string {
+	return m3u.NormalizeCategories(content, config.CategoryAliases, config.AllowedCategorySet(), config.FallbackCategory)
+}
+
 // ─── Pipeline step: process EPG ──────────────────────────────────────────────────
 
 // processEPG filters the already-downloaded EPG content. epgContent and
@@ -221,8 +227,12 @@ func run() int {
 	filteredContent := mergeParts(allFiltered)
 	originalContent := mergeParts(allOriginal)
 
-	// Step 2: Apply channel metadata.
+	// Step 2: Apply channel metadata, then normalize categories via allow-list
+	// (duplicate/provider-specific categories collapse into canonical names;
+	// anything not on the allow-list moves to the fallback category). Channels
+	// are never removed — only their group-title changes.
 	filteredContent = applyMetadata(filteredContent, cfg)
+	filteredContent = normalizeCategories(filteredContent)
 
 	// Step 2b: Download EPG once, early. Its channel-id set is used to validate
 	// tvg-ids inherited from dropped variants during dedup (option C merge); the
