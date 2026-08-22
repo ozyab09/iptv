@@ -302,6 +302,8 @@ var CategoriesToRemoveSubstring = []string{
 	"сериал", "криминальная", "kinowalk",
 	"екб", "kino", "viju",
 	"тайны", "уральские",
+	// Видео-заполнители (не телеканалы): 4K VIDEO ⭐️ / 4K VIDEO (VPN)
+	"4k video",
 	// TV шоу / Сериалы (конкретные проекты)
 	"твоё тв", "itv.uz", "catcast",
 	"домашний арест", "мир! дружба! жвачка",
@@ -317,6 +319,29 @@ var ChannelNamesToExclude = []string{
 	"ЛДПР",
 	"UA",
 	"Sports",
+	// Видео-заполнители (пейзажные подборки, стриминговые тесты и т.п.)
+	"глазами туриста",
+	"amazon prime",
+	"релакс",
+	"пейзаж",
+	"закат",
+	"красота",
+	"обновлено",
+	"dolby vision",
+	"world of animals",
+	"breathtaking",
+	"mind blowing",
+	"most beautiful",
+	"земля без слов",
+	"райск",
+	"60fps",
+	"60 fps",
+	"iptvplay",
+	"камин",
+	"4k удивительные",
+	"животные австралии",
+	"детеныши животных",
+	"высококачественное видео",
 }
 
 // CategoryAliases maps source group-title values (provider-specific spellings,

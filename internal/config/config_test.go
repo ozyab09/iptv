@@ -147,7 +147,14 @@ func TestCategoriesToRemoveSubstring(t *testing.T) {
 }
 
 func TestChannelNamesToExclude(t *testing.T) {
-	expected := []string{"Fashion", "СПАС", "Три ангела", "ЛДПР", "UA", "Sports"}
+	expected := []string{
+		"Fashion", "СПАС", "Три ангела", "ЛДПР", "UA", "Sports",
+		"глазами туриста", "amazon prime", "релакс", "пейзаж", "закат", "красота",
+		"обновлено", "dolby vision", "world of animals", "breathtaking",
+		"mind blowing", "most beautiful", "земля без слов", "райск",
+		"60fps", "60 fps", "iptvplay", "камин", "4k удивительные",
+		"животные австралии", "детеныши животных", "высококачественное видео",
+	}
 	if len(ChannelNamesToExclude) != len(expected) {
 		t.Errorf("expected %d items, got %d", len(expected), len(ChannelNamesToExclude))
 	}
