@@ -4,8 +4,11 @@ import (
 	"archive/zip"
 	"bytes"
 	"compress/gzip"
+	"context"
 	"encoding/xml"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
@@ -694,5 +697,75 @@ func TestMergeEPGFiles(t *testing.T) {
 	}
 	if err := xml.Unmarshal(data, &tv); err != nil {
 		t.Errorf("merged output is not valid XML: %v", err)
+	}
+}
+
+// TestDownloadEPGToFileSkipsFailedSource verifies that when one EPG source
+// fails (e.g. 403 Forbidden from a Cloudflare-blocked host), the pipeline
+// continues with the remaining sources instead of failing the whole run.
+func TestDownloadEPGToFileSkipsFailedSource(t *testing.T) {
+	t.Setenv("OUTPUT_DIR", t.TempDir())
+	t.Setenv("SKIP_SSL_VERIFY", "false")
+	cfg := config.New()
+
+	good := `<?xml version="1.0"?><tv>
+<channel id="bbc"><display-name>BBC News</display-name></channel>
+<programme start="20260822090000 +0000" stop="20260822100000 +0000" channel="bbc"><title>Breakfast</title></programme>
+</tv>`
+
+	var goodBuf bytes.Buffer
+	gz := gzip.NewWriter(&goodBuf)
+	if _, err := gz.Write([]byte(good)); err != nil {
+		t.Fatal(err)
+	}
+	if err := gz.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/good.xml.gz":
+			w.Header().Set("Content-Type", "application/gzip")
+			_, _ = w.Write(goodBuf.Bytes())
+		default:
+			http.Error(w, "forbidden", http.StatusForbidden)
+		}
+	}))
+	defer server.Close()
+
+	urls := server.URL + "/good.xml.gz," + server.URL + "/blocked.xml.gz"
+	mergedPath, err := DownloadEPGToFile(context.Background(), urls, cfg)
+	if err != nil {
+		t.Fatalf("DownloadEPGToFile should skip the failed source and succeed, got error: %v", err)
+	}
+	defer os.Remove(mergedPath)
+
+	data, err := os.ReadFile(mergedPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `<channel id="bbc">`) {
+		t.Errorf("expected channel from the good source in merged EPG:\n%s", data)
+	}
+	if !strings.Contains(string(data), "Breakfast") {
+		t.Errorf("expected programme from the good source in merged EPG:\n%s", data)
+	}
+}
+
+// TestDownloadEPGToFileFailsWhenAllSourcesFail verifies that when every EPG
+// source fails, the error is still surfaced (no silently empty EPG).
+func TestDownloadEPGToFileFailsWhenAllSourcesFail(t *testing.T) {
+	t.Setenv("OUTPUT_DIR", t.TempDir())
+	t.Setenv("SKIP_SSL_VERIFY", "false")
+	cfg := config.New()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "forbidden", http.StatusForbidden)
+	}))
+	defer server.Close()
+
+	urls := server.URL + "/a.xml.gz," + server.URL + "/b.xml.gz"
+	if _, err := DownloadEPGToFile(context.Background(), urls, cfg); err == nil {
+		t.Fatal("DownloadEPGToFile should fail when all sources fail")
 	}
 }

@@ -244,12 +244,13 @@ func run() int {
 	var epgNameToIDMap map[string]string
 	var epgIDSet map[string]bool
 	if epgURL != "" {
-		if err := utils.RetryWithContext(ctx, 3, 2*time.Second, 2.0, func() error {
-			var e error
-			epgPath, e = epg.DownloadEPGToFile(ctx, epgURL, cfg)
-			return e
-		}); err != nil {
-			log.Error("Failed to download EPG: %v", err)
+		// Retry is handled per-source inside DownloadEPGToFile: a failing source
+		// is retried and skipped (with a warning) so the remaining sources still
+		// produce a merged EPG.
+		var e error
+		epgPath, e = epg.DownloadEPGToFile(ctx, epgURL, cfg)
+		if e != nil {
+			log.Error("Failed to download EPG: %v", e)
 			return 1
 		}
 		var err error

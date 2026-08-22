@@ -127,11 +127,13 @@ func DownloadEPGToFile(ctx context.Context, urlStr string, cfg *config.Config) (
 		return "", fmt.Errorf("EPG_SOURCE_URL must contain at least one URL")
 	}
 	if len(urls) == 1 {
-		return downloadSingleEPGToFile(ctx, urls[0], cfg)
+		return downloadSingleEPGToFileWithRetry(ctx, urls[0], cfg)
 	}
 
 	logger.Info("Downloading and merging %d EPG sources", len(urls))
 	var paths []string
+	var failedSources int
+	var lastErr error
 	defer func() {
 		for _, p := range paths {
 			if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
@@ -140,11 +142,23 @@ func DownloadEPGToFile(ctx context.Context, urlStr string, cfg *config.Config) (
 		}
 	}()
 	for _, u := range urls {
-		p, err := downloadSingleEPGToFile(ctx, u, cfg)
+		var p string
+		// Per-source retry: a transient failure of one source must not force
+		// re-downloading the sources that already succeeded.
+		p, err := downloadSingleEPGToFileWithRetry(ctx, u, cfg)
 		if err != nil {
-			return "", err
+			failedSources++
+			lastErr = err
+			logger.Warning("EPG source %s failed: %v — skipping it, continuing with remaining sources", u, err)
+			continue
 		}
 		paths = append(paths, p)
+	}
+	if len(paths) == 0 {
+		return "", fmt.Errorf("all %d EPG sources failed to download (last error: %v)", len(urls), lastErr)
+	}
+	if failedSources > 0 {
+		logger.Warning("Continuing with %d of %d EPG sources (%d skipped)", len(paths), len(urls), failedSources)
 	}
 
 	merged, err := os.CreateTemp(cfg.OutputDir(), "epg-merged-*.xml")
@@ -161,6 +175,18 @@ func DownloadEPGToFile(ctx context.Context, urlStr string, cfg *config.Config) (
 	}
 	logger.Info("Merged EPG saved as: %s", mergedPath)
 	return mergedPath, nil
+}
+
+// downloadSingleEPGToFileWithRetry downloads one EPG URL with retries and
+// expands it into a bounded temporary XML file.
+func downloadSingleEPGToFileWithRetry(ctx context.Context, urlStr string, cfg *config.Config) (string, error) {
+	var p string
+	err := utils.RetryWithContext(ctx, 3, 2*time.Second, 2.0, func() error {
+		var e error
+		p, e = downloadSingleEPGToFile(ctx, urlStr, cfg)
+		return e
+	})
+	return p, err
 }
 
 // downloadSingleEPGToFile downloads one EPG URL and expands it into a bounded
