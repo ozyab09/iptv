@@ -10,13 +10,15 @@ func isEmojiRune(r rune) bool {
 	}
 	// Additional ranges outside the main emoji block.
 	switch {
+	case r >= 0x25A0 && r <= 0x25FF:
+		return true // Geometric Shapes (◼️ ◻️ ◽ ◾ и др.)
 	case r >= 0x2600 && r <= 0x27BF:
 		return true
+	case r >= 0x2B00 && r <= 0x2BFF:
+		return true // Miscellaneous Symbols and Arrows (⬛ ⬜ ⭕ ⭐ и др.)
 	case r >= 0xFE00 && r <= 0xFE0F:
 		return true
 	case r == 0x200D:
-		return true
-	case r == 0x2B50 || r == 0x2B55:
 		return true
 	case r >= 0x20E3 && r <= 0x20E3:
 		return true

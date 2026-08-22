@@ -164,6 +164,8 @@ func TestStripTrailingEmojiExtendedBlocks(t *testing.T) {
 		{"Cartoon Network 💢🪗", "Cartoon Network"},
 		{"Карусель ⚪🪕", "Карусель"},
 		{"Канал 🌟🐱", "Канал"},
+		{"Канал ◻️⬛", "Канал"},
+		{"Канал ◼️⬜", "Канал"},
 		{"Просто имя", "Просто имя"},
 		{"", ""},
 	}

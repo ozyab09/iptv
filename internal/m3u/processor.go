@@ -18,15 +18,19 @@ var logger = utils.NewSanitizedLoggerWithPrefix("[m3u]")
 
 // Pre-compiled regexps for efficient filtering.
 var (
-	regRegional      = regexp.MustCompile(`\s\+\d+(?:\s+HD)?(?:\s*\([^)]+\))?\s*$`)
-	regNumberSuffix  = regexp.MustCompile(`\s\d{2,}$`)
-	regLeadingNumber = regexp.MustCompile(`^\d+\.\s*`)
-	regGroupTitle    = regexp.MustCompile(`group-title="([^"]*)"`)
-	regTvgID         = regexp.MustCompile(`tvg-id="([^"]*)"`)
-	regURLTVG        = regexp.MustCompile(`url-tvg="[^"]*"`)
-	regTVGURL        = regexp.MustCompile(`tvg-url="[^"]*"`)
-	regTvgLogo       = regexp.MustCompile(`tvg-logo="([^"]*)"`)
-	regTvgRec        = regexp.MustCompile(`tvg-rec="([^"]*)"`)
+	regRegional     = regexp.MustCompile(`\s\+\d+(?:\s+HD)?(?:\s*\([^)]+\))?\s*$`)
+	regNumberSuffix = regexp.MustCompile(`\s\d{2,}$`)
+	// regNumericGroupSuffix matches a trailing parenthesized number like
+	// "360 (2)" / "360 (3)" — duplicate variants of the same channel that
+	// playlist authors number to disambiguate multiple URLs.
+	regNumericGroupSuffix = regexp.MustCompile(`\s*\(\d+\)\s*$`)
+	regLeadingNumber      = regexp.MustCompile(`^\d+\.\s*`)
+	regGroupTitle         = regexp.MustCompile(`group-title="([^"]*)"`)
+	regTvgID              = regexp.MustCompile(`tvg-id="([^"]*)"`)
+	regURLTVG             = regexp.MustCompile(`url-tvg="[^"]*"`)
+	regTVGURL             = regexp.MustCompile(`tvg-url="[^"]*"`)
+	regTvgLogo            = regexp.MustCompile(`tvg-logo="([^"]*)"`)
+	regTvgRec             = regexp.MustCompile(`tvg-rec="([^"]*)"`)
 
 	// Replacement-only regexps (no capture groups).
 	regGroupTitleAttr = regexp.MustCompile(`group-title="[^"]*"`)
@@ -37,8 +41,40 @@ var (
 	// regStreamURL matches a line that starts with a URL scheme (http, https, rtmp, udp, ...).
 	regStreamURL = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9+.-]*://`)
 
+	// Display-name cleanup regexps.
+	regRecordBadge  = regexp.MustCompile(`⏺ʳᵉᶜ`)
+	regGeoBlocked   = regexp.MustCompile(`(?i)\s*\[geo-blocked\]`)
+	regResolution   = regexp.MustCompile(`(?i)\s*\((720p|1080p|576p|480p|2160p)\)`)
+	regGarbageStart = regexp.MustCompile(`^[.&#]+\s*`)
+	// regPipeRegion matches "Name | Region" (used both for display normalization
+	// to "Name (Region)" and for grouping to "Name Region").
+	regPipeRegion = regexp.MustCompile(`\s*\|\s+([^|]+)$`)
+	// regTrailingParenNumber matches "Name (2)" style duplicate-variant numbers
+	// anywhere in the name (used for grouping; display keeps regional text).
+	regParenNumber = regexp.MustCompile(`\s*\(\d+\)`)
+	// regParenText matches a parenthesized region/qualifier like "(Новокузнецк)";
+	// kept for display but flattened for grouping so it matches the "| Region" form.
+	regParenText = regexp.MustCompile(`\s*\(([^()]*)\)`)
+	// regTrailingDomain matches a trailing domain-like suffix (.tv/.com/.ru/...)
+	// used for grouping so "1-2-3.tv" and "1-2-3" group together.
+	regTrailingDomain = regexp.MustCompile(`(?i)\.(tv|com|net|ru|ua|org|co|info|biz)\b`)
+
+	// Transliteration for grouping: latin → cyrillic for well-known channel words,
+	// and ukrainian → russian letters. Applied only in normalizeChannelName so
+	// display names are untouched.
+	translitWords = map[string]string{
+		"rossiya":    "россия",
+		"russia":     "россия",
+		"ukraina":    "украина",
+		"ukraine":    "украина",
+		"belarus":    "беларусь",
+		"kazakh":     "казах",
+		"kazakhstan": "казахстан",
+	}
+	regTranslitWord = regexp.MustCompile(`[a-zа-я]+`)
+
 	// Quality tokens used for ranking channel variants (order matters: full hd before hd).
-	regQualityRank = regexp.MustCompile(`(?i)\b(4k|2160p|uhd|fhd|full\s*hd|fullhd|1080p|720p|576p|480p|hdtv|hd|sd|hq|lq)\b`)
+	regQualityRank = regexp.MustCompile(`(?i)\b(4k|2160p|uhd|fhd|full\s*hd|fullhd|1080p|720p|576p|480p|hdtv|hd|sd|fd|hq|lq)\b`)
 
 	regSpaces = regexp.MustCompile(`\s+`)
 )
@@ -163,10 +199,61 @@ func urlToEmojiPair(rawURL string) string {
 	return emojiFromHostname(rawURL) + emojiFromPath(rawURL)
 }
 
-// emojiFromHostname derives an emoji from the URL hostname (DNS name, port ignored).
+// emojiFromHostname derives an emoji from the URL hostname's registrable
+// domain (port ignored). Only the second-level domain is hashed, so subdomains
+// of the same resource — e.g. https://bsttv.bonus-tv.ru/... and
+// http://cdn-01.bonus-tv.ru:80/... — produce the same first emoji.
 func emojiFromHostname(rawURL string) string {
 	host := urlComponent(rawURL, true)
-	return emojiPoolA[fnv64(host)%uint64(len(emojiPoolA))]
+	return emojiPoolA[fnv64(registrableDomain(host))%uint64(len(emojiPoolA))]
+}
+
+// registrableDomain reduces a hostname to the domain that its owner controls:
+// the last two labels ("bsttv.bonus-tv.ru" → "bonus-tv.ru"), or three labels
+// when the TLD is a two-letter country code with a common second-level domain
+// like co.uk / com.ru ("www.bbc.co.uk" → "bbc.co.uk"). IP addresses and
+// single-label hosts are returned unchanged.
+func registrableDomain(host string) string {
+	labels := strings.Split(host, ".")
+	n := len(labels)
+	if n <= 2 {
+		return host
+	}
+	// IPv4 address — no registrable domain, hash the whole thing.
+	if isIPv4Labels(labels) {
+		return host
+	}
+	// "label.co.uk" / "label.com.ru" / "label.net.de" style: keep 3 labels.
+	if len(labels[n-1]) == 2 && isCommonSecondLevelDomain(labels[n-2]) {
+		return strings.Join(labels[n-3:], ".")
+	}
+	// Plain TLD (com/net/org/... or 2-letter ccTLD without common SLD): last 2.
+	return strings.Join(labels[n-2:], ".")
+}
+
+// isIPv4Labels reports whether every label is numeric (a dotted IPv4 address).
+func isIPv4Labels(labels []string) bool {
+	for _, l := range labels {
+		if l == "" {
+			return false
+		}
+		for _, r := range l {
+			if r < '0' || r > '9' {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// isCommonSecondLevelDomain reports whether a label is a common second-level
+// domain under a country-code TLD (co.uk, com.ru, net.de, org.pl, ...).
+func isCommonSecondLevelDomain(label string) bool {
+	switch strings.ToLower(label) {
+	case "co", "com", "net", "org", "ac", "edu", "gov", "mil", "gen", "name":
+		return true
+	}
+	return false
 }
 
 // emojiFromPath derives an emoji from the URL path part.
@@ -230,6 +317,34 @@ func RemoveOrigSuffix(name string) string {
 		return name[:len(name)-5]
 	}
 	return name
+}
+
+// CleanChannelName tidies the displayed channel name while keeping informative
+// tokens (HD/SD, country codes). It removes technical clutter that playlist
+// authors paste into names:
+//   - record badge "⏺ʳᵉᶜ"
+//   - "[Geo-blocked]" marker
+//   - resolution in parens like "(720p)"
+//   - leading junk characters (# . &)
+//   - double spaces
+//   - normalizes "Name | Region" to "Name (Region)" so regional variants read
+//     consistently across sources.
+func CleanChannelName(name string) string {
+	s := strings.TrimSpace(name)
+	s = regRecordBadge.ReplaceAllString(s, "")
+	s = regGeoBlocked.ReplaceAllString(s, "")
+	s = regResolution.ReplaceAllString(s, "")
+	s = regGarbageStart.ReplaceAllString(s, "")
+	// "10 канал | Новокузнецк" → "10 канал (Новокузнецк)".
+	s = regPipeRegion.ReplaceAllStringFunc(s, func(m string) string {
+		parts := regPipeRegion.FindStringSubmatch(m)
+		if len(parts) > 1 {
+			return " (" + strings.TrimSpace(parts[1]) + ")"
+		}
+		return m
+	})
+	s = regSpaces.ReplaceAllString(s, " ")
+	return strings.TrimSpace(s)
 }
 
 // ─── Pipeline: header processing ─────────────────────────────────────────────────
@@ -345,8 +460,10 @@ func filterEntry(line string, exactMatchLower, substringLower, excludeLower []st
 			return filterResult{keep: false}
 		}
 
-		// Remove "orig" suffix.
+		// Remove "orig" suffix, then tidy the displayed name (record badge,
+		// [Geo-blocked], (720p), leading junk, double spaces, "| Region" → "(Region)").
 		newName := RemoveOrigSuffix(channelName)
+		newName = CleanChannelName(newName)
 		if newName != channelName {
 			line = parts[0] + "," + newName
 		}
@@ -491,7 +608,9 @@ func qualityRank(name string) int {
 
 // normalizeChannelName reduces a channel name to its base form for grouping:
 // emoji pairs, quality tokens, regional/numeric suffixes, separators and case
-// are stripped so "Канал HD", "КАНАЛᴴᴰ" and "Канал" group together.
+// are stripped so "Канал HD", "КАНАЛᴴᴰ" and "Канал" group together. Duplicate
+// variants from different sources ("360 (2)", "1-2-3.tv HD DE", "10 канал |
+// Новокузнецк") collapse to the same key.
 func normalizeChannelName(name string) string {
 	s := utils.StripTrailingEmoji(strings.TrimSpace(name))
 	s = strings.ToLower(s)
@@ -500,10 +619,38 @@ func normalizeChannelName(name string) string {
 	s = strings.ReplaceAll(s, "ᴰ", "")
 	s = strings.ReplaceAll(s, " orig", "")
 	s = regRegional.ReplaceAllString(s, " ")
+	// Duplicate-variant numbers anywhere: "360 (2)", "10 канал (2) | X".
+	s = regParenNumber.ReplaceAllString(s, " ")
+	// Regional text in parens: "(Новокузнецк)" → " новокузнецк" so it matches
+	// the "| Новокузнецк" form. Time shifts "(+2)" survive (not digits-only).
+	s = regParenText.ReplaceAllString(s, " $1")
+	// "| Новокузнецк" → " новокузнецк".
+	s = regPipeRegion.ReplaceAllString(s, " $1")
+	// Domain suffix: "1-2-3.tv" → "1-2-3", "360.ru" → "360".
+	s = regTrailingDomain.ReplaceAllString(s, "")
 	s = strings.ReplaceAll(s, "_", " ")
 	s = strings.ReplaceAll(s, "-", " ")
+	// Well-known latin/ukrainian channel words → russian.
+	s = transliterate(s)
 	s = regSpaces.ReplaceAllString(s, " ")
 	return strings.TrimSpace(s)
+}
+
+// transliterate maps well-known latin spellings and ukrainian letters to their
+// russian grouping forms (e.g. "ukraine"→"украина", "Україна"→"украина").
+func transliterate(s string) string {
+	// Ukrainian → russian letters inside any word.
+	s = strings.ReplaceAll(s, "ї", "и")
+	s = strings.ReplaceAll(s, "і", "и")
+	s = strings.ReplaceAll(s, "є", "е")
+	s = strings.ReplaceAll(s, "ґ", "г")
+	// Whole latin words → cyrillic (word-boundary safe via token walk).
+	return regTranslitWord.ReplaceAllStringFunc(s, func(w string) string {
+		if r, ok := translitWords[w]; ok {
+			return r
+		}
+		return w
+	})
 }
 
 // entryURL returns the first stream URL of an entry, or "".
