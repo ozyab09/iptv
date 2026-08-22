@@ -228,6 +228,10 @@ var CategoriesToRemove = []string{
 	// Кино и сериалы (bold unicode)
 	"𝐊𝐢𝐧𝐨",
 	"𝕂иℍ𝕠",
+	// Кино и Спорт (фильтруются целиком; см. также CategoriesToRemoveByKeyword
+	// для каналов, реклассифицируемых в эти категории по имени)
+	"Кино",
+	"Спорт",
 	// Региональные категории
 	"РОССИЯ+",
 
@@ -407,8 +411,9 @@ var CategoryAliases = map[string]string{
 // normalization. Channels in any other category are moved to FallbackCategory.
 // This keeps only quality content categories while preserving every channel.
 var AllowedCategories = []string{
-	// Контентные
-	"Познавательные", "Развлекательные", "Кино", "Новости", "Спорт", "Детские",
+	// Контентные. «Кино» is intentionally NOT here: channels matching cinema
+	// keywords are removed entirely (see CategoriesToRemoveByKeyword), not kept.
+	"Познавательные", "Развлекательные", "Новости", "Детские",
 	"Музыка", "Путешествия", "Природа", "Хобби",
 	// География / вещание
 	"Региональные", "Эфирные", "Российские",
@@ -508,6 +513,23 @@ var CategoryKeywords = map[string][]string{
 		"перец", "рен тв", "ren tv", "домашний", "звезда", "ю", "че", "2х2",
 		"2x2", "тв3", "пятница!",
 	},
+}
+
+// CategoriesToRemoveByKeyword lists categories whose channels must be REMOVED
+// entirely (not reclassified) when ClassifyFallbackCategories matches them by
+// name keyword. Used to filter out a genre category after the allow-list pass,
+// e.g. «Кино»: channels whose name contains cinema keywords (HBO, AMC,
+// "кино", "фильм"...) are dropped instead of staying in the playlist.
+var CategoriesToRemoveByKeyword = []string{"Кино", "Спорт"}
+
+// CategoriesToRemoveByKeywordSet returns the categories to remove as a set for
+// O(1) lookup.
+func CategoriesToRemoveByKeywordSet() map[string]bool {
+	set := make(map[string]bool, len(CategoriesToRemoveByKeyword))
+	for _, c := range CategoriesToRemoveByKeyword {
+		set[c] = true
+	}
+	return set
 }
 
 // EPGExcludedCategories lists EPG categories to exclude from the output.

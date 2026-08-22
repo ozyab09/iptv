@@ -1516,7 +1516,8 @@ func TestEmojiFromHostnameUsesRegistrableDomain(t *testing.T) {
 
 // TestClassifyFallbackCategories verifies that channels in the fallback
 // category are reclassified by unambiguous name keywords, longer keywords win,
-// and only allow-listed categories are used.
+// only allow-listed categories are used, and denied categories (e.g. «Кино»)
+// are removed entirely.
 func TestClassifyFallbackCategories(t *testing.T) {
 	content := `#EXTM3U
 #EXTINF:-1 group-title="Основные",Матч! Футбол 1 HD
@@ -1532,15 +1533,16 @@ http://example.com/already-sport.m3u8
 #EXTINF:-1 group-title="Основные",Кинопоказ HD
 http://example.com/kino.m3u8
 `
-	allowed := map[string]bool{"Спорт": true, "Детские": true, "Кино": true, "Познавательные": true, "Основные": true}
-	result := ClassifyFallbackCategories(content, config.CategoryKeywords, allowed, "Основные")
+	allowed := map[string]bool{"Спорт": true, "Детские": true, "Познавательные": true, "Основные": true}
+	remove := config.CategoriesToRemoveByKeywordSet()
+	result := ClassifyFallbackCategories(content, config.CategoryKeywords, allowed, "Основные", remove)
 
-	if !strings.Contains(result, `group-title="Спорт",Матч! Футбол 1 HD`) {
-		t.Errorf("expected football channel → Спорт:\n%s", result)
-	}
-	// Discovery Sport → Спорт (приоритет Спорт выше Познавательных), а не Познавательные.
-	if !strings.Contains(result, `group-title="Спорт",Discovery Sport HD`) {
-		t.Errorf("expected Discovery Sport → Спорт (priority), got:\n%s", result)
+	// «Спорт» и «Кино» are in the deny set — matching channels must be REMOVED
+	// (entry + URL gone), not reclassified.
+	for _, gone := range []string{"Матч! Футбол 1 HD", "football.m3u8", "Discovery Sport HD", "disc-sport.m3u8", "Кинопоказ", "kino.m3u8"} {
+		if strings.Contains(result, gone) {
+			t.Errorf("expected %q to be removed entirely:\n%s", gone, result)
+		}
 	}
 	if !strings.Contains(result, `group-title="Детские",Карусель`) {
 		t.Errorf("expected Карусель → Детские:\n%s", result)
@@ -1551,8 +1553,19 @@ http://example.com/kino.m3u8
 	if !strings.Contains(result, `group-title="Спорт",Уже спорт`) {
 		t.Errorf("expected already-categorized channel untouched:\n%s", result)
 	}
+}
+
+// TestClassifyFallbackCategoriesKeepsDeniedWhenNotConfigured verifies that a
+// category not in the remove set is reclassified as usual (backward compat).
+func TestClassifyFallbackCategoriesKeepsDeniedWhenNotConfigured(t *testing.T) {
+	content := `#EXTM3U
+#EXTINF:-1 group-title="Основные",Кинопоказ HD
+http://example.com/kino.m3u8
+`
+	allowed := map[string]bool{"Кино": true, "Основные": true}
+	result := ClassifyFallbackCategories(content, config.CategoryKeywords, allowed, "Основные", nil)
 	if !strings.Contains(result, `group-title="Кино",Кинопоказ HD`) {
-		t.Errorf("expected Кинопоказ → Кино:\n%s", result)
+		t.Errorf("expected Кинопоказ → Кино when not denied:\n%s", result)
 	}
 }
 

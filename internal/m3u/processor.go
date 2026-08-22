@@ -1324,9 +1324,12 @@ func NormalizeCategories(content string, aliases map[string]string, allowed map[
 // NormalizeCategories so only channels that failed the allow-list are
 // considered; category order follows the map's value slice (specific genres
 // first) and within a category longer keywords win. Only keywords mapping to
-// categories on the allow-list are applied. Channels without a group-title or
+// categories on the allow-list are applied. Categories listed in
+// removeCategories are filtered out ENTIRELY (entry + URL dropped), not
+// reclassified — used to deny a genre category that the allow-list pass would
+// otherwise re-create by name (e.g. «Кино»). Channels without a group-title or
 // without a match stay untouched.
-func ClassifyFallbackCategories(content string, keywords map[string][]string, allowed map[string]bool, fallback string) string {
+func ClassifyFallbackCategories(content string, keywords map[string][]string, allowed map[string]bool, fallback string, removeCategories map[string]bool) string {
 	if len(keywords) == 0 {
 		return content
 	}
@@ -1346,7 +1349,7 @@ func ClassifyFallbackCategories(content string, keywords map[string][]string, al
 	}
 	var rules []catRule
 	for cat, words := range keywords {
-		if !allowed[cat] {
+		if !allowed[cat] && !removeCategories[cat] {
 			continue
 		}
 		rules = append(rules, catRule{cat: cat, keywords: words})
@@ -1361,35 +1364,62 @@ func ClassifyFallbackCategories(content string, keywords map[string][]string, al
 	})
 
 	classified := 0
-	for i, line := range lines {
+	removed := 0
+	var out []string
+	skipEntry := false // строки удаляемой записи (URL, опции) пропускаются до следующего #EXTINF
+	for _, line := range lines {
 		if !strings.HasPrefix(strings.TrimSpace(line), "#EXTINF:") {
+			if skipEntry {
+				continue
+			}
+			out = append(out, line)
 			continue
 		}
+
+		skipEntry = false
 		gm := regGroupTitle.FindStringSubmatch(line)
 		if gm == nil || gm[1] != fallback {
+			out = append(out, line)
 			continue // только каналы в fallback-категории
 		}
 		parts := strings.SplitN(line, ",", 2)
 		if len(parts) < 2 {
+			out = append(out, line)
 			continue
 		}
 		channelName := strings.ToLower(utils.StripTrailingEmoji(parts[1]))
 		if channelName == "" {
+			out = append(out, line)
 			continue
 		}
+		matchedCat := ""
 		for _, rule := range rules {
 			if matched := matchCategoryKeyword(channelName, rule.keywords); matched != "" {
-				lines[i] = regGroupTitleAttr.ReplaceAllString(line, fmt.Sprintf(`group-title="%s"`, rule.cat))
-				classified++
+				matchedCat = rule.cat
 				break
 			}
 		}
+		if matchedCat == "" {
+			out = append(out, line)
+			continue
+		}
+		if removeCategories[matchedCat] {
+			// Категория запрещена — запись удаляется целиком (EXTINF + URL + опции).
+			skipEntry = true
+			removed++
+			continue
+		}
+		out = append(out, regGroupTitleAttr.ReplaceAllString(line, fmt.Sprintf(`group-title="%s"`, matchedCat)))
+		classified++
 	}
 
 	if classified > 0 {
 		logger.Info("ClassifyFallbackCategories: reclassified %d channels out of %q", classified, fallback)
 	}
-	return strings.Join(lines, "\n")
+	if removed > 0 {
+		logger.Info("ClassifyFallbackCategories: removed %d channels in denied categories %v", removed, removeCategories)
+	}
+	return strings.Join(out, "\n")
 }
 
 // matchCategoryKeyword returns the longest keyword found in name, or "".

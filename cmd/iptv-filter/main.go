@@ -262,11 +262,14 @@ func run() int {
 	filteredContent = normalizeCategories(filteredContent)
 	// Reclassify channels that fell into the fallback category when their name
 	// carries an unambiguous genre keyword (e.g. "...Футбол..." → Спорт).
+	// Categories in CategoriesToRemoveByKeyword (e.g. «Кино») are filtered out
+	// entirely instead of being reclassified.
 	filteredContent = m3u.ClassifyFallbackCategories(
 		filteredContent,
 		config.CategoryKeywords,
 		config.AllowedCategorySet(),
 		config.FallbackCategory,
+		config.CategoriesToRemoveByKeywordSet(),
 	)
 
 	// Step 2b: Download EPG once, early. Its channel-id set is used to validate
