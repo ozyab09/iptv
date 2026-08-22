@@ -119,6 +119,8 @@ func TestCategoriesToRemove(t *testing.T) {
 		"Play-x",
 		"𝐊𝐢𝐧𝐨",
 		"𝕂иℍ𝕠",
+		"Кино",
+		"Спорт",
 		"РОССИЯ+",
 		"Гранд",
 	}

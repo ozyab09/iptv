@@ -1516,7 +1516,8 @@ func TestEmojiFromHostnameUsesRegistrableDomain(t *testing.T) {
 
 // TestClassifyFallbackCategories verifies that channels in the fallback
 // category are reclassified by unambiguous name keywords, longer keywords win,
-// and only allow-listed categories are used.
+// only allow-listed categories are used, and denied categories (e.g. «Кино»)
+// are removed entirely.
 func TestClassifyFallbackCategories(t *testing.T) {
 	content := `#EXTM3U
 #EXTINF:-1 group-title="Основные",Матч! Футбол 1 HD
@@ -1532,15 +1533,16 @@ http://example.com/already-sport.m3u8
 #EXTINF:-1 group-title="Основные",Кинопоказ HD
 http://example.com/kino.m3u8
 `
-	allowed := map[string]bool{"Спорт": true, "Детские": true, "Кино": true, "Познавательные": true, "Основные": true}
-	result := ClassifyFallbackCategories(content, config.CategoryKeywords, allowed, "Основные")
+	allowed := map[string]bool{"Спорт": true, "Детские": true, "Познавательные": true, "Основные": true}
+	remove := config.CategoriesToRemoveByKeywordSet()
+	result := ClassifyFallbackCategories(content, config.CategoryKeywords, allowed, "Основные", remove)
 
-	if !strings.Contains(result, `group-title="Спорт",Матч! Футбол 1 HD`) {
-		t.Errorf("expected football channel → Спорт:\n%s", result)
-	}
-	// Discovery Sport → Спорт (приоритет Спорт выше Познавательных), а не Познавательные.
-	if !strings.Contains(result, `group-title="Спорт",Discovery Sport HD`) {
-		t.Errorf("expected Discovery Sport → Спорт (priority), got:\n%s", result)
+	// «Спорт» и «Кино» are in the deny set — matching channels must be REMOVED
+	// (entry + URL gone), not reclassified.
+	for _, gone := range []string{"Матч! Футбол 1 HD", "football.m3u8", "Discovery Sport HD", "disc-sport.m3u8", "Кинопоказ", "kino.m3u8"} {
+		if strings.Contains(result, gone) {
+			t.Errorf("expected %q to be removed entirely:\n%s", gone, result)
+		}
 	}
 	if !strings.Contains(result, `group-title="Детские",Карусель`) {
 		t.Errorf("expected Карусель → Детские:\n%s", result)
@@ -1551,8 +1553,19 @@ http://example.com/kino.m3u8
 	if !strings.Contains(result, `group-title="Спорт",Уже спорт`) {
 		t.Errorf("expected already-categorized channel untouched:\n%s", result)
 	}
+}
+
+// TestClassifyFallbackCategoriesKeepsDeniedWhenNotConfigured verifies that a
+// category not in the remove set is reclassified as usual (backward compat).
+func TestClassifyFallbackCategoriesKeepsDeniedWhenNotConfigured(t *testing.T) {
+	content := `#EXTM3U
+#EXTINF:-1 group-title="Основные",Кинопоказ HD
+http://example.com/kino.m3u8
+`
+	allowed := map[string]bool{"Кино": true, "Основные": true}
+	result := ClassifyFallbackCategories(content, config.CategoryKeywords, allowed, "Основные", nil)
 	if !strings.Contains(result, `group-title="Кино",Кинопоказ HD`) {
-		t.Errorf("expected Кинопоказ → Кино:\n%s", result)
+		t.Errorf("expected Кинопоказ → Кино when not denied:\n%s", result)
 	}
 }
 
@@ -1579,5 +1592,69 @@ func TestFuzzyMatchTvgID(t *testing.T) {
 	}
 	if got := fuzzyMatchTvgID("Football", byLen2); got != "" {
 		t.Errorf("unrelated name should not match, got %q", got)
+	}
+}
+
+// TestMatchCategoryKeywordWordBoundary verifies that short keywords (<= 3
+// runes) match on word boundaries only, so "рок" does not fire inside
+// "Прокопьевск" and "ю" inside "Южно-Сахалинск", while longer morphological
+// stems keep substring matching.
+func TestMatchCategoryKeywordWordBoundary(t *testing.T) {
+	tests := []struct {
+		name string
+		kw   []string
+		want string
+	}{
+		// «рок» (3 runes) — граница слова.
+		{"рок тв", []string{"рок"}, "рок"},
+		{"27 канал Прокопьевск (Кемеровская обл.)", []string{"рок"}, ""},
+		{"Про жизнь (Прокопьевск) HD", []string{"рок"}, ""},
+		// «ю» (1 rune) — граница слова.
+		{"Ю", []string{"ю"}, "ю"},
+		{"Ю HD", []string{"ю"}, "ю"},
+		{"Россия 1 (Южно-Сахалинск)", []string{"ю"}, ""},
+		{"АСТВ (Южно-Сахалинск) HD", []string{"ю"}, ""},
+		// «че» (2 runes) — граница слова («ЧЕ!» ок, «Чебоксары» нет).
+		{"ЧЕ!", []string{"че"}, "че"},
+		{"Россия 1 (Чебоксары)", []string{"че"}, ""},
+		{"Архыз 24 (Черкеск) HD", []string{"че"}, ""},
+		{"12 канал Череповец", []string{"че"}, ""},
+		// Длинные морфологические корни — подстрока как раньше.
+		{"музыкальный канал", []string{"музык"}, "музык"},
+		{"Детский мир", []string{"детск"}, "детск"},
+		{"Канал Новости 24", []string{"новост"}, "новост"},
+		// «mtv» (3 runes) — граница.
+		{"MTV Hits", []string{"mtv"}, "mtv"},
+		{"Karaoke World", []string{"mtv"}, ""},
+	}
+	for _, tt := range tests {
+		got := matchCategoryKeyword(strings.ToLower(tt.name), tt.kw)
+		if got != tt.want {
+			t.Errorf("matchCategoryKeyword(%q, %v) = %q, want %q", tt.name, tt.kw, got, tt.want)
+		}
+	}
+}
+
+// TestMatchWordBoundary covers runewise boundary detection incl. Cyrillic.
+func TestMatchWordBoundary(t *testing.T) {
+	tests := []struct {
+		name, kw string
+		want     bool
+	}{
+		{"рок тв", "рок", true},
+		{"роктв", "рок", false},
+		{"прокопьевск", "рок", false},
+		{"ю", "ю", true},
+		{"южно", "ю", false},
+		{"че!", "че", true},
+		{"чебоксары", "че", false},
+		{"mtv hits", "mtv", true},
+		{"xxmtv", "mtv", false},
+		{"abc рок def", "рок", true},
+	}
+	for _, tt := range tests {
+		if got := matchWordBoundary(tt.name, tt.kw); got != tt.want {
+			t.Errorf("matchWordBoundary(%q, %q) = %v, want %v", tt.name, tt.kw, got, tt.want)
+		}
 	}
 }
