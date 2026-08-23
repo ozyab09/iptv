@@ -14,6 +14,9 @@ import (
 func NewHTTPClient(skipSSLVerify bool) *http.Client {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: skipSSLVerify}
+	// Transport-level messages (e.g. "Unsolicited response received on idle
+	// HTTP channel" from HLS probes) are routed through the sanitizer by the
+	// global stdlib log redirect installed in logger.go's init.
 	return &http.Client{
 		Transport: transport,
 		Timeout:   30 * time.Minute,

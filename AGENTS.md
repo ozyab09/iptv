@@ -205,6 +205,7 @@ Filtering steps per entry:
 - `StripTrailingEmoji(s)` — removes trailing emoji pairs + whitespace from channel/group names (used by m3u and epg for name matching). `isEmojiRune` covers `0x1F000-0x1FAFF` (incl. extended-A block 🪗/🪕) — pool emojis beyond the classic `1F300-1F9FF` block are stripped too
 - `IsGzipped()` / `DecompressGZip()` / `DecompressZip()` — compression detection/helpers
 - `SanitizedWriter` — log wrapper masking: URLs → `https://****/****`, AWS/Yandex keys → `YCAJ****abcd` / `AKIA****xxxx`
+- Global stdlib `log` is redirected through the sanitizer (`logger.go` `init`) so `net/http` transport messages (e.g. `Unsolicited response received on idle HTTP channel` from HLS probes) never leak URLs/credentials — works on standard Go and toolchains without `Transport.ErrorLog`
 
 ## Filtering logic (internal/m3u/)
 
@@ -241,6 +242,7 @@ Uploads: filtered playlist, all-categories playlist, EPG file, plus `.gz` archiv
 - **Log Sanitization**: Masks URLs (`https://****/****`) and credentials:
   - Yandex Cloud: `YCAJEu...` (key), `YCON...` (secret)
   - AWS: `AKIA...`, `ASIA...` (access keys)
+  - Includes the global stdlib logger (`net/http` transport messages go through it)
 - **Credential Handling**: Uses env vars for sensitive data, never logged
 - **SSL**: Configurable via `SKIP_SSL_VERIFY` (default: `false` — secure)
 
