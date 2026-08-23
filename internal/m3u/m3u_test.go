@@ -1407,17 +1407,26 @@ http://example.com/360-armavir.m3u8`
 // "| Region" separator are normalized while HD/country tokens survive.
 func TestCleanChannelName(t *testing.T) {
 	tests := []struct{ in, want string }{
-		{"100% NL TV HD ⏺ʳᵉᶜ", "100% NL TV HD"},
+		{"100% NL TV HD ⏺ʳᵉᶜ", "100% NL TV hd"},
 		{"RTR Planeta Europe [Geo-blocked]", "RTR Planeta Europe"},
 		{"Belarus-1 (1080p)", "Belarus-1"},
-		{"#dabeiTV HD DE", "dabeiTV HD DE"},
-		{"&Pictures HD IN", "Pictures HD IN"},
-		{".sci-fi HD", "sci-fi HD"},
-		{"10 канал  (Саранск) SD", "10 канал (Саранск) SD"},
-		{"Liberty Занавес  HD", "Liberty Занавес HD"},
+		{"#dabeiTV HD DE", "dabeiTV hd DE"},
+		{"&Pictures HD IN", "Pictures hd IN"},
+		{".sci-fi HD", "sci-fi hd"},
+		{"10 канал  (Саранск) SD", "10 канал (Саранск) sd"},
+		{"Liberty Занавес  HD", "Liberty Занавес hd"},
 		{"10 канал | Новокузнецк", "10 канал (Новокузнецк)"},
 		{"10 канал (2) | Новокузнецк", "10 канал (2) (Новокузнецк)"},
-		{"Просто имя HD", "Просто имя HD"},
+		{"Просто имя HD", "Просто имя hd"},
+		{"365 Дней Hd", "365 Дней hd"},
+		{"BBC NEWS FHD", "BBC NEWS fhd"},
+		{"Eurosport 1 UHD", "Eurosport 1 uhd"},
+		{"Insight TV 4K", "Insight TV 4k"},
+		{"Канал HDR", "Канал hdr"},
+		{"Full HD канал", "full hd канал"},
+		{"24KZ HD", "24KZ hd"},
+		{"SDN TV", "SDN TV"},
+		{"Просто HD+", "Просто hd+"},
 		{"", ""},
 	}
 	for _, tc := range tests {

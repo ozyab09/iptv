@@ -78,6 +78,10 @@ var (
 	// Quality tokens used for ranking channel variants (order matters: full hd before hd).
 	regQualityRank = regexp.MustCompile(`(?i)\b(4k|2160p|uhd|fhd|full\s*hd|fullhd|1080p|720p|576p|480p|hdtv|hd|sd|fd|hq|lq)\b`)
 
+	// Quality/format tokens in any case, lowercased in display names by
+	// CleanChannelName so "HD"/"Hd"/"hd" render consistently.
+	regQualityCase = regexp.MustCompile(`(?i)\b(4k|2160p|uhd|fhd|full\s*hd|fullhd|1080p|720p|576p|480p|hdtv|hdr|hd|sd|fd|hq|lq)\b`)
+
 	regSpaces = regexp.MustCompile(`\s+`)
 )
 
@@ -322,7 +326,7 @@ func RemoveOrigSuffix(name string) string {
 }
 
 // CleanChannelName tidies the displayed channel name while keeping informative
-// tokens (HD/SD, country codes). It removes technical clutter that playlist
+// tokens (country codes). It removes technical clutter that playlist
 // authors paste into names:
 //   - record badge "⏺ʳᵉᶜ"
 //   - "[Geo-blocked]" marker
@@ -330,7 +334,9 @@ func RemoveOrigSuffix(name string) string {
 //   - leading junk characters (# . &)
 //   - double spaces
 //   - normalizes "Name | Region" to "Name (Region)" so regional variants read
-//     consistently across sources.
+//     consistently across sources
+//   - lowercases quality tokens ("HD"/"Hd"/"hd" → "hd", "4K" → "4k") so
+//     the same channel reads identically regardless of source casing.
 func CleanChannelName(name string) string {
 	s := strings.TrimSpace(name)
 	s = regRecordBadge.ReplaceAllString(s, "")
@@ -346,6 +352,9 @@ func CleanChannelName(name string) string {
 		return m
 	})
 	s = regSpaces.ReplaceAllString(s, " ")
+	// Lowercase quality/format tokens so "365 Дней HD" and "365 дней hd"
+	// render identically ("365 дней hd").
+	s = regQualityCase.ReplaceAllStringFunc(s, strings.ToLower)
 	return strings.TrimSpace(s)
 }
 
