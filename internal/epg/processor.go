@@ -14,6 +14,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ozyab/iptv/internal/config"
@@ -155,18 +156,34 @@ func DownloadEPGToFile(ctx context.Context, urlStr string, cfg *config.Config) (
 			}
 		}
 	}()
-	for _, u := range urls {
-		var p string
-		// Per-source retry: a transient failure of one source must not force
-		// re-downloading the sources that already succeeded.
-		p, err := downloadSingleEPGToFileWithRetry(ctx, u, cfg)
-		if err != nil {
+
+	// Sources are downloaded concurrently, each with its own retry, so a slow
+	// source does not delay the others. paths keeps the original URL order so
+	// the merged EPG is deterministic.
+	type sourceResult struct {
+		path string
+		err  error
+	}
+	results := make([]sourceResult, len(urls))
+	var wg sync.WaitGroup
+	for i, u := range urls {
+		wg.Add(1)
+		go func(i int, u string) {
+			defer wg.Done()
+			p, err := downloadSingleEPGToFileWithRetry(ctx, u, cfg)
+			results[i] = sourceResult{path: p, err: err}
+		}(i, u)
+	}
+	wg.Wait()
+
+	for i, r := range results {
+		if r.err != nil {
 			failedSources++
-			lastErr = err
-			logger.Warning("EPG source %s failed: %v — skipping it, continuing with remaining sources", u, err)
+			lastErr = r.err
+			logger.Warning("EPG source %s failed: %v — skipping it, continuing with remaining sources", urls[i], r.err)
 			continue
 		}
-		paths = append(paths, p)
+		paths = append(paths, r.path)
 	}
 	if len(paths) == 0 {
 		return "", nil, fmt.Errorf("all %d EPG sources failed to download (last error: %v)", len(urls), lastErr)
@@ -220,7 +237,21 @@ func downloadSingleEPGToFile(ctx context.Context, urlStr string, cfg *config.Con
 	if fname == "" || fname == "." || fname == "/" {
 		fname = "downloaded_epg.xml"
 	}
-	originalFilePath := path.Join(outputDir, "original_"+fname)
+	// Unique download path so concurrently downloaded sources with the same
+	// basename do not overwrite each other. Removed after expansion.
+	originalFile, err := os.CreateTemp(outputDir, "original_*_"+fname)
+	if err != nil {
+		return "", fmt.Errorf("create EPG download file: %w", err)
+	}
+	originalFilePath := originalFile.Name()
+	if err := originalFile.Close(); err != nil {
+		return "", fmt.Errorf("close EPG download file: %w", err)
+	}
+	defer func() {
+		if err := os.Remove(originalFilePath); err != nil && !os.IsNotExist(err) {
+			logger.Warning("Failed to remove original EPG download %s: %v", originalFilePath, err)
+		}
+	}()
 
 	if err := utils.DownloadFileToPathWithContext(ctx, urlStr, originalFilePath, int64(config.MaxEPGFileSize), cfg.SkipSSLVerify()); err != nil {
 		logger.Error("Error downloading EPG file: %v", err)
