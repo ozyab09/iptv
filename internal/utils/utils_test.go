@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"context"
 	"errors"
+	"log"
 	"strings"
 	"testing"
 	"time"
@@ -138,6 +139,52 @@ func TestMaskURL(t *testing.T) {
 	masked := maskURL("https://storage.yandexcloud.net/bucket/key")
 	if masked != "https://****/****" {
 		t.Errorf("expected 'https://****/****', got '%s'", masked)
+	}
+}
+
+// TestSanitizingWriterMasksURLsAndCreds verifies the stdlib-logger sanitizer
+// (used for http.Transport.ErrorLog) masks URLs and credentials, e.g. the
+// "Unsolicited response received on idle HTTP channel" transport message that
+// carries full HLS probe URLs.
+func TestSanitizingWriterMasksURLsAndCreds(t *testing.T) {
+	var buf bytes.Buffer
+	w := sanitizingWriter{w: &buf}
+	msg := `Unsolicited response received on idle HTTP channel starting with "#EXTM3U" ` +
+		`http://a3569457538-zabava-htlive.cdn.ngenix.net/hls/CH_MUZTV/seg1?useseq=t ` +
+		`key=YCAJEu1234567890abcdef`
+	if _, err := w.Write([]byte(msg)); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if strings.Contains(out, "ngenix.net") || strings.Contains(out, "YCAJEu1234567890abcdef") {
+		t.Errorf("expected URL and credentials to be masked, got: %s", out)
+	}
+	if !strings.Contains(out, "://****/****") {
+		t.Errorf("expected masked URL pattern, got: %s", out)
+	}
+}
+
+// TestLogLoggerWithSanitizingWriterMasks verifies the full *log.Logger path:
+// Printf output written through sanitizingWriter is sanitized.
+func TestLogLoggerWithSanitizingWriterMasks(t *testing.T) {
+	var buf bytes.Buffer
+	l := log.New(sanitizingWriter{w: &buf}, "", 0)
+	l.Printf("probe failed for https://cdn.example.com/playlist.m3u8?token=secret123")
+	out := buf.String()
+	if strings.Contains(out, "cdn.example.com") || strings.Contains(out, "secret123") {
+		t.Errorf("expected URL to be masked, got: %s", out)
+	}
+	if !strings.Contains(out, "https://****/****") {
+		t.Errorf("expected masked URL pattern, got: %s", out)
+	}
+}
+
+// TestGlobalStdLogSanitizerInstalled verifies init() redirected the global
+// stdlib logger (the path net/http uses for transport messages) through the
+// sanitizer.
+func TestGlobalStdLogSanitizerInstalled(t *testing.T) {
+	if _, ok := log.Default().Writer().(sanitizingWriter); !ok {
+		t.Errorf("expected global stdlib logger to write through sanitizingWriter, got %T", log.Default().Writer())
 	}
 }
 
