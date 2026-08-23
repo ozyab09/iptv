@@ -651,8 +651,15 @@ func TestMergeEPGFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := mergeEPGFiles([]string{src1, src2}, merged); err != nil {
+	nameToID := make(map[string]string)
+	if err := mergeEPGFiles([]string{src1, src2}, merged, nameToID); err != nil {
 		t.Fatalf("mergeEPGFiles: %v", err)
+	}
+
+	// Карта имени→id собрана в ходе мержа (без повторного парса выхода).
+	if nameToID["bbc news"] != "bbc" || nameToID["bbc world"] != "bbc" ||
+		nameToID["cnn"] != "cnn" || nameToID["cnn int"] != "cnn" || nameToID["euronews"] != "euronews" {
+		t.Errorf("expected name→id map built during merge, got: %v", nameToID)
 	}
 
 	data, err := os.ReadFile(merged)
@@ -734,7 +741,7 @@ func TestDownloadEPGToFileSkipsFailedSource(t *testing.T) {
 	defer server.Close()
 
 	urls := server.URL + "/good.xml.gz," + server.URL + "/blocked.xml.gz"
-	mergedPath, err := DownloadEPGToFile(context.Background(), urls, cfg)
+	mergedPath, nameToID, err := DownloadEPGToFile(context.Background(), urls, cfg)
 	if err != nil {
 		t.Fatalf("DownloadEPGToFile should skip the failed source and succeed, got error: %v", err)
 	}
@@ -749,6 +756,9 @@ func TestDownloadEPGToFileSkipsFailedSource(t *testing.T) {
 	}
 	if !strings.Contains(string(data), "Breakfast") {
 		t.Errorf("expected programme from the good source in merged EPG:\n%s", data)
+	}
+	if nameToID["bbc news"] != "bbc" {
+		t.Errorf("expected name→id map from the good source, got: %v", nameToID)
 	}
 }
 
@@ -765,7 +775,7 @@ func TestDownloadEPGToFileFailsWhenAllSourcesFail(t *testing.T) {
 	defer server.Close()
 
 	urls := server.URL + "/a.xml.gz," + server.URL + "/b.xml.gz"
-	if _, err := DownloadEPGToFile(context.Background(), urls, cfg); err == nil {
+	if _, _, err := DownloadEPGToFile(context.Background(), urls, cfg); err == nil {
 		t.Fatal("DownloadEPGToFile should fail when all sources fail")
 	}
 }

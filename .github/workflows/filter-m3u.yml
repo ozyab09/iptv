@@ -63,6 +63,10 @@ jobs:
       CATEGORIES_FILE_PATH: categories.txt
       # Опрос доступности источников (HEAD+GET Range). В dry-run (PR) probe пропускается.
       PROBE_SOURCES: "true"
+      # Ускорение пробы: 100 параллельных запросов (было 20) и таймаут 4 с (было 5 с) —
+      # мёртвый URL стоит 8 с вместо 10 с, вся проба ~2600 URL занимает ~3-4 мин вместо ~15 мин.
+      PROBE_CONCURRENCY: "100"
+      PROBE_TIMEOUT_SECONDS: "4"
 
     steps:
     - name: Checkout code
