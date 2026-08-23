@@ -14,6 +14,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ozyab/iptv/internal/config"
@@ -90,7 +91,7 @@ type Rating struct {
 // DownloadEPG downloads and decompresses (gz/zip) EPG content. New callers
 // should prefer DownloadEPGToFile to avoid holding a large EPG in memory.
 func DownloadEPG(ctx context.Context, urlStr string, cfg *config.Config) (string, error) {
-	filePath, err := DownloadEPGToFile(ctx, urlStr, cfg)
+	filePath, _, err := DownloadEPGToFile(ctx, urlStr, cfg)
 	if err != nil {
 		return "", err
 	}
@@ -121,13 +122,27 @@ func parseEPGSourceURLs(urlStr string) []string {
 // is downloaded and merged into a single XML file (channels deduplicated by id
 // with display-names unioned, programmes concatenated). Downloading and
 // decompression are streamed to avoid retaining the EPG in process memory.
-func DownloadEPGToFile(ctx context.Context, urlStr string, cfg *config.Config) (string, error) {
+//
+// It also returns a lowercase display-name → channel-id map. With multiple
+// sources the map is built during the merge's channel scan, so the (up to
+// 500MB) merged XML is never parsed a second time; the single-source path
+// streams the decompressed file once to build the map.
+func DownloadEPGToFile(ctx context.Context, urlStr string, cfg *config.Config) (string, map[string]string, error) {
 	urls := parseEPGSourceURLs(urlStr)
 	if len(urls) == 0 {
-		return "", fmt.Errorf("EPG_SOURCE_URL must contain at least one URL")
+		return "", nil, fmt.Errorf("EPG_SOURCE_URL must contain at least one URL")
 	}
 	if len(urls) == 1 {
-		return downloadSingleEPGToFileWithRetry(ctx, urls[0], cfg)
+		p, err := downloadSingleEPGToFileWithRetry(ctx, urls[0], cfg)
+		if err != nil {
+			return "", nil, err
+		}
+		nameToID, err := BuildEPGNameToIDMapFromFile(p)
+		if err != nil {
+			_ = os.Remove(p)
+			return "", nil, err
+		}
+		return p, nameToID, nil
 	}
 
 	logger.Info("Downloading and merging %d EPG sources", len(urls))
@@ -141,21 +156,37 @@ func DownloadEPGToFile(ctx context.Context, urlStr string, cfg *config.Config) (
 			}
 		}
 	}()
-	for _, u := range urls {
-		var p string
-		// Per-source retry: a transient failure of one source must not force
-		// re-downloading the sources that already succeeded.
-		p, err := downloadSingleEPGToFileWithRetry(ctx, u, cfg)
-		if err != nil {
+
+	// Sources are downloaded concurrently, each with its own retry, so a slow
+	// source does not delay the others. paths keeps the original URL order so
+	// the merged EPG is deterministic.
+	type sourceResult struct {
+		path string
+		err  error
+	}
+	results := make([]sourceResult, len(urls))
+	var wg sync.WaitGroup
+	for i, u := range urls {
+		wg.Add(1)
+		go func(i int, u string) {
+			defer wg.Done()
+			p, err := downloadSingleEPGToFileWithRetry(ctx, u, cfg)
+			results[i] = sourceResult{path: p, err: err}
+		}(i, u)
+	}
+	wg.Wait()
+
+	for i, r := range results {
+		if r.err != nil {
 			failedSources++
-			lastErr = err
-			logger.Warning("EPG source %s failed: %v — skipping it, continuing with remaining sources", u, err)
+			lastErr = r.err
+			logger.Warning("EPG source %s failed: %v — skipping it, continuing with remaining sources", urls[i], r.err)
 			continue
 		}
-		paths = append(paths, p)
+		paths = append(paths, r.path)
 	}
 	if len(paths) == 0 {
-		return "", fmt.Errorf("all %d EPG sources failed to download (last error: %v)", len(urls), lastErr)
+		return "", nil, fmt.Errorf("all %d EPG sources failed to download (last error: %v)", len(urls), lastErr)
 	}
 	if failedSources > 0 {
 		logger.Warning("Continuing with %d of %d EPG sources (%d skipped)", len(paths), len(urls), failedSources)
@@ -163,18 +194,21 @@ func DownloadEPGToFile(ctx context.Context, urlStr string, cfg *config.Config) (
 
 	merged, err := os.CreateTemp(cfg.OutputDir(), "epg-merged-*.xml")
 	if err != nil {
-		return "", fmt.Errorf("create merged EPG file: %w", err)
+		return "", nil, fmt.Errorf("create merged EPG file: %w", err)
 	}
 	mergedPath := merged.Name()
 	if err := merged.Close(); err != nil {
-		return "", fmt.Errorf("close merged EPG file: %w", err)
+		return "", nil, fmt.Errorf("close merged EPG file: %w", err)
 	}
-	if err := mergeEPGFiles(paths, mergedPath); err != nil {
+	// Карта имени→id собирается прямо при сканировании каналов в ходе мержа —
+	// повторный полный парс (до 500 МБ) объединённого XML не нужен.
+	nameToID := make(map[string]string)
+	if err := mergeEPGFiles(paths, mergedPath, nameToID); err != nil {
 		_ = os.Remove(mergedPath)
-		return "", err
+		return "", nil, err
 	}
 	logger.Info("Merged EPG saved as: %s", mergedPath)
-	return mergedPath, nil
+	return mergedPath, nameToID, nil
 }
 
 // downloadSingleEPGToFileWithRetry downloads one EPG URL with retries and
@@ -203,7 +237,21 @@ func downloadSingleEPGToFile(ctx context.Context, urlStr string, cfg *config.Con
 	if fname == "" || fname == "." || fname == "/" {
 		fname = "downloaded_epg.xml"
 	}
-	originalFilePath := path.Join(outputDir, "original_"+fname)
+	// Unique download path so concurrently downloaded sources with the same
+	// basename do not overwrite each other. Removed after expansion.
+	originalFile, err := os.CreateTemp(outputDir, "original_*_"+fname)
+	if err != nil {
+		return "", fmt.Errorf("create EPG download file: %w", err)
+	}
+	originalFilePath := originalFile.Name()
+	if err := originalFile.Close(); err != nil {
+		return "", fmt.Errorf("close EPG download file: %w", err)
+	}
+	defer func() {
+		if err := os.Remove(originalFilePath); err != nil && !os.IsNotExist(err) {
+			logger.Warning("Failed to remove original EPG download %s: %v", originalFilePath, err)
+		}
+	}()
 
 	if err := utils.DownloadFileToPathWithContext(ctx, urlStr, originalFilePath, int64(config.MaxEPGFileSize), cfg.SkipSSLVerify()); err != nil {
 		logger.Error("Error downloading EPG file: %v", err)
@@ -312,7 +360,11 @@ func expandEPGFile(sourcePath string, destination io.Writer, maxSize int64) erro
 //     channel+start, first wins);
 //   - all channels are written before all programmes so the streaming EPG
 //     filter can resolve channel ids before seeing their programmes.
-func mergeEPGFiles(srcPaths []string, outPath string) error {
+//
+// When nameToID is non-nil it is populated during the channel scan (lowercase
+// display-name → channel id), so callers get the name→id map without
+// re-parsing the merged output.
+func mergeEPGFiles(srcPaths []string, outPath string, nameToID map[string]string) error {
 	out, err := os.Create(outPath)
 	if err != nil {
 		return fmt.Errorf("create merged EPG: %w", err)
@@ -353,6 +405,9 @@ func mergeEPGFiles(srcPaths []string, outPath string) error {
 				v := strings.TrimSpace(dn.Value)
 				if v == "" {
 					continue
+				}
+				if nameToID != nil {
+					nameToID[strings.ToLower(v)] = ch.ID
 				}
 				dup := false
 				for _, e := range mc.displayNames {

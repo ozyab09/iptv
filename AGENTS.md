@@ -121,7 +121,7 @@ Runtime flow (`run()` in `main.go`):
 1. `config.New()` → `Validate()` (exits with 1 on validation errors)
 2. `M3U_SOURCE_URL` is **comma-separated**; each source is downloaded + `FilterContent`-ed independently, then merged via `mergeParts` (keeps only the first `#EXTM3U` header line, drops blank lines)
 3. `applyMetadata` — runs `categories.txt` overrides (only if `CATEGORIES_FILE_PATH` set); then `NormalizeCategories` — collapses duplicate/provider categories into canonical names (`CategoryAliases`) and moves anything not on the `AllowedCategories` allow-list to `FallbackCategory`; then `ClassifyFallbackCategories` — reclassifies channels left in the fallback into a genre category when their name contains an unambiguous keyword (`CategoryKeywords`, e.g. `футбол` → Спорт; ~1 200 channels rescued from "Основные"), and removes channels matching `CategoriesToRemoveByKeyword` («Кино», «Спорт»; ~857 channels) entirely
-4. If `EPG_SOURCE_URL` set: download EPG **once, early** (`DownloadEPG` + `BuildEPGNameToIDMap`) so its channel-id set can validate inherited tvg-ids during dedup; the same content is reused by the EPG filtering step later (no double download)
+4. If `EPG_SOURCE_URL` set: download EPG **once, early** (`DownloadEPGToFile` returns the name→id map built during the merge) so its channel-id set can validate inherited tvg-ids during dedup; the same content is reused by the EPG filtering step later (no double download, no second full parse)
 5. If `PROBE_SOURCES=true`: `m3u.DeduplicateByName(..., validEPGIDs)` — groups by normalized name, ranks by quality, probes candidate URLs of duplicate groups (HEAD + GET fallback, `PROBE_CONCURRENCY` workers, `PROBE_TIMEOUT_SECONDS` per request, per-entry `#EXTVLCOPT` user-agent/referrer sent when present), keeps `MAX_CHANNEL_VARIANTS` working sources per channel; single-variant channels pass through unprobed; all-dead groups fall back to the best-quality variant; kept entries lacking a `tvg-id` inherit one from sibling variants when the id exists in the EPG (stale ids are never inherited). **In dry-run (`DRY_RUN=true`) availability probing is skipped** — the probe callback is nil, so dedup keeps the best-quality variant per channel without checking sources (no network probing)
 6. Save `playlist.m3u` (filtered) and `playlist-all.m3u` (unfiltered) into `OUTPUT_DIR`
 7. If `EPG_SOURCE_URL` set: `m3u.AddTvgIDsToPlaylist` (exact + normalized + fuzzy edit-distance matching) → `m3u.InheritTvgIDsFromSiblings` (EPG-validated id copying between variants) → re-save → `ExtractChannelInfoFromPlaylist` → `FilterEPGContent` → save `epg.xml-filtered.gz` → upload EPG to S3
@@ -168,9 +168,9 @@ Filtering steps per entry:
 **EPG processing** (streaming XML parser, single-pass):
 
 - `DownloadEPG(ctx, url, cfg)` — downloads with gzip/zip decompression, 500MB limit, context-aware
-- `DownloadEPGToFile(ctx, url, cfg)` — comma-separated `EPG_SOURCE_URL` is split; with multiple sources each is downloaded to a bounded temp XML and merged by `mergeEPGFiles` into one file: `<channel>` deduplicated by id (display-names unioned across sources, first icon kept), `<programme>` copied from all sources (deduplicated by channel+start), all channels before all programmes so the streaming filter resolves ids in time. **Tolerant to failing sources**: each source is downloaded with its own retry (3 attempts, 2s, 2x); a source that keeps failing (403/5xx/timeout) is logged as a warning and skipped so the remaining sources still produce the merged EPG — the run fails only when *all* sources fail. The single-source path uses the same per-source retry (retry lives inside `DownloadEPGToFile`, not in `main.go`)
+- `DownloadEPGToFile(ctx, url, cfg)` — comma-separated `EPG_SOURCE_URL` is split; with multiple sources each is downloaded **concurrently** (one goroutine per source, each with its own retry, original URL order preserved for deterministic merge) to a bounded temp XML and merged by `mergeEPGFiles` into one file: `<channel>` deduplicated by id (display-names unioned across sources, first icon kept), `<programme>` copied from all sources (deduplicated by channel+start), all channels before all programmes so the streaming filter resolves ids in time. **Tolerant to failing sources**: a source that keeps failing (403/5xx/timeout) is logged as a warning and skipped so the remaining sources still produce the merged EPG — the run fails only when *all* sources fail. The single-source path uses the same per-source retry (retry lives inside `DownloadEPGToFile`, not in `main.go`). Download paths are unique per source (`original_<rand>_<name>`, removed after expansion) so same-basename sources never collide
 - `ExtractChannelInfoFromPlaylist()` — extracts `tvg-id` → category and channel name → category from M3U (channel names are emoji-stripped so they match EPG display names)
-- `BuildEPGNameToIDMap()` — full-file `xml.Unmarshal` (retains only `<channel>` elements) to build lowercase display-name → channel-id map. This is the ONE non-streaming parse of the (up to 463MB) EPG — do not extend it to pull `<programme>` data.
+- `BuildEPGNameToIDMap()` — streaming parse (only `<channel>` elements) to build lowercase display-name → channel-id map; used by the single-source path and small in-memory callers. **Multi-source path never parses the merged EPG twice**: `DownloadEPGToFile` returns the name→id map built during the merge's channel scan (no second pass over the up-to-500MB merged XML).
 - `FilterEPGContent()` — **single-pass streaming** `xml.Decoder` parsing:
   - Pre-computes retention window (`time.Now()` once, not per programme)
   - First pass: builds EPG channel display-name map
@@ -257,6 +257,7 @@ Two jobs in `.github/workflows/filter-m3u.yml`. Triggers: daily cron (`0 0 * * *
 - Builds binary: `go build -o iptv-filter`
 - Runs `./iptv-filter`
 - PRs get `DRY_RUN=true` set automatically (skips S3 upload, saves to `output/` only)
+- Probing is sped up in CI: `PROBE_CONCURRENCY=100`, `PROBE_TIMEOUT_SECONDS=4` (defaults elsewhere are 20 / 5s) — the full ~2600-URL probe takes ~3-4 min instead of ~15 min
 - **No artifact upload** — playlists contain personal data (artifact upload was removed; don't re-add it)
 
 Secrets: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `M3U_SOURCE_URL`, `S3_BUCKET_NAME`, `S3_OBJECT_KEY`, `S3_ENDPOINT_URL`, `S3_REGION`, `S3_EPG_KEY`, `EPG_SOURCE_URL`, `LOCAL_EPG_PATH`
@@ -275,5 +276,5 @@ Secrets: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `M3U_SOURCE_URL`, `S3_BUC
 - `Retry` helper on all download/upload functions (3 retries, 2s delay, 2x backoff)
 - File size limits: 100 MB for M3U, 500 MB for EPG
 - Graceful shutdown on SIGINT/SIGTERM via `context.Context` cancellation
-- EPG pipeline is streaming (`xml.Decoder`) except `BuildEPGNameToIDMap`, which full-unmarshals the file
+- EPG pipeline is streaming (`xml.Decoder`); the multi-source merge builds the name→id map in the same channel scan (no second full parse)
 - `LOCAL_EPG_PATH` is a CI secret + config accessor but `main.go` never reads it (EPG is saved as `<S3_EPG_KEY>` with `-filtered`)

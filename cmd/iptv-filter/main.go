@@ -281,19 +281,15 @@ func run() int {
 	if epgURL != "" {
 		// Retry is handled per-source inside DownloadEPGToFile: a failing source
 		// is retried and skipped (with a warning) so the remaining sources still
-		// produce a merged EPG.
+		// produce a merged EPG. The name→id map is built during the merge, so
+		// the merged XML is not parsed a second time.
 		var e error
-		epgPath, e = epg.DownloadEPGToFile(ctx, epgURL, cfg)
+		epgPath, epgNameToIDMap, e = epg.DownloadEPGToFile(ctx, epgURL, cfg)
 		if e != nil {
 			log.Error("Failed to download EPG: %v", e)
 			return 1
 		}
-		var err error
-		epgNameToIDMap, err = epg.BuildEPGNameToIDMapFromFile(epgPath)
-		if err != nil {
-			log.Error("Failed to build EPG name-to-id map: %v", err)
-			return 1
-		}
+		log.Info("Built EPG name-to-id map with %d entries", len(epgNameToIDMap))
 		epgIDSet = make(map[string]bool, len(epgNameToIDMap))
 		for _, id := range epgNameToIDMap {
 			epgIDSet[id] = true
