@@ -17,6 +17,7 @@ import (
 	"github.com/ozyab/iptv/internal/epg"
 	"github.com/ozyab/iptv/internal/m3u"
 	"github.com/ozyab/iptv/internal/s3"
+	"github.com/ozyab/iptv/internal/telegram"
 	"github.com/ozyab/iptv/internal/utils"
 )
 
@@ -47,7 +48,9 @@ func saveFile(content, filename string, cfg *config.Config) error {
 	return nil
 }
 
-// mergeParts combines multiple M3U playlists, keeping only the first #EXTM3U header.
+// mergeParts combines multiple M3U playlists, keeping only the first #EXTM3U
+// header (from whichever part provides it — a failed first source must not
+// strip the header from the merged output).
 func mergeParts(parts []string) string {
 	if len(parts) == 0 {
 		return ""
@@ -56,11 +59,11 @@ func mergeParts(parts []string) string {
 		return parts[0]
 	}
 	var mergedLines []string
-	for idx, part := range parts {
+	for _, part := range parts {
 		lines := strings.Split(part, "\n")
 		for _, line := range lines {
 			if strings.HasPrefix(strings.TrimSpace(line), "#EXTM3U") {
-				if idx == 0 && len(mergedLines) == 0 {
+				if len(mergedLines) == 0 {
 					mergedLines = append(mergedLines, line)
 				}
 				continue
@@ -177,6 +180,19 @@ func uploadBoth(ctx context.Context, client *awss3.Client, content, bucket, key 
 	})
 }
 
+// buildTelegramReport assembles the run statistics sent to Telegram. failedURLs
+// covers both playlist and EPG sources that failed but were skipped (the run
+// continued with the remaining sources).
+func buildTelegramReport(m3uDownloadedBytes int64, filteredContent string, epgDownloadedBytes, filteredEPGBytes int64, failedURLs []string) telegram.Report {
+	return telegram.Report{
+		PlaylistsDownloadedBytes: m3uDownloadedBytes,
+		PlaylistsFilteredBytes:   int64(len(filteredContent)),
+		EPGDownloadedBytes:       epgDownloadedBytes,
+		EPGFilteredBytes:         filteredEPGBytes,
+		FailedURLs:               failedURLs,
+	}
+}
+
 // ─── Pipeline ────────────────────────────────────────────────────────────────────
 
 func run() int {
@@ -216,7 +232,9 @@ func run() int {
 
 	// Step 1: Download and filter M3U sources in parallel (bounded concurrency,
 	// source order preserved via index). Each source keeps its own retry, so one
-	// slow/failing source does not block the others.
+	// slow/failing source does not block the others. A source that keeps failing
+	// is skipped with a warning and its URL lands in the Telegram run report;
+	// the run fails only when every M3U source fails.
 	type m3uResult struct {
 		idx      int
 		original string
@@ -242,13 +260,28 @@ func run() int {
 
 	allOriginal := make([]string, len(m3uURLs))
 	allFiltered := make([]string, len(m3uURLs))
+	var m3uDownloadedBytes int64
+	var m3uFailedURLs []string
+	var m3uLastErr error
+	failedSources := 0
 	for res := range results {
 		if res.err != nil {
-			log.Error("Failed to download M3U from %s: %v", m3uURLs[res.idx], res.err)
-			return 1
+			failedSources++
+			m3uLastErr = res.err
+			m3uFailedURLs = append(m3uFailedURLs, m3uURLs[res.idx])
+			log.Warning("M3U source %s failed: %v — skipping it, continuing with remaining sources", m3uURLs[res.idx], res.err)
+			continue
 		}
 		allOriginal[res.idx] = res.original
 		allFiltered[res.idx] = res.filtered
+		m3uDownloadedBytes += int64(len(res.original))
+	}
+	if failedSources == len(m3uURLs) {
+		log.Error("All %d M3U sources failed to download (last error: %v)", len(m3uURLs), m3uLastErr)
+		return 1
+	}
+	if failedSources > 0 {
+		log.Warning("Continuing with %d of %d M3U sources (%d skipped)", len(m3uURLs)-failedSources, len(m3uURLs), failedSources)
 	}
 
 	filteredContent := mergeParts(allFiltered)
@@ -278,17 +311,24 @@ func run() int {
 	var epgPath string
 	var epgNameToIDMap map[string]string
 	var epgIDSet map[string]bool
+	var epgDownloadedBytes int64
+	var epgFailedURLs []string
 	if epgURL != "" {
 		// Retry is handled per-source inside DownloadEPGToFile: a failing source
 		// is retried and skipped (with a warning) so the remaining sources still
 		// produce a merged EPG. The name→id map is built during the merge, so
-		// the merged XML is not parsed a second time.
-		var e error
-		epgPath, epgNameToIDMap, e = epg.DownloadEPGToFile(ctx, epgURL, cfg)
-		if e != nil {
-			log.Error("Failed to download EPG: %v", e)
+		// the merged XML is not parsed a second time. The result also carries
+		// the total downloaded bytes and the URLs of skipped sources, which feed
+		// the Telegram run report.
+		res, err := epg.DownloadEPGToFile(ctx, epgURL, cfg)
+		if err != nil {
+			log.Error("Failed to download EPG: %v", err)
 			return 1
 		}
+		epgPath = res.Path
+		epgNameToIDMap = res.NameToID
+		epgDownloadedBytes = res.DownloadedBytes
+		epgFailedURLs = res.FailedURLs
 		log.Info("Built EPG name-to-id map with %d entries", len(epgNameToIDMap))
 		epgIDSet = make(map[string]bool, len(epgNameToIDMap))
 		for _, id := range epgNameToIDMap {
@@ -340,12 +380,16 @@ func run() int {
 	}
 
 	// Step 5: Process EPG (content downloaded once in step 2b).
+	var filteredEPGBytes int64
 	if epgURL != "" {
 		var err error
 		filteredContent, err = processEPG(ctx, cfg, epgPath, epgNameToIDMap, epgIDSet, filteredContent, s3Client, dryRun)
 		if err != nil {
 			log.Error("EPG processing failed: %v", err)
 			return 1
+		}
+		if fi, err := os.Stat(path.Join(cfg.OutputDir(), cfg.LocalFilteredEPGPath())); err == nil {
+			filteredEPGBytes = fi.Size()
 		}
 	}
 
@@ -362,6 +406,18 @@ func run() int {
 	if err := uploadBoth(ctx, s3Client, originalContent, s3Bucket, s3AllKey); err != nil {
 		log.Error("Failed to upload unfiltered playlist: %v", err)
 		return 1
+	}
+
+	// Step 7: Send run statistics to Telegram. Only on a fully successful
+	// non-dry-run, and only when both TELEGRAM_USER_ID and TELEGRAM_BOT_TOKEN
+	// are set; otherwise the report is skipped entirely.
+	if cfg.TelegramEnabled() {
+		report := buildTelegramReport(m3uDownloadedBytes, filteredContent, epgDownloadedBytes, filteredEPGBytes, append(m3uFailedURLs, epgFailedURLs...))
+		if err := telegram.SendReport(ctx, cfg.TelegramBotToken(), cfg.TelegramUserID(), report, skipSSL); err != nil {
+			log.Warning("Failed to send Telegram report: %v", err)
+		} else {
+			log.Info("Telegram report sent")
+		}
 	}
 
 	log.Info("Process completed successfully")

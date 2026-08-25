@@ -288,6 +288,52 @@ func TestSkipSSLVerifyFromEnv(t *testing.T) {
 	}
 }
 
+func TestTelegramConfigDefaults(t *testing.T) {
+	// Explicitly clear the vars — they may be exported in the developer/CI env.
+	t.Setenv("TELEGRAM_USER_ID", "")
+	t.Setenv("TELEGRAM_BOT_TOKEN", "")
+	cfg := New()
+	if cfg.TelegramEnabled() {
+		t.Error("expected TelegramEnabled to be false when no Telegram env vars are set")
+	}
+}
+
+func TestTelegramConfigFromEnv(t *testing.T) {
+	os.Setenv("TELEGRAM_USER_ID", "123456789")
+	os.Setenv("TELEGRAM_BOT_TOKEN", "123456:ABC-def")
+	defer func() {
+		os.Unsetenv("TELEGRAM_USER_ID")
+		os.Unsetenv("TELEGRAM_BOT_TOKEN")
+	}()
+
+	cfg := New()
+	if cfg.TelegramUserID() != "123456789" {
+		t.Errorf("expected TelegramUserID, got %q", cfg.TelegramUserID())
+	}
+	if cfg.TelegramBotToken() != "123456:ABC-def" {
+		t.Errorf("expected TelegramBotToken, got %q", cfg.TelegramBotToken())
+	}
+	if !cfg.TelegramEnabled() {
+		t.Error("expected TelegramEnabled to be true when both env vars are set")
+	}
+}
+
+func TestTelegramEnabledRequiresBothVars(t *testing.T) {
+	os.Setenv("TELEGRAM_USER_ID", "123456789")
+	defer os.Unsetenv("TELEGRAM_USER_ID")
+	cfg := New()
+	if cfg.TelegramEnabled() {
+		t.Error("expected TelegramEnabled to be false when only TELEGRAM_USER_ID is set")
+	}
+
+	os.Setenv("TELEGRAM_BOT_TOKEN", "123456:ABC-def")
+	defer os.Unsetenv("TELEGRAM_BOT_TOKEN")
+	cfg = New()
+	if !cfg.TelegramEnabled() {
+		t.Error("expected TelegramEnabled to be true when both env vars are set")
+	}
+}
+
 // validConfig returns a Config that passes Validate() unchanged.
 func validConfig() *Config {
 	return &Config{
