@@ -30,6 +30,8 @@ type Config struct {
 	probeTimeout       time.Duration
 	probeConcurrency   int
 	maxChannelVariants int
+	telegramUserID     string
+	telegramBotToken   string
 }
 
 // New reads all environment variables once and caches them.
@@ -53,6 +55,8 @@ func New() *Config {
 		probeTimeout:       time.Duration(envIntOrDefault("PROBE_TIMEOUT_SECONDS", 5)) * time.Second,
 		probeConcurrency:   envIntOrDefault("PROBE_CONCURRENCY", 20),
 		maxChannelVariants: envIntClampMax("MAX_CHANNEL_VARIANTS", 1, 5),
+		telegramUserID:     os.Getenv("TELEGRAM_USER_ID"),
+		telegramBotToken:   os.Getenv("TELEGRAM_BOT_TOKEN"),
 	}
 }
 
@@ -173,6 +177,18 @@ func (c *Config) OutputDir() string { return c.outputDir }
 
 // CategoriesFilePath returns the optional path to categories.txt.
 func (c *Config) CategoriesFilePath() string { return c.categoriesFile }
+
+// TelegramUserID returns the Telegram chat/user ID for run notifications.
+func (c *Config) TelegramUserID() string { return c.telegramUserID }
+
+// TelegramBotToken returns the Telegram bot token for run notifications.
+func (c *Config) TelegramBotToken() string { return c.telegramBotToken }
+
+// TelegramEnabled returns true when both TELEGRAM_USER_ID and
+// TELEGRAM_BOT_TOKEN are set; only then is the run report sent to Telegram.
+func (c *Config) TelegramEnabled() bool {
+	return c.telegramUserID != "" && c.telegramBotToken != ""
+}
 
 // BuildCustomEPGURL constructs the public URL for the EPG file in S3.
 func (c *Config) BuildCustomEPGURL() string {

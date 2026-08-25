@@ -50,6 +50,8 @@ iptv/
 │   ├── epg/epg_test.go            # EPG filter tests
 │   ├── s3/upload.go               # S3 upload via AWS SDK v2 (reusable client)
 │   ├── s3/s3_test.go              # S3 endpoint/credential tests
+│   ├── telegram/notify.go         # Telegram run report (Bot API, stdlib net/http)
+│   ├── telegram/telegram_test.go  # Report formatting + send tests
 │   └── utils/
 │       ├── http.go                # HTTP client (context-aware, configurable SSL)
 │       ├── probe.go               # URL availability probing: HEAD + GET Range fallback, concurrent ProbeURLs
@@ -92,6 +94,7 @@ iptv/
 | `ProbeTimeout()` | `PROBE_TIMEOUT_SECONDS` | `5s` |
 | `ProbeConcurrency()` | `PROBE_CONCURRENCY` | `20` |
 | `MaxChannelVariants()` | `MAX_CHANNEL_VARIANTS` | `1` (1-5) |
+| `TelegramUserID()` / `TelegramBotToken()` | `TELEGRAM_USER_ID` / `TELEGRAM_BOT_TOKEN` | — (optional; report skipped when either is empty) |
 | `EnsureOutputDir()` | — | creates output dir via `os.MkdirAll` |
 
 Local filenames are derived from S3 keys, not from `OUTPUT_DIR`: `LocalFilteredPlaylistPath()` = `S3_OBJECT_KEY` (e.g. `playlist.m3u`), `LocalAllCategoriesPlaylistPath()` = `S3_OBJECT_KEY` with `-all` inserted before the extension, `LocalFilteredEPGPath()` = `S3_EPG_KEY` with `-filtered` inserted (e.g. `epg.xml-filtered.gz`). `LOCAL_EPG_PATH` (`epg.xml.gz`) exists in config and CI secrets but is **not** consumed by `main.go`.
@@ -126,6 +129,7 @@ Runtime flow (`run()` in `main.go`):
 6. Save `playlist.m3u` (filtered) and `playlist-all.m3u` (unfiltered) into `OUTPUT_DIR`
 7. If `EPG_SOURCE_URL` set: `m3u.AddTvgIDsToPlaylist` (exact + normalized + fuzzy edit-distance matching) → `m3u.InheritTvgIDsFromSiblings` (EPG-validated id copying between variants) → re-save → `ExtractChannelInfoFromPlaylist` → `FilterEPGContent` → save `epg.xml-filtered.gz` → upload EPG to S3
 8. Not dry-run: create one reusable `s3.Client`, then `UploadBoth` the filtered + all-categories playlists (archive + direct each)
+9. Not dry-run, if `TELEGRAM_USER_ID` + `TELEGRAM_BOT_TOKEN` are set: send the run report to Telegram — downloaded/filtered bytes for playlists + EPG, data reduction, and the URLs of EPG sources that failed but were skipped (only sent after a fully successful run)
 
 ### internal/m3u/processor.go
 
@@ -171,6 +175,7 @@ Filtering steps per entry:
 - `DownloadEPGToFile(ctx, url, cfg)` — comma-separated `EPG_SOURCE_URL` is split; with multiple sources each is downloaded **concurrently** (one goroutine per source, each with its own retry, original URL order preserved for deterministic merge) to a bounded temp XML and merged by `mergeEPGFiles` into one file: `<channel>` deduplicated by id (display-names unioned across sources, first icon kept), `<programme>` copied from all sources (deduplicated by channel+start), all channels before all programmes so the streaming filter resolves ids in time. **Tolerant to failing sources**: a source that keeps failing (403/5xx/timeout) is logged as a warning and skipped so the remaining sources still produce the merged EPG — the run fails only when *all* sources fail. The single-source path uses the same per-source retry (retry lives inside `DownloadEPGToFile`, not in `main.go`). Download paths are unique per source (`original_<rand>_<name>`, removed after expansion) so same-basename sources never collide
 - `ExtractChannelInfoFromPlaylist()` — extracts `tvg-id` → category and channel name → category from M3U (channel names are emoji-stripped so they match EPG display names)
 - `BuildEPGNameToIDMap()` — streaming parse (only `<channel>` elements) to build lowercase display-name → channel-id map; used by the single-source path and small in-memory callers. **Multi-source path never parses the merged EPG twice**: `DownloadEPGToFile` returns the name→id map built during the merge's channel scan (no second pass over the up-to-500MB merged XML).
+- `DownloadEPGToFile` returns `*DownloadResult{Path, NameToID, DownloadedBytes, FailedURLs}` — `DownloadedBytes` is the total raw bytes downloaded across sources (pre-decompression, feeds the Telegram run report); `FailedURLs` lists the URLs of sources skipped after repeated failures.
 - `FilterEPGContent()` — **single-pass streaming** `xml.Decoder` parsing:
   - Pre-computes retention window (`time.Now()` once, not per programme)
   - First pass: builds EPG channel display-name map
@@ -193,6 +198,15 @@ Filtering steps per entry:
 - Default `Content-Type`: `application/x-mpegurl` for M3U, `application/gzip` for EPG
 - Metadata: `uploaded-by: iptv-m3u-filter`, `upload-timestamp`, `source-file`, size info
 - Nil-client guard: all functions return error if client is nil
+
+### internal/telegram/
+
+**Telegram run report** (stdlib `net/http` only, no new dependencies):
+
+- `Report{PlaylistsDownloadedBytes, PlaylistsFilteredBytes, EPGDownloadedBytes, EPGFilteredBytes, FailedURLs}` — statistics payload
+- `FormatReport(r)` — renders the message (📊 header, playlist/EPG sections with downloaded bytes + reduction in bytes and %, ⚠️ failed-URLs section; EPG/failed sections omitted when empty)
+- `SendReport(ctx, botToken, chatID, report, skipSSL)` — POST `api.telegram.org/bot<TOKEN>/sendMessage` (form-encoded `chat_id` + `text`, `disable_web_page_preview`), retry 3×/2s/2x like other network ops; bot token lives in the request path and is never logged (sanitizer masks URLs)
+- Sent only after a **fully successful** non-dry-run when both `TELEGRAM_USER_ID` and `TELEGRAM_BOT_TOKEN` are set; a send failure only logs a warning, it never fails the run
 
 ### internal/utils/
 
@@ -260,12 +274,13 @@ Two jobs in `.github/workflows/filter-m3u.yml`. Triggers: daily cron (`0 0 * * *
 - Probing is sped up in CI: `PROBE_CONCURRENCY=100`, `PROBE_TIMEOUT_SECONDS=4` (defaults elsewhere are 20 / 5s) — the full ~2600-URL probe takes ~3-4 min instead of ~15 min
 - **No artifact upload** — playlists contain personal data (artifact upload was removed; don't re-add it)
 
-Secrets: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `M3U_SOURCE_URL`, `S3_BUCKET_NAME`, `S3_OBJECT_KEY`, `S3_ENDPOINT_URL`, `S3_REGION`, `S3_EPG_KEY`, `EPG_SOURCE_URL`, `LOCAL_EPG_PATH`
+Secrets: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `M3U_SOURCE_URL`, `S3_BUCKET_NAME`, `S3_OBJECT_KEY`, `S3_ENDPOINT_URL`, `S3_REGION`, `S3_EPG_KEY`, `EPG_SOURCE_URL`, `LOCAL_EPG_PATH`, plus optional `TELEGRAM_USER_ID` / `TELEGRAM_BOT_TOKEN` to enable the Telegram run report (not required — report is skipped when absent)
 
 ## Workflow & conventions
 
 - Conventional commits: `feat:`, `fix:`, `docs:`, `refactor:`, `test:`, `chore:`
 - Branch names like `feat/<slug>` / `fix/<slug>`; open PRs against `main`; put `Closes #<issue>` in the PR body
+- **Post-task follow-up**: after completing any task, always ask the user whether they want to (a) create a branch, (b) commit the changes, (c) create a GitHub issue, (d) open a merge request/PR — do not do any of these without the user's confirmation. Use the GitHub CLI (`gh`) for issue/PR creation: `gh issue create`, `gh pr create --base main` (with `Closes #<issue>` in the PR body)
 - `CLAUDE.md` is stale Python-era docs (gitignored) — trust `AGENTS.md` instead
 
 ## Environment quirks

@@ -88,15 +88,27 @@ type Rating struct {
 	Value  string `xml:"value"`
 }
 
+// DownloadResult carries the outcome of DownloadEPGToFile: the expanded XML
+// path, the lowercase display-name → channel-id map, the total raw bytes
+// downloaded across all sources (before decompression), and the URLs of any
+// sources that failed but were skipped (the run is tolerant of partial EPG
+// failures).
+type DownloadResult struct {
+	Path            string
+	NameToID        map[string]string
+	DownloadedBytes int64
+	FailedURLs      []string
+}
+
 // DownloadEPG downloads and decompresses (gz/zip) EPG content. New callers
 // should prefer DownloadEPGToFile to avoid holding a large EPG in memory.
 func DownloadEPG(ctx context.Context, urlStr string, cfg *config.Config) (string, error) {
-	filePath, _, err := DownloadEPGToFile(ctx, urlStr, cfg)
+	res, err := DownloadEPGToFile(ctx, urlStr, cfg)
 	if err != nil {
 		return "", err
 	}
-	defer os.Remove(filePath)
-	content, err := os.ReadFile(filePath)
+	defer os.Remove(res.Path)
+	content, err := os.ReadFile(res.Path)
 	if err != nil {
 		return "", fmt.Errorf("read downloaded EPG: %w", err)
 	}
@@ -127,28 +139,30 @@ func parseEPGSourceURLs(urlStr string) []string {
 // sources the map is built during the merge's channel scan, so the (up to
 // 500MB) merged XML is never parsed a second time; the single-source path
 // streams the decompressed file once to build the map.
-func DownloadEPGToFile(ctx context.Context, urlStr string, cfg *config.Config) (string, map[string]string, error) {
+func DownloadEPGToFile(ctx context.Context, urlStr string, cfg *config.Config) (*DownloadResult, error) {
 	urls := parseEPGSourceURLs(urlStr)
 	if len(urls) == 0 {
-		return "", nil, fmt.Errorf("EPG_SOURCE_URL must contain at least one URL")
+		return nil, fmt.Errorf("EPG_SOURCE_URL must contain at least one URL")
 	}
 	if len(urls) == 1 {
-		p, err := downloadSingleEPGToFileWithRetry(ctx, urls[0], cfg)
+		p, downloaded, err := downloadSingleEPGToFileWithRetry(ctx, urls[0], cfg)
 		if err != nil {
-			return "", nil, err
+			return nil, err
 		}
 		nameToID, err := BuildEPGNameToIDMapFromFile(p)
 		if err != nil {
 			_ = os.Remove(p)
-			return "", nil, err
+			return nil, err
 		}
-		return p, nameToID, nil
+		return &DownloadResult{Path: p, NameToID: nameToID, DownloadedBytes: downloaded}, nil
 	}
 
 	logger.Info("Downloading and merging %d EPG sources", len(urls))
 	var paths []string
 	var failedSources int
 	var lastErr error
+	var downloadedBytes int64
+	var failedURLs []string
 	defer func() {
 		for _, p := range paths {
 			if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
@@ -161,8 +175,9 @@ func DownloadEPGToFile(ctx context.Context, urlStr string, cfg *config.Config) (
 	// source does not delay the others. paths keeps the original URL order so
 	// the merged EPG is deterministic.
 	type sourceResult struct {
-		path string
-		err  error
+		path            string
+		downloadedBytes int64
+		err             error
 	}
 	results := make([]sourceResult, len(urls))
 	var wg sync.WaitGroup
@@ -170,8 +185,8 @@ func DownloadEPGToFile(ctx context.Context, urlStr string, cfg *config.Config) (
 		wg.Add(1)
 		go func(i int, u string) {
 			defer wg.Done()
-			p, err := downloadSingleEPGToFileWithRetry(ctx, u, cfg)
-			results[i] = sourceResult{path: p, err: err}
+			p, n, err := downloadSingleEPGToFileWithRetry(ctx, u, cfg)
+			results[i] = sourceResult{path: p, downloadedBytes: n, err: err}
 		}(i, u)
 	}
 	wg.Wait()
@@ -180,13 +195,15 @@ func DownloadEPGToFile(ctx context.Context, urlStr string, cfg *config.Config) (
 		if r.err != nil {
 			failedSources++
 			lastErr = r.err
+			failedURLs = append(failedURLs, urls[i])
 			logger.Warning("EPG source %s failed: %v — skipping it, continuing with remaining sources", urls[i], r.err)
 			continue
 		}
 		paths = append(paths, r.path)
+		downloadedBytes += r.downloadedBytes
 	}
 	if len(paths) == 0 {
-		return "", nil, fmt.Errorf("all %d EPG sources failed to download (last error: %v)", len(urls), lastErr)
+		return nil, fmt.Errorf("all %d EPG sources failed to download (last error: %v)", len(urls), lastErr)
 	}
 	if failedSources > 0 {
 		logger.Warning("Continuing with %d of %d EPG sources (%d skipped)", len(paths), len(urls), failedSources)
@@ -194,43 +211,46 @@ func DownloadEPGToFile(ctx context.Context, urlStr string, cfg *config.Config) (
 
 	merged, err := os.CreateTemp(cfg.OutputDir(), "epg-merged-*.xml")
 	if err != nil {
-		return "", nil, fmt.Errorf("create merged EPG file: %w", err)
+		return nil, fmt.Errorf("create merged EPG file: %w", err)
 	}
 	mergedPath := merged.Name()
 	if err := merged.Close(); err != nil {
-		return "", nil, fmt.Errorf("close merged EPG file: %w", err)
+		return nil, fmt.Errorf("close merged EPG file: %w", err)
 	}
 	// Карта имени→id собирается прямо при сканировании каналов в ходе мержа —
 	// повторный полный парс (до 500 МБ) объединённого XML не нужен.
 	nameToID := make(map[string]string)
 	if err := mergeEPGFiles(paths, mergedPath, nameToID); err != nil {
 		_ = os.Remove(mergedPath)
-		return "", nil, err
+		return nil, err
 	}
 	logger.Info("Merged EPG saved as: %s", mergedPath)
-	return mergedPath, nameToID, nil
+	return &DownloadResult{Path: mergedPath, NameToID: nameToID, DownloadedBytes: downloadedBytes, FailedURLs: failedURLs}, nil
 }
 
 // downloadSingleEPGToFileWithRetry downloads one EPG URL with retries and
-// expands it into a bounded temporary XML file.
-func downloadSingleEPGToFileWithRetry(ctx context.Context, urlStr string, cfg *config.Config) (string, error) {
+// expands it into a bounded temporary XML file. It returns the expanded XML
+// path and the raw downloaded bytes (before decompression).
+func downloadSingleEPGToFileWithRetry(ctx context.Context, urlStr string, cfg *config.Config) (string, int64, error) {
 	var p string
+	var n int64
 	err := utils.RetryWithContext(ctx, 3, 2*time.Second, 2.0, func() error {
 		var e error
-		p, e = downloadSingleEPGToFile(ctx, urlStr, cfg)
+		p, n, e = downloadSingleEPGToFile(ctx, urlStr, cfg)
 		return e
 	})
-	return p, err
+	return p, n, err
 }
 
 // downloadSingleEPGToFile downloads one EPG URL and expands it into a bounded
-// temporary XML file.
-func downloadSingleEPGToFile(ctx context.Context, urlStr string, cfg *config.Config) (string, error) {
+// temporary XML file. It returns the expanded XML path and the raw downloaded
+// bytes (before decompression).
+func downloadSingleEPGToFile(ctx context.Context, urlStr string, cfg *config.Config) (string, int64, error) {
 	logger.Info("Downloading EPG file from: %s", urlStr)
 
 	outputDir := cfg.OutputDir()
 	if err := os.MkdirAll(outputDir, 0755); err != nil {
-		return "", fmt.Errorf("create EPG output directory: %w", err)
+		return "", 0, fmt.Errorf("create EPG output directory: %w", err)
 	}
 	parsedURL, _ := url.Parse(urlStr)
 	fname := path.Base(parsedURL.Path)
@@ -241,11 +261,11 @@ func downloadSingleEPGToFile(ctx context.Context, urlStr string, cfg *config.Con
 	// basename do not overwrite each other. Removed after expansion.
 	originalFile, err := os.CreateTemp(outputDir, "original_*_"+fname)
 	if err != nil {
-		return "", fmt.Errorf("create EPG download file: %w", err)
+		return "", 0, fmt.Errorf("create EPG download file: %w", err)
 	}
 	originalFilePath := originalFile.Name()
 	if err := originalFile.Close(); err != nil {
-		return "", fmt.Errorf("close EPG download file: %w", err)
+		return "", 0, fmt.Errorf("close EPG download file: %w", err)
 	}
 	defer func() {
 		if err := os.Remove(originalFilePath); err != nil && !os.IsNotExist(err) {
@@ -253,17 +273,19 @@ func downloadSingleEPGToFile(ctx context.Context, urlStr string, cfg *config.Con
 		}
 	}()
 
+	var downloadedBytes int64
 	if err := utils.DownloadFileToPathWithContext(ctx, urlStr, originalFilePath, int64(config.MaxEPGFileSize), cfg.SkipSSLVerify()); err != nil {
 		logger.Error("Error downloading EPG file: %v", err)
-		return "", err
+		return "", 0, err
 	}
 	if fi, err := os.Stat(originalFilePath); err == nil {
+		downloadedBytes = fi.Size()
 		logger.Info("Original EPG file saved as: %s (size: %.2f KB)", originalFilePath, float64(fi.Size())/1024)
 	}
 
 	decompressed, err := os.CreateTemp(outputDir, "epg-source-*.xml")
 	if err != nil {
-		return "", fmt.Errorf("create EPG XML file: %w", err)
+		return "", 0, fmt.Errorf("create EPG XML file: %w", err)
 	}
 	decompressedPath := decompressed.Name()
 	success := false
@@ -275,16 +297,16 @@ func downloadSingleEPGToFile(ctx context.Context, urlStr string, cfg *config.Con
 	}()
 
 	if err := expandEPGFile(originalFilePath, decompressed, int64(config.MaxEPGFileSize)); err != nil {
-		return "", err
+		return "", 0, err
 	}
 	if err := decompressed.Close(); err != nil {
-		return "", fmt.Errorf("close expanded EPG: %w", err)
+		return "", 0, fmt.Errorf("close expanded EPG: %w", err)
 	}
 	if fi, err := os.Stat(decompressedPath); err == nil {
 		logger.Info("EPG file downloaded successfully, expanded size: %.2f KB", float64(fi.Size())/1024)
 	}
 	success = true
-	return decompressedPath, nil
+	return decompressedPath, downloadedBytes, nil
 }
 
 func expandEPGFile(sourcePath string, destination io.Writer, maxSize int64) error {

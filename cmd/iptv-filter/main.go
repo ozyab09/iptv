@@ -17,6 +17,7 @@ import (
 	"github.com/ozyab/iptv/internal/epg"
 	"github.com/ozyab/iptv/internal/m3u"
 	"github.com/ozyab/iptv/internal/s3"
+	"github.com/ozyab/iptv/internal/telegram"
 	"github.com/ozyab/iptv/internal/utils"
 )
 
@@ -242,6 +243,7 @@ func run() int {
 
 	allOriginal := make([]string, len(m3uURLs))
 	allFiltered := make([]string, len(m3uURLs))
+	var m3uDownloadedBytes int64
 	for res := range results {
 		if res.err != nil {
 			log.Error("Failed to download M3U from %s: %v", m3uURLs[res.idx], res.err)
@@ -249,6 +251,7 @@ func run() int {
 		}
 		allOriginal[res.idx] = res.original
 		allFiltered[res.idx] = res.filtered
+		m3uDownloadedBytes += int64(len(res.original))
 	}
 
 	filteredContent := mergeParts(allFiltered)
@@ -278,17 +281,24 @@ func run() int {
 	var epgPath string
 	var epgNameToIDMap map[string]string
 	var epgIDSet map[string]bool
+	var epgDownloadedBytes int64
+	var epgFailedURLs []string
 	if epgURL != "" {
 		// Retry is handled per-source inside DownloadEPGToFile: a failing source
 		// is retried and skipped (with a warning) so the remaining sources still
 		// produce a merged EPG. The name→id map is built during the merge, so
-		// the merged XML is not parsed a second time.
-		var e error
-		epgPath, epgNameToIDMap, e = epg.DownloadEPGToFile(ctx, epgURL, cfg)
-		if e != nil {
-			log.Error("Failed to download EPG: %v", e)
+		// the merged XML is not parsed a second time. The result also carries
+		// the total downloaded bytes and the URLs of skipped sources, which feed
+		// the Telegram run report.
+		res, err := epg.DownloadEPGToFile(ctx, epgURL, cfg)
+		if err != nil {
+			log.Error("Failed to download EPG: %v", err)
 			return 1
 		}
+		epgPath = res.Path
+		epgNameToIDMap = res.NameToID
+		epgDownloadedBytes = res.DownloadedBytes
+		epgFailedURLs = res.FailedURLs
 		log.Info("Built EPG name-to-id map with %d entries", len(epgNameToIDMap))
 		epgIDSet = make(map[string]bool, len(epgNameToIDMap))
 		for _, id := range epgNameToIDMap {
@@ -340,12 +350,16 @@ func run() int {
 	}
 
 	// Step 5: Process EPG (content downloaded once in step 2b).
+	var filteredEPGBytes int64
 	if epgURL != "" {
 		var err error
 		filteredContent, err = processEPG(ctx, cfg, epgPath, epgNameToIDMap, epgIDSet, filteredContent, s3Client, dryRun)
 		if err != nil {
 			log.Error("EPG processing failed: %v", err)
 			return 1
+		}
+		if fi, err := os.Stat(path.Join(cfg.OutputDir(), cfg.LocalFilteredEPGPath())); err == nil {
+			filteredEPGBytes = fi.Size()
 		}
 	}
 
@@ -362,6 +376,24 @@ func run() int {
 	if err := uploadBoth(ctx, s3Client, originalContent, s3Bucket, s3AllKey); err != nil {
 		log.Error("Failed to upload unfiltered playlist: %v", err)
 		return 1
+	}
+
+	// Step 7: Send run statistics to Telegram. Only on a fully successful
+	// non-dry-run, and only when both TELEGRAM_USER_ID and TELEGRAM_BOT_TOKEN
+	// are set; otherwise the report is skipped entirely.
+	if cfg.TelegramEnabled() {
+		report := telegram.Report{
+			PlaylistsDownloadedBytes: m3uDownloadedBytes,
+			PlaylistsFilteredBytes:   int64(len(filteredContent)),
+			EPGDownloadedBytes:       epgDownloadedBytes,
+			EPGFilteredBytes:         filteredEPGBytes,
+			FailedURLs:               epgFailedURLs,
+		}
+		if err := telegram.SendReport(ctx, cfg.TelegramBotToken(), cfg.TelegramUserID(), report, skipSSL); err != nil {
+			log.Warning("Failed to send Telegram report: %v", err)
+		} else {
+			log.Info("Telegram report sent")
+		}
 	}
 
 	log.Info("Process completed successfully")

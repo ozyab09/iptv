@@ -741,13 +741,13 @@ func TestDownloadEPGToFileSkipsFailedSource(t *testing.T) {
 	defer server.Close()
 
 	urls := server.URL + "/good.xml.gz," + server.URL + "/blocked.xml.gz"
-	mergedPath, nameToID, err := DownloadEPGToFile(context.Background(), urls, cfg)
+	res, err := DownloadEPGToFile(context.Background(), urls, cfg)
 	if err != nil {
 		t.Fatalf("DownloadEPGToFile should skip the failed source and succeed, got error: %v", err)
 	}
-	defer os.Remove(mergedPath)
+	defer os.Remove(res.Path)
 
-	data, err := os.ReadFile(mergedPath)
+	data, err := os.ReadFile(res.Path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -757,8 +757,16 @@ func TestDownloadEPGToFileSkipsFailedSource(t *testing.T) {
 	if !strings.Contains(string(data), "Breakfast") {
 		t.Errorf("expected programme from the good source in merged EPG:\n%s", data)
 	}
-	if nameToID["bbc news"] != "bbc" {
-		t.Errorf("expected name→id map from the good source, got: %v", nameToID)
+	if res.NameToID["bbc news"] != "bbc" {
+		t.Errorf("expected name→id map from the good source, got: %v", res.NameToID)
+	}
+	// Tolerant source failure: the blocked URL must be reported, and the
+	// downloaded bytes must count the good source only.
+	if len(res.FailedURLs) != 1 || !strings.HasSuffix(res.FailedURLs[0], "/blocked.xml.gz") {
+		t.Errorf("expected the blocked source URL in FailedURLs, got: %v", res.FailedURLs)
+	}
+	if res.DownloadedBytes != int64(goodBuf.Len()) {
+		t.Errorf("expected DownloadedBytes=%d (good source only), got %d", goodBuf.Len(), res.DownloadedBytes)
 	}
 }
 
@@ -775,7 +783,7 @@ func TestDownloadEPGToFileFailsWhenAllSourcesFail(t *testing.T) {
 	defer server.Close()
 
 	urls := server.URL + "/a.xml.gz," + server.URL + "/b.xml.gz"
-	if _, _, err := DownloadEPGToFile(context.Background(), urls, cfg); err == nil {
+	if _, err := DownloadEPGToFile(context.Background(), urls, cfg); err == nil {
 		t.Fatal("DownloadEPGToFile should fail when all sources fail")
 	}
 }
