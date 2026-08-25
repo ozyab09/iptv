@@ -61,6 +61,10 @@ jobs:
     # чтобы не ломать TestProbeConfigDefaults в test job (он ждёт default=false).
     env:
       CATEGORIES_FILE_PATH: categories.txt
+      # Telegram-отчёт по итогам прогона (нужен только этому job'у; без этих
+      # переменных отчёт не отправляется вообще).
+      TELEGRAM_USER_ID: ${{ secrets.TELEGRAM_USER_ID }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
       # Опрос доступности источников (HEAD+GET Range). В dry-run (PR) probe пропускается.
       PROBE_SOURCES: "true"
       # Ускорение пробы: 100 параллельных запросов (было 20) и таймаут 4 с (было 5 с) —
