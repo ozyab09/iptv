@@ -150,6 +150,89 @@ func TestRunFailsOnM3UHTTPError(t *testing.T) {
 	}
 }
 
+// TestRunToleratesFailedM3USource verifies that a failing M3U source is
+// skipped with a warning and the run continues with the remaining sources
+// (the same tolerance EPG sources have). The merged playlist must still carry
+// the #EXTM3U header even though the first source failed.
+func TestRunToleratesFailedM3USource(t *testing.T) {
+	clearConfigEnv(t)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/good.m3u", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(happyPlaylist))
+	})
+	mux.HandleFunc("/bad.m3u", func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "upstream unavailable", http.StatusServiceUnavailable)
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	outDir := t.TempDir()
+	// The failing source comes first so a naive "header from part 0 only"
+	// merge would produce a header-less playlist.
+	t.Setenv("M3U_SOURCE_URL", server.URL+"/bad.m3u,"+server.URL+"/good.m3u")
+	t.Setenv("DRY_RUN", "true")
+	t.Setenv("OUTPUT_DIR", outDir)
+
+	if got := run(); got != 0 {
+		t.Fatalf("run() = %d, want 0 when at least one M3U source succeeds", got)
+	}
+	filtered, err := os.ReadFile(filepath.Join(outDir, "playlist.m3u"))
+	if err != nil {
+		t.Fatalf("read filtered playlist: %v", err)
+	}
+	if !strings.HasPrefix(strings.TrimSpace(string(filtered)), "#EXTM3U") {
+		t.Errorf("expected #EXTM3U header even when the first source fails:\n%s", filtered)
+	}
+	if m3u.CountChannels(string(filtered)) != 2 {
+		t.Errorf("expected 2 channels from the good source, got:\n%s", filtered)
+	}
+}
+
+func TestRunFailsWhenAllM3USourcesFail(t *testing.T) {
+	clearConfigEnv(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "upstream unavailable", http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+
+	t.Setenv("M3U_SOURCE_URL", server.URL+"/a.m3u,"+server.URL+"/b.m3u")
+	t.Setenv("DRY_RUN", "true")
+	t.Setenv("OUTPUT_DIR", t.TempDir())
+
+	if got := run(); got != 1 {
+		t.Fatalf("run() = %d, want 1 when every M3U source fails", got)
+	}
+}
+
+// TestBuildTelegramReportIncludesFailedPlaylistURL verifies that a failed
+// playlist source URL reaches the Telegram report's failed-URLs list.
+func TestBuildTelegramReportIncludesFailedPlaylistURL(t *testing.T) {
+	r := buildTelegramReport(1000, "filtered", 0, 0, []string{"https://bad.example/pl.m3u", "https://bad.example/epg.xml.gz"})
+	if len(r.FailedURLs) != 2 {
+		t.Fatalf("expected 2 failed URLs, got: %v", r.FailedURLs)
+	}
+	if r.FailedURLs[0] != "https://bad.example/pl.m3u" {
+		t.Errorf("expected the failed playlist URL first, got %q", r.FailedURLs[0])
+	}
+}
+
+// TestMergePartsKeepsFirstHeaderFromAnyPart verifies mergeParts keeps the
+// #EXTM3U header even when the first part is empty (a failed source).
+func TestMergePartsKeepsFirstHeaderFromAnyPart(t *testing.T) {
+	header := "#EXTM3U\n"
+	part := header + "#EXTINF:-1 group-title=\"Общие\",Ch\nhttp://example.com/1.m3u8\n"
+	merged := mergeParts([]string{"", part})
+	if !strings.HasPrefix(merged, "#EXTM3U") {
+		t.Errorf("expected merged output to start with #EXTM3U, got: %q", merged)
+	}
+	if got := strings.Count(merged, "#EXTM3U"); got != 1 {
+		t.Errorf("expected exactly 1 #EXTM3U header, got %d", got)
+	}
+	if m3u.CountChannels(merged) != 1 {
+		t.Errorf("expected 1 channel in merged output, got:\n%s", merged)
+	}
+}
+
 func TestRunFailsOnEPGDownloadError(t *testing.T) {
 	clearConfigEnv(t)
 	mux := http.NewServeMux()

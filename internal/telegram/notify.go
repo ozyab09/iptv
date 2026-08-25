@@ -38,8 +38,9 @@ type Report struct {
 	// EPGFilteredBytes is the filtered EPG size in bytes (gzip-compressed).
 	// Zero when EPG is not configured.
 	EPGFilteredBytes int64
-	// FailedURLs lists source URLs (currently EPG sources, which are tolerant)
-	// that failed to download but did not abort the run.
+	// FailedURLs lists source URLs (playlist and/or EPG sources) that failed to
+	// download but were skipped — the run continued with the remaining sources
+	// instead of aborting.
 	FailedURLs []string
 }
 

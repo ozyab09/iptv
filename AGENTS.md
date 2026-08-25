@@ -122,14 +122,14 @@ Local filenames are derived from S3 keys, not from `OUTPUT_DIR`: `LocalFilteredP
 
 Runtime flow (`run()` in `main.go`):
 1. `config.New()` → `Validate()` (exits with 1 on validation errors)
-2. `M3U_SOURCE_URL` is **comma-separated**; each source is downloaded + `FilterContent`-ed independently, then merged via `mergeParts` (keeps only the first `#EXTM3U` header line, drops blank lines)
+2. `M3U_SOURCE_URL` is **comma-separated**; each source is downloaded + `FilterContent`-ed independently, then merged via `mergeParts` (keeps only the first `#EXTM3U` header line, drops blank lines). M3U sources are **tolerant** like EPG sources: a source that keeps failing is skipped with a warning and its URL lands in the Telegram run report — the run fails only when every M3U source fails
 3. `applyMetadata` — runs `categories.txt` overrides (only if `CATEGORIES_FILE_PATH` set); then `NormalizeCategories` — collapses duplicate/provider categories into canonical names (`CategoryAliases`) and moves anything not on the `AllowedCategories` allow-list to `FallbackCategory`; then `ClassifyFallbackCategories` — reclassifies channels left in the fallback into a genre category when their name contains an unambiguous keyword (`CategoryKeywords`, e.g. `футбол` → Спорт; ~1 200 channels rescued from "Основные"), and removes channels matching `CategoriesToRemoveByKeyword` («Кино», «Спорт»; ~857 channels) entirely
 4. If `EPG_SOURCE_URL` set: download EPG **once, early** (`DownloadEPGToFile` returns the name→id map built during the merge) so its channel-id set can validate inherited tvg-ids during dedup; the same content is reused by the EPG filtering step later (no double download, no second full parse)
 5. If `PROBE_SOURCES=true`: `m3u.DeduplicateByName(..., validEPGIDs)` — groups by normalized name, ranks by quality, probes candidate URLs of duplicate groups (HEAD + GET fallback, `PROBE_CONCURRENCY` workers, `PROBE_TIMEOUT_SECONDS` per request, per-entry `#EXTVLCOPT` user-agent/referrer sent when present), keeps `MAX_CHANNEL_VARIANTS` working sources per channel; single-variant channels pass through unprobed; all-dead groups fall back to the best-quality variant; kept entries lacking a `tvg-id` inherit one from sibling variants when the id exists in the EPG (stale ids are never inherited). **In dry-run (`DRY_RUN=true`) availability probing is skipped** — the probe callback is nil, so dedup keeps the best-quality variant per channel without checking sources (no network probing)
 6. Save `playlist.m3u` (filtered) and `playlist-all.m3u` (unfiltered) into `OUTPUT_DIR`
 7. If `EPG_SOURCE_URL` set: `m3u.AddTvgIDsToPlaylist` (exact + normalized + fuzzy edit-distance matching) → `m3u.InheritTvgIDsFromSiblings` (EPG-validated id copying between variants) → re-save → `ExtractChannelInfoFromPlaylist` → `FilterEPGContent` → save `epg.xml-filtered.gz` → upload EPG to S3
 8. Not dry-run: create one reusable `s3.Client`, then `UploadBoth` the filtered + all-categories playlists (archive + direct each)
-9. Not dry-run, if `TELEGRAM_USER_ID` + `TELEGRAM_BOT_TOKEN` are set: send the run report to Telegram — downloaded/filtered bytes for playlists + EPG, data reduction, and the URLs of EPG sources that failed but were skipped (only sent after a fully successful run)
+9. Not dry-run, if `TELEGRAM_USER_ID` + `TELEGRAM_BOT_TOKEN` are set: send the run report to Telegram — downloaded/filtered bytes for playlists + EPG, data reduction, and the URLs of playlist/EPG sources that failed but were skipped (only sent after a fully successful run)
 
 ### internal/m3u/processor.go
 
@@ -141,7 +141,7 @@ DownloadM3U → FilterContent (NormalizeLineEndings → filterEntry → dedup �
 
 Key exported functions:
 - `DownloadM3U(url)` / `DownloadM3UWithContext(ctx, url, skipSSL)` — HTTP download with 100MB size limit
-- M3U sources are downloaded + filtered **in parallel** (bounded goroutines, source order preserved via index), each with its own retry — one slow/failing source does not block the others
+- M3U sources are downloaded + filtered **in parallel** (bounded goroutines, source order preserved via index), each with its own retry — one slow/failing source does not block the others; a source that keeps failing is skipped with a warning (its URL goes into the Telegram run report) and the run continues — it fails only when every M3U source fails
 - `FilterContent()` — main pipeline: normalization, category filtering (exact + substring), name exclusion, regional suffix removal, numeric suffix removal, `orig` removal, dedup, sort, emoji. Also rewrites the `#EXTM3U` header, injecting `tvg-url`/`url-tvg` = `BuildCustomEPGURL()`, and drops any line > 10000 chars. Entry pairing is stateful: the stream URL (any `scheme://`, incl. `rtmp://`) is attached to its entry even when separated by `#EXTVLCOPT`/`#KODIPROP` lines (only the first URL is kept), and entries that never receive a URL are dropped.
 - `RemoveDuplicateURLs()` — deduplicates by URL, merges attributes (tvg-id, group-title, tvg-logo, tvg-rec), keeps longest name
 - `SortPlaylistAlphabetically()` — A-Z by channel name (case-insensitive, stable sort)

@@ -48,7 +48,9 @@ func saveFile(content, filename string, cfg *config.Config) error {
 	return nil
 }
 
-// mergeParts combines multiple M3U playlists, keeping only the first #EXTM3U header.
+// mergeParts combines multiple M3U playlists, keeping only the first #EXTM3U
+// header (from whichever part provides it — a failed first source must not
+// strip the header from the merged output).
 func mergeParts(parts []string) string {
 	if len(parts) == 0 {
 		return ""
@@ -57,11 +59,11 @@ func mergeParts(parts []string) string {
 		return parts[0]
 	}
 	var mergedLines []string
-	for idx, part := range parts {
+	for _, part := range parts {
 		lines := strings.Split(part, "\n")
 		for _, line := range lines {
 			if strings.HasPrefix(strings.TrimSpace(line), "#EXTM3U") {
-				if idx == 0 && len(mergedLines) == 0 {
+				if len(mergedLines) == 0 {
 					mergedLines = append(mergedLines, line)
 				}
 				continue
@@ -178,6 +180,19 @@ func uploadBoth(ctx context.Context, client *awss3.Client, content, bucket, key 
 	})
 }
 
+// buildTelegramReport assembles the run statistics sent to Telegram. failedURLs
+// covers both playlist and EPG sources that failed but were skipped (the run
+// continued with the remaining sources).
+func buildTelegramReport(m3uDownloadedBytes int64, filteredContent string, epgDownloadedBytes, filteredEPGBytes int64, failedURLs []string) telegram.Report {
+	return telegram.Report{
+		PlaylistsDownloadedBytes: m3uDownloadedBytes,
+		PlaylistsFilteredBytes:   int64(len(filteredContent)),
+		EPGDownloadedBytes:       epgDownloadedBytes,
+		EPGFilteredBytes:         filteredEPGBytes,
+		FailedURLs:               failedURLs,
+	}
+}
+
 // ─── Pipeline ────────────────────────────────────────────────────────────────────
 
 func run() int {
@@ -217,7 +232,9 @@ func run() int {
 
 	// Step 1: Download and filter M3U sources in parallel (bounded concurrency,
 	// source order preserved via index). Each source keeps its own retry, so one
-	// slow/failing source does not block the others.
+	// slow/failing source does not block the others. A source that keeps failing
+	// is skipped with a warning and its URL lands in the Telegram run report;
+	// the run fails only when every M3U source fails.
 	type m3uResult struct {
 		idx      int
 		original string
@@ -244,14 +261,27 @@ func run() int {
 	allOriginal := make([]string, len(m3uURLs))
 	allFiltered := make([]string, len(m3uURLs))
 	var m3uDownloadedBytes int64
+	var m3uFailedURLs []string
+	var m3uLastErr error
+	failedSources := 0
 	for res := range results {
 		if res.err != nil {
-			log.Error("Failed to download M3U from %s: %v", m3uURLs[res.idx], res.err)
-			return 1
+			failedSources++
+			m3uLastErr = res.err
+			m3uFailedURLs = append(m3uFailedURLs, m3uURLs[res.idx])
+			log.Warning("M3U source %s failed: %v — skipping it, continuing with remaining sources", m3uURLs[res.idx], res.err)
+			continue
 		}
 		allOriginal[res.idx] = res.original
 		allFiltered[res.idx] = res.filtered
 		m3uDownloadedBytes += int64(len(res.original))
+	}
+	if failedSources == len(m3uURLs) {
+		log.Error("All %d M3U sources failed to download (last error: %v)", len(m3uURLs), m3uLastErr)
+		return 1
+	}
+	if failedSources > 0 {
+		log.Warning("Continuing with %d of %d M3U sources (%d skipped)", len(m3uURLs)-failedSources, len(m3uURLs), failedSources)
 	}
 
 	filteredContent := mergeParts(allFiltered)
@@ -382,13 +412,7 @@ func run() int {
 	// non-dry-run, and only when both TELEGRAM_USER_ID and TELEGRAM_BOT_TOKEN
 	// are set; otherwise the report is skipped entirely.
 	if cfg.TelegramEnabled() {
-		report := telegram.Report{
-			PlaylistsDownloadedBytes: m3uDownloadedBytes,
-			PlaylistsFilteredBytes:   int64(len(filteredContent)),
-			EPGDownloadedBytes:       epgDownloadedBytes,
-			EPGFilteredBytes:         filteredEPGBytes,
-			FailedURLs:               epgFailedURLs,
-		}
+		report := buildTelegramReport(m3uDownloadedBytes, filteredContent, epgDownloadedBytes, filteredEPGBytes, append(m3uFailedURLs, epgFailedURLs...))
 		if err := telegram.SendReport(ctx, cfg.TelegramBotToken(), cfg.TelegramUserID(), report, skipSSL); err != nil {
 			log.Warning("Failed to send Telegram report: %v", err)
 		} else {
