@@ -183,13 +183,15 @@ func uploadBoth(ctx context.Context, client *awss3.Client, content, bucket, key 
 // buildTelegramReport assembles the run statistics sent to Telegram. failedURLs
 // covers both playlist and EPG sources that failed but were skipped (the run
 // continued with the remaining sources).
-func buildTelegramReport(m3uDownloadedBytes int64, filteredContent string, epgDownloadedBytes, filteredEPGBytes int64, failedURLs []string) telegram.Report {
+func buildTelegramReport(m3uDownloadedBytes int64, filteredContent string, epgDownloadedBytes, filteredEPGBytes int64, failedURLs []string, deadBySource map[int]int, m3uSourceURLs []string) telegram.Report {
 	return telegram.Report{
 		PlaylistsDownloadedBytes: m3uDownloadedBytes,
 		PlaylistsFilteredBytes:   int64(len(filteredContent)),
 		EPGDownloadedBytes:       epgDownloadedBytes,
 		EPGFilteredBytes:         filteredEPGBytes,
 		FailedURLs:               failedURLs,
+		UnavailableBySource:      deadBySource,
+		M3USourceURLs:            m3uSourceURLs,
 	}
 }
 
@@ -284,6 +286,14 @@ func run() int {
 		log.Warning("Continuing with %d of %d M3U sources (%d skipped)", len(m3uURLs)-failedSources, len(m3uURLs), failedSources)
 	}
 
+	// Tag each filtered source with its index so DeduplicateByName can track
+	// per-source probe stats.
+	for i, f := range allFiltered {
+		if f != "" {
+			allFiltered[i] = m3u.TagSourceIdx(f, i)
+		}
+	}
+
 	filteredContent := mergeParts(allFiltered)
 	originalContent := mergeParts(allOriginal)
 
@@ -348,6 +358,7 @@ func run() int {
 	// Availability probing is skipped in dry-run: the probe callback stays nil,
 	// so dedup falls back to deterministic quality-first selection (best-quality
 	// variant per channel) without checking source availability.
+	var deadBySource map[int]int
 	if cfg.ProbeSources() {
 		var probe func(candidates []utils.ProbeCandidate) map[string]bool
 		if !dryRun {
@@ -355,7 +366,9 @@ func run() int {
 				return utils.ProbeCandidates(ctx, candidates, cfg.ProbeConcurrency(), cfg.ProbeTimeout(), skipSSL)
 			}
 		}
-		filteredContent = m3u.DeduplicateByName(filteredContent, cfg.MaxChannelVariants(), probe, epgIDSet)
+		dedupResult := m3u.DeduplicateByName(filteredContent, cfg.MaxChannelVariants(), probe, epgIDSet)
+		filteredContent = dedupResult.Content
+		deadBySource = dedupResult.DeadBySource
 	}
 
 	// Step 3: Save files locally.
@@ -412,7 +425,7 @@ func run() int {
 	// non-dry-run, and only when both TELEGRAM_USER_ID and TELEGRAM_BOT_TOKEN
 	// are set; otherwise the report is skipped entirely.
 	if cfg.TelegramEnabled() {
-		report := buildTelegramReport(m3uDownloadedBytes, filteredContent, epgDownloadedBytes, filteredEPGBytes, append(m3uFailedURLs, epgFailedURLs...))
+		report := buildTelegramReport(m3uDownloadedBytes, filteredContent, epgDownloadedBytes, filteredEPGBytes, append(m3uFailedURLs, epgFailedURLs...), deadBySource, m3uURLs)
 		if err := telegram.SendReport(ctx, cfg.TelegramBotToken(), cfg.TelegramUserID(), report, skipSSL); err != nil {
 			log.Warning("Failed to send Telegram report: %v", err)
 		} else {

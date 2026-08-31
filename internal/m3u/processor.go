@@ -94,6 +94,7 @@ func isStreamURL(line string) bool {
 type ChannelEntry struct {
 	EXTINFLine string
 	ExtraLines []string
+	SourceIdx  int // index into the M3U source list (-1 = unknown)
 }
 
 // ─── Parsing ─────────────────────────────────────────────────────────────────────
@@ -136,6 +137,57 @@ func channelNameFromEntry(entry ChannelEntry) string {
 		return strings.TrimSpace(parts[1])
 	}
 	return ""
+}
+
+// regSourceTag matches source index tags inserted by TagSourceIdx.
+var regSourceTag = regexp.MustCompile(`^#source:(\d+)$`)
+
+// extractSourceIdx reads the source index from a channel entry's ExtraLines.
+// Returns -1 if no source tag is found.
+func extractSourceIdx(entry ChannelEntry) int {
+	for _, l := range entry.ExtraLines {
+		if m := regSourceTag.FindStringSubmatch(strings.TrimSpace(l)); m != nil {
+			var n int
+			fmt.Sscanf(m[1], "%d", &n)
+			return n
+		}
+	}
+	return -1
+}
+
+// TagSourceIdx inserts a #source:N comment after each #EXTINF line (inside
+// the entry, before the URL). This metadata is used by DeduplicateByName to
+// track per-source probe stats.
+func TagSourceIdx(content string, sourceIdx int) string {
+	var out []string
+	for _, line := range strings.Split(content, "\n") {
+		out = append(out, line)
+		if strings.HasPrefix(strings.TrimSpace(line), "#EXTINF:") {
+			out = append(out, fmt.Sprintf("#source:%d", sourceIdx))
+		}
+	}
+	return strings.Join(out, "\n")
+}
+
+// StripSourceIdx removes #source:N comment lines from M3U content.
+func StripSourceIdx(content string) string {
+	var out []string
+	for _, line := range strings.Split(content, "\n") {
+		if regSourceTag.MatchString(strings.TrimSpace(line)) {
+			continue
+		}
+		out = append(out, line)
+	}
+	return strings.Join(out, "\n")
+}
+
+// DedupResult holds the output of DeduplicateByName.
+type DedupResult struct {
+	// Content is the filtered M3U playlist.
+	Content string
+	// DeadBySource maps source index → number of dead (unavailable) channels
+	// discovered during probing.
+	DeadBySource map[int]int
 }
 
 // ─── Emoji helpers ────────────────────────────────────────────────────────────────
@@ -335,7 +387,7 @@ func RemoveOrigSuffix(name string) string {
 //   - double spaces
 //   - normalizes "Name | Region" to "Name (Region)" so regional variants read
 //     consistently across sources
-//   - lowercases quality tokens ("HD"/"Hd"/"hd" → "hd", "4K" → "4k") so
+//   - uppercases quality tokens ("hd"/"Hd"/"HD" → "HD", "4k" → "4K") so
 //     the same channel reads identically regardless of source casing.
 func CleanChannelName(name string) string {
 	s := strings.TrimSpace(name)
@@ -352,9 +404,9 @@ func CleanChannelName(name string) string {
 		return m
 	})
 	s = regSpaces.ReplaceAllString(s, " ")
-	// Lowercase quality/format tokens so "365 Дней HD" and "365 дней hd"
-	// render identically ("365 дней hd").
-	s = regQualityCase.ReplaceAllStringFunc(s, strings.ToLower)
+	// Uppercase quality/format tokens so "365 Дней hd" and "365 дней HD"
+	// render identically ("365 дней HD").
+	s = regQualityCase.ReplaceAllStringFunc(s, strings.ToUpper)
 	return strings.TrimSpace(s)
 }
 
@@ -739,7 +791,7 @@ func inheritTvgID(group []dedupCandidate, selfIdx int, validEPGIDs map[string]bo
 // Kept entries that lack a tvg-id inherit it from a sibling variant in the same
 // group (option C merge): only ids present in validEPGIDs are inherited; a nil
 // validEPGIDs disables validation and inherits any non-empty id.
-func DeduplicateByName(content string, maxVariants int, probe func(candidates []utils.ProbeCandidate) map[string]bool, validEPGIDs map[string]bool) string {
+func DeduplicateByName(content string, maxVariants int, probe func(candidates []utils.ProbeCandidate) map[string]bool, validEPGIDs map[string]bool) DedupResult {
 	if maxVariants < 1 {
 		maxVariants = 1
 	}
@@ -791,6 +843,7 @@ func DeduplicateByName(content string, maxVariants int, probe func(candidates []
 	fallbackKept := 0
 	mergedTvgID := 0
 	groupsProbed := 0
+	deadBySource := make(map[int]int)
 
 	for _, key := range keys {
 		group := groups[key]
@@ -824,6 +877,9 @@ func DeduplicateByName(content string, maxVariants int, probe func(candidates []
 				count++
 			} else {
 				removed++
+				if !isAlive {
+					deadBySource[extractSourceIdx(cand.entry)]++
+				}
 			}
 		}
 		if count == 0 {
@@ -864,7 +920,10 @@ func DeduplicateByName(content string, maxVariants int, probe func(candidates []
 		finalLines = append(finalLines, e.EXTINFLine)
 		finalLines = append(finalLines, e.ExtraLines...)
 	}
-	return strings.Join(finalLines, "\n")
+	return DedupResult{
+		Content:       strings.Join(finalLines, "\n"),
+		DeadBySource:  deadBySource,
+	}
 }
 
 // SortPlaylistAlphabetically sorts playlist entries alphabetically by channel name.
