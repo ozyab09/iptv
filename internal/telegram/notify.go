@@ -42,6 +42,12 @@ type Report struct {
 	// download but were skipped — the run continued with the remaining sources
 	// instead of aborting.
 	FailedURLs []string
+	// UnavailableBySource maps M3U source index → number of unavailable channels
+	// discovered during availability probing. Empty when probing is disabled.
+	UnavailableBySource map[int]int
+	// M3USourceURLs is the list of M3U source URLs, indexed to match
+	// UnavailableBySource keys.
+	M3USourceURLs []string
 }
 
 // FormatReport renders the report as the Telegram message text.
@@ -63,6 +69,17 @@ func FormatReport(r Report) string {
 			formatBytes(r.EPGFilteredBytes),
 			formatBytes(r.EPGDownloadedBytes-r.EPGFilteredBytes),
 			reductionPercent(r.EPGDownloadedBytes, r.EPGFilteredBytes)))
+	}
+
+	if len(r.UnavailableBySource) > 0 {
+		b.WriteString("\n📡 Недоступные каналы по источникам:\n")
+		for idx, count := range r.UnavailableBySource {
+			source := "?"
+			if idx >= 0 && idx < len(r.M3USourceURLs) {
+				source = r.M3USourceURLs[idx]
+			}
+			b.WriteString(fmt.Sprintf("• %s: %d канал(ов) недоступно\n", source, count))
+		}
 	}
 
 	if len(r.FailedURLs) > 0 {

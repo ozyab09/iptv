@@ -748,16 +748,16 @@ http://example.com/one.m3u8`
 
 	result := DeduplicateByName(content, 1, nil, nil)
 
-	if !strings.Contains(result, "Канал HD") {
+	if !strings.Contains(result.Content, "Канал HD") {
 		t.Error("expected HD variant to be kept")
 	}
-	if strings.Contains(result, "Канал SD") {
+	if strings.Contains(result.Content, "Канал SD") {
 		t.Error("expected SD variant to be removed")
 	}
-	if !strings.Contains(result, "Одинокий канал") {
+	if !strings.Contains(result.Content, "Одинокий канал") {
 		t.Error("expected single-variant channel to stay untouched")
 	}
-	if c := CountChannels(result); c != 2 {
+	if c := CountChannels(result.Content); c != 2 {
 		t.Errorf("expected 2 channels, got %d", c)
 	}
 }
@@ -774,16 +774,16 @@ http://example.com/sd.m3u8`
 	result := DeduplicateByName(content, 1, nil, nil)
 
 	// "Канал HD" и "КАНАЛᴴᴰ" оба ранг 2 (HD) — остаётся первый по порядку.
-	if !strings.Contains(result, "Канал HD 🔴🐱") {
+	if !strings.Contains(result.Content, "Канал HD 🔴🐱") {
 		t.Error("expected HD variant (with emoji) to be kept")
 	}
-	if strings.Contains(result, "КАНАЛᴴᴰ") {
+	if strings.Contains(result.Content, "КАНАЛᴴᴰ") {
 		t.Error("expected unicode-HD variant to be deduplicated")
 	}
-	if strings.Contains(result, "Канал SD") {
+	if strings.Contains(result.Content, "Канал SD") {
 		t.Error("expected SD variant to be removed")
 	}
-	if c := CountChannels(result); c != 1 {
+	if c := CountChannels(result.Content); c != 1 {
 		t.Errorf("expected 1 channel, got %d", c)
 	}
 }
@@ -808,16 +808,16 @@ http://example.com/sd.m3u8`
 	result := DeduplicateByName(content, 1, probe, nil)
 
 	// Мёртвый 4K пропускается в пользу живого HD, несмотря на качество.
-	if !strings.Contains(result, "Канал HD") {
+	if !strings.Contains(result.Content, "Канал HD") {
 		t.Error("expected alive HD variant to be kept")
 	}
-	if strings.Contains(result, "Канал 4K") {
+	if strings.Contains(result.Content, "Канал 4K") {
 		t.Error("expected dead 4K variant to be removed")
 	}
-	if strings.Contains(result, "Канал SD") {
+	if strings.Contains(result.Content, "Канал SD") {
 		t.Error("expected dead SD variant to be removed")
 	}
-	if c := CountChannels(result); c != 1 {
+	if c := CountChannels(result.Content); c != 1 {
 		t.Errorf("expected 1 channel, got %d", c)
 	}
 }
@@ -863,13 +863,13 @@ http://example.com/sd.m3u8`
 
 	result := DeduplicateByName(content, 2, nil, nil)
 
-	if c := CountChannels(result); c != 2 {
+	if c := CountChannels(result.Content); c != 2 {
 		t.Errorf("expected 2 channels, got %d", c)
 	}
-	if !strings.Contains(result, "Канал FHD") || !strings.Contains(result, "Канал HD") {
+	if !strings.Contains(result.Content, "Канал FHD") || !strings.Contains(result.Content, "Канал HD") {
 		t.Error("expected FHD and HD variants to be kept")
 	}
-	if strings.Contains(result, "Канал SD") {
+	if strings.Contains(result.Content, "Канал SD") {
 		t.Error("expected SD variant to be removed")
 	}
 }
@@ -891,10 +891,10 @@ http://example.com/sd.m3u8`
 
 	result := DeduplicateByName(content, 1, probe, nil)
 
-	if !strings.Contains(result, "Канал 4K") {
+	if !strings.Contains(result.Content, "Канал 4K") {
 		t.Error("expected best-quality fallback to be kept when all variants are dead")
 	}
-	if c := CountChannels(result); c != 1 {
+	if c := CountChannels(result.Content); c != 1 {
 		t.Errorf("expected 1 channel, got %d", c)
 	}
 }
@@ -917,13 +917,13 @@ http://example.com/dead.m3u8`
 
 	// rtmp не пробируется (считается живым), мёртвый HD удаляется,
 	// несмотря на то что HD по качеству выше.
-	if !strings.Contains(result, "Канал") {
+	if !strings.Contains(result.Content, "Канал") {
 		t.Error("expected rtmp variant to be kept")
 	}
-	if strings.Contains(result, "Канал HD") {
+	if strings.Contains(result.Content, "Канал HD") {
 		t.Error("expected dead HD variant to be removed")
 	}
-	if c := CountChannels(result); c != 1 {
+	if c := CountChannels(result.Content); c != 1 {
 		t.Errorf("expected 1 channel, got %d", c)
 	}
 }
@@ -970,13 +970,13 @@ http://example.com/sd.m3u8`
 
 	result := DeduplicateByName(content, 1, nil, nil)
 
-	if !strings.Contains(result, "#EXTVLCOPT:http-user-agent=WINK/1.0") {
+	if !strings.Contains(result.Content, "#EXTVLCOPT:http-user-agent=WINK/1.0") {
 		t.Error("expected EXTVLCOPT line preserved with the kept variant")
 	}
-	if !strings.Contains(result, "https://example.com/hd.m3u8") {
+	if !strings.Contains(result.Content, "https://example.com/hd.m3u8") {
 		t.Error("expected kept variant URL to be preserved")
 	}
-	if strings.Contains(result, "Канал SD") {
+	if strings.Contains(result.Content, "Канал SD") {
 		t.Error("expected SD variant to be removed")
 	}
 }
@@ -991,16 +991,16 @@ http://example.com/sd.m3u8`
 	valid := map[string]bool{"123": true}
 	result := DeduplicateByName(content, 1, nil, valid)
 
-	if !strings.Contains(result, `tvg-id="123"`) {
+	if !strings.Contains(result.Content, `tvg-id="123"`) {
 		t.Error("expected tvg-id to be inherited from sibling variant")
 	}
-	if !strings.Contains(result, "Канал HD") {
+	if !strings.Contains(result.Content, "Канал HD") {
 		t.Error("expected HD variant to be kept")
 	}
-	if strings.Contains(result, "Канал SD") {
+	if strings.Contains(result.Content, "Канал SD") {
 		t.Error("expected SD variant to be removed")
 	}
-	if c := CountChannels(result); c != 1 {
+	if c := CountChannels(result.Content); c != 1 {
 		t.Errorf("expected 1 channel, got %d", c)
 	}
 }
@@ -1016,13 +1016,13 @@ http://example.com/sd.m3u8`
 	valid := map[string]bool{"456": true}
 	result := DeduplicateByName(content, 1, nil, valid)
 
-	if strings.Contains(result, `tvg-id="stale"`) {
+	if strings.Contains(result.Content, `tvg-id="stale"`) {
 		t.Error("expected stale sibling tvg-id NOT to be inherited")
 	}
-	if !strings.Contains(result, "Канал HD") {
+	if !strings.Contains(result.Content, "Канал HD") {
 		t.Error("expected HD variant to be kept")
 	}
-	for _, line := range strings.Split(result, "\n") {
+	for _, line := range strings.Split(result.Content, "\n") {
 		if strings.HasPrefix(strings.TrimSpace(line), "#EXTINF:") && strings.Contains(line, "Канал HD") {
 			if strings.Contains(line, "tvg-id=") {
 				t.Error("expected no tvg-id on winner when sibling id is stale")
@@ -1041,13 +1041,13 @@ http://example.com/sd.m3u8`
 	// validEPGIDs = nil → наследуется любой непустой id.
 	result := DeduplicateByName(content, 1, nil, nil)
 
-	if !strings.Contains(result, `tvg-id="777"`) {
+	if !strings.Contains(result.Content, `tvg-id="777"`) {
 		t.Error("expected any sibling tvg-id to be inherited when EPG set is nil")
 	}
-	if !strings.Contains(result, "Канал HD") {
+	if !strings.Contains(result.Content, "Канал HD") {
 		t.Error("expected HD variant to be kept")
 	}
-	if c := CountChannels(result); c != 1 {
+	if c := CountChannels(result.Content); c != 1 {
 		t.Errorf("expected 1 channel, got %d", c)
 	}
 }
@@ -1062,14 +1062,127 @@ http://example.com/sd.m3u8`
 	valid := map[string]bool{"123": true}
 	result := DeduplicateByName(content, 1, nil, valid)
 
-	if !strings.Contains(result, "Канал HD 🔴🐱") {
+	if !strings.Contains(result.Content, "Канал HD 🔴🐱") {
 		t.Error("expected kept variant name with emoji to be preserved")
 	}
-	if !strings.Contains(result, `tvg-id="123"`) {
+	if !strings.Contains(result.Content, `tvg-id="123"`) {
 		t.Error("expected tvg-id to be inherited")
 	}
-	if c := CountChannels(result); c != 1 {
+	if c := CountChannels(result.Content); c != 1 {
 		t.Errorf("expected 1 channel, got %d", c)
+	}
+}
+
+func TestTagSourceIdx(t *testing.T) {
+	content := `#EXTM3U
+#EXTINF:-1 group-title="A",Channel One
+http://example.com/1.m3u8
+#EXTINF:-1 group-title="B",Channel Two
+http://example.com/2.m3u8`
+
+	result := TagSourceIdx(content, 3)
+
+	if !strings.Contains(result, "#source:3") {
+		t.Error("expected #source:3 tag in output")
+	}
+	// Tag should appear after each EXTINF (inside the entry).
+	lines := strings.Split(result, "\n")
+	for i, line := range lines {
+		if strings.HasPrefix(strings.TrimSpace(line), "#EXTINF:") {
+			if i+1 >= len(lines) || !strings.HasPrefix(strings.TrimSpace(lines[i+1]), "#source:") {
+				t.Errorf("expected #source: tag after EXTINF at line %d", i)
+			}
+		}
+	}
+}
+
+func TestStripSourceIdx(t *testing.T) {
+	content := `#EXTM3U
+#EXTINF:-1 group-title="A",Channel One
+#source:0
+http://example.com/1.m3u8
+#EXTINF:-1 group-title="B",Channel Two
+#source:1
+http://example.com/2.m3u8`
+
+	result := StripSourceIdx(content)
+
+	if strings.Contains(result, "#source:") {
+		t.Errorf("expected no #source: tags in output, got:\n%s", result)
+	}
+	if !strings.Contains(result, "#EXTINF:-1 group-title=\"A\",Channel One") {
+		t.Error("expected EXTINF lines to survive stripping")
+	}
+}
+
+func TestDeduplicateByNamePerSourceDeadStats(t *testing.T) {
+	// Source tags (#source:N) are placed after #EXTINF (inside the entry) by
+	// TagSourceIdx, so they end up in ExtraLines and survive into dedup.
+	content := `#EXTM3U
+#EXTINF:-1 group-title="A",Канал One HD
+#source:0
+http://example.com/one-hd.m3u8
+#EXTINF:-1 group-title="A",Канал One SD
+#source:1
+http://example.com/one-sd.m3u8
+#EXTINF:-1 group-title="B",Канал Two 4K
+#source:0
+http://example.com/two-4k.m3u8
+#EXTINF:-1 group-title="B",Канал Two HD
+#source:1
+http://example.com/two-hd.m3u8`
+
+	probe := func(cands []utils.ProbeCandidate) map[string]bool {
+		m := make(map[string]bool)
+		for _, c := range cands {
+			m[c.URL] = c.URL != "http://example.com/one-sd.m3u8"
+		}
+		return m
+	}
+
+	result := DeduplicateByName(content, 1, probe, nil)
+
+	if c := CountChannels(result.Content); c != 2 {
+		t.Errorf("expected 2 channels, got %d\n%s", c, result.Content)
+	}
+	// one-sd.m3u8 from source 1 was dead and removed.
+	if result.DeadBySource[1] != 1 {
+		t.Errorf("expected 1 dead from source 1, got %d", result.DeadBySource[1])
+	}
+	// Source 0 had no dead entries.
+	if result.DeadBySource[0] != 0 {
+		t.Errorf("expected 0 dead from source 0, got %d", result.DeadBySource[0])
+	}
+}
+
+func TestDeduplicateByNamePerSourceAllDeadFallback(t *testing.T) {
+	content := `#EXTM3U
+#EXTINF:-1 group-title="A",Канал One HD
+#source:0
+http://example.com/one-hd.m3u8
+#EXTINF:-1 group-title="A",Канал One SD
+#source:1
+http://example.com/one-sd.m3u8`
+
+	probe := func(cands []utils.ProbeCandidate) map[string]bool {
+		m := make(map[string]bool)
+		for _, c := range cands {
+			m[c.URL] = false
+		}
+		return m
+	}
+
+	result := DeduplicateByName(content, 1, probe, nil)
+
+	if c := CountChannels(result.Content); c != 1 {
+		t.Errorf("expected 1 channel (best fallback), got %d", c)
+	}
+	// Both sources had dead entries, but the best one was kept as fallback.
+	if result.DeadBySource[0] != 1 {
+		t.Errorf("expected 1 dead from source 0, got %d", result.DeadBySource[0])
+	}
+	if result.DeadBySource[1] != 1 {
+		t.Errorf("expected 1 dead from source 1, got %d", result.DeadBySource[1])
 	}
 }
 
@@ -1384,21 +1497,21 @@ http://example.com/360-armavir.m3u8`
 	result := DeduplicateByName(content, 1, nil, nil)
 
 	// (2), (3) и HD-вариант склеиваются в один канал "360" (остаётся лучший — HD).
-	if c := CountChannels(result); c != 2 {
-		t.Errorf("expected 2 channels (360 merged + 360 Армавир), got %d:\n%s", c, result)
+	if c := CountChannels(result.Content); c != 2 {
+		t.Errorf("expected 2 channels (360 merged + 360 Армавир), got %d:\n%s", c, result.Content)
 	}
 	for _, gone := range []string{"360 (2)", "360 (3)"} {
-		if strings.Contains(result, gone) {
-			t.Errorf("expected %q to be merged away:\n%s", gone, result)
+		if strings.Contains(result.Content, gone) {
+			t.Errorf("expected %q to be merged away:\n%s", gone, result.Content)
 		}
 	}
 	// Победитель — лучший по качеству вариант "360 HD".
-	if !strings.Contains(result, "360 HD ◻️🌷") {
-		t.Errorf("expected best-quality 360 HD variant to be kept:\n%s", result)
+	if !strings.Contains(result.Content, "360 HD ◻️🌷") {
+		t.Errorf("expected best-quality 360 HD variant to be kept:\n%s", result.Content)
 	}
 	// Региональный вариант с текстовым суффиксом не трогается.
-	if !strings.Contains(result, "360 (Армавир) 💟🦒") {
-		t.Errorf("expected regional variant to stay:\n%s", result)
+	if !strings.Contains(result.Content, "360 (Армавир) 💟🦒") {
+		t.Errorf("expected regional variant to stay:\n%s", result.Content)
 	}
 }
 
@@ -1407,26 +1520,26 @@ http://example.com/360-armavir.m3u8`
 // "| Region" separator are normalized while HD/country tokens survive.
 func TestCleanChannelName(t *testing.T) {
 	tests := []struct{ in, want string }{
-		{"100% NL TV HD ⏺ʳᵉᶜ", "100% NL TV hd"},
+		{"100% NL TV HD ⏺ʳᵉᶜ", "100% NL TV HD"},
 		{"RTR Planeta Europe [Geo-blocked]", "RTR Planeta Europe"},
 		{"Belarus-1 (1080p)", "Belarus-1"},
-		{"#dabeiTV HD DE", "dabeiTV hd DE"},
-		{"&Pictures HD IN", "Pictures hd IN"},
-		{".sci-fi HD", "sci-fi hd"},
-		{"10 канал  (Саранск) SD", "10 канал (Саранск) sd"},
-		{"Liberty Занавес  HD", "Liberty Занавес hd"},
+		{"#dabeiTV HD DE", "dabeiTV HD DE"},
+		{"&Pictures HD IN", "Pictures HD IN"},
+		{".sci-fi HD", "sci-fi HD"},
+		{"10 канал  (Саранск) SD", "10 канал (Саранск) SD"},
+		{"Liberty Занавес  HD", "Liberty Занавес HD"},
 		{"10 канал | Новокузнецк", "10 канал (Новокузнецк)"},
 		{"10 канал (2) | Новокузнецк", "10 канал (2) (Новокузнецк)"},
-		{"Просто имя HD", "Просто имя hd"},
-		{"365 Дней Hd", "365 Дней hd"},
-		{"BBC NEWS FHD", "BBC NEWS fhd"},
-		{"Eurosport 1 UHD", "Eurosport 1 uhd"},
-		{"Insight TV 4K", "Insight TV 4k"},
-		{"Канал HDR", "Канал hdr"},
-		{"Full HD канал", "full hd канал"},
-		{"24KZ HD", "24KZ hd"},
+		{"Просто имя HD", "Просто имя HD"},
+		{"365 Дней Hd", "365 Дней HD"},
+		{"BBC NEWS FHD", "BBC NEWS FHD"},
+		{"Eurosport 1 UHD", "Eurosport 1 UHD"},
+		{"Insight TV 4K", "Insight TV 4K"},
+		{"Канал HDR", "Канал HDR"},
+		{"Full HD канал", "FULL HD канал"},
+		{"24KZ HD", "24KZ HD"},
 		{"SDN TV", "SDN TV"},
-		{"Просто HD+", "Просто hd+"},
+		{"Просто HD+", "Просто HD+"},
 		{"", ""},
 	}
 	for _, tc := range tests {

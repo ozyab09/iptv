@@ -58,6 +58,41 @@ func TestFormatReportZeroBytes(t *testing.T) {
 	}
 }
 
+func TestFormatReportUnavailableBySource(t *testing.T) {
+	r := Report{
+		PlaylistsDownloadedBytes: 1000,
+		PlaylistsFilteredBytes:   400,
+		UnavailableBySource:      map[int]int{0: 5, 2: 3},
+		M3USourceURLs:            []string{"https://a.com/pl.m3u", "https://b.com/pl.m3u", "https://c.com/pl.m3u"},
+	}
+	got := FormatReport(r)
+
+	for _, want := range []string{
+		"📡 Недоступные каналы по источникам:",
+		"https://a.com/pl.m3u: 5 канал(ов) недоступно",
+		"https://c.com/pl.m3u: 3 канал(ов) недоступно",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("FormatReport missing %q in:\n%s", want, got)
+		}
+	}
+	// Source 1 had no dead channels — should not appear.
+	if strings.Contains(got, "https://b.com/pl.m3u") {
+		t.Errorf("FormatReport should not mention source with 0 dead channels:\n%s", got)
+	}
+}
+
+func TestFormatReportOmitsUnavailableSectionWhenEmpty(t *testing.T) {
+	r := Report{
+		PlaylistsDownloadedBytes: 1000,
+		PlaylistsFilteredBytes:   400,
+	}
+	got := FormatReport(r)
+	if strings.Contains(got, "Недоступные") {
+		t.Errorf("FormatReport should omit unavailable section when empty:\n%s", got)
+	}
+}
+
 func TestFormatBytes(t *testing.T) {
 	cases := []struct {
 		n    int64
