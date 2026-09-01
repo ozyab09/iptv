@@ -10,6 +10,24 @@ import (
 	"testing"
 )
 
+func TestMaskURL(t *testing.T) {
+	cases := []struct {
+		input, want string
+	}{
+		{"https://example.com/path?q=1", "example.com"},
+		{"https://raw.githubusercontent.com/user/repo/refs/heads/branch/file.m3u", "raw.githubusercontent.com"},
+		{"https://www.dropbox.com/scl/fi/abc/file.m3u?rlkey=xyz&st=abc&e=1&dl=1", "www.dropbox.com"},
+		{"https://velros.link/pls/fJcuNuvCtFt1/list.m3u", "velros.link"},
+		{"not-a-url", "not-a-url"},
+		{"", ""},
+	}
+	for _, c := range cases {
+		if got := maskURL(c.input); got != c.want {
+			t.Errorf("maskURL(%q) = %q, want %q", c.input, got, c.want)
+		}
+	}
+}
+
 func TestFormatReport(t *testing.T) {
 	r := Report{
 		PlaylistsDownloadedBytes: 12_900_000,
@@ -29,7 +47,7 @@ func TestFormatReport(t *testing.T) {
 		"скачано: 179.3 МБ",
 		"после фильтрации: 39.1 МБ (-140.2 МБ, -78%)",
 		"⚠️ Не удалось загрузить:",
-		"• https://example.com/epg-2.xml.gz",
+		"• example.com",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("FormatReport missing %q in:\n%s", want, got)
@@ -69,15 +87,15 @@ func TestFormatReportUnavailableBySource(t *testing.T) {
 
 	for _, want := range []string{
 		"📡 Недоступные каналы по источникам:",
-		"https://a.com/pl.m3u: 5 канал(ов) недоступно",
-		"https://c.com/pl.m3u: 3 канал(ов) недоступно",
+		"a.com: 5 канал(ов) недоступно",
+		"c.com: 3 канал(ов) недоступно",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("FormatReport missing %q in:\n%s", want, got)
 		}
 	}
 	// Source 1 had no dead channels — should not appear.
-	if strings.Contains(got, "https://b.com/pl.m3u") {
+	if strings.Contains(got, "b.com") {
 		t.Errorf("FormatReport should not mention source with 0 dead channels:\n%s", got)
 	}
 }

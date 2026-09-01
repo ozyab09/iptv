@@ -14,6 +14,15 @@ import (
 	"github.com/ozyab/iptv/internal/utils"
 )
 
+// maskURL extracts the host (domain) from a URL. If parsing fails, the
+// original string is returned unchanged.
+func maskURL(raw string) string {
+	if u, err := url.Parse(raw); err == nil && u.Host != "" {
+		return u.Host
+	}
+	return raw
+}
+
 // apiBase is the Telegram Bot API base URL. Overridden in tests to point at an
 // httptest server.
 var apiBase = "https://api.telegram.org"
@@ -76,7 +85,7 @@ func FormatReport(r Report) string {
 		for idx, count := range r.UnavailableBySource {
 			source := "?"
 			if idx >= 0 && idx < len(r.M3USourceURLs) {
-				source = r.M3USourceURLs[idx]
+				source = maskURL(r.M3USourceURLs[idx])
 			}
 			b.WriteString(fmt.Sprintf("• %s: %d канал(ов) недоступно\n", source, count))
 		}
@@ -85,7 +94,7 @@ func FormatReport(r Report) string {
 	if len(r.FailedURLs) > 0 {
 		b.WriteString("\n⚠️ Не удалось загрузить:\n")
 		for _, u := range r.FailedURLs {
-			b.WriteString("• " + u + "\n")
+			b.WriteString("• " + maskURL(u) + "\n")
 		}
 	}
 	return strings.TrimRight(b.String(), "\n")
