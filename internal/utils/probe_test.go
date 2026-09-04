@@ -99,9 +99,12 @@ func TestProbeURLsConcurrentAndDedup(t *testing.T) {
 		t.Error("expected non-HTTP URL treated as alive")
 	}
 	// 3 unique HTTP URLs (duplicate /a not re-probed, rtmp not probed):
-	// HEAD for /a, /b, /dead + GET fallback for /dead (404) = 4 requests.
-	if calls.Load() != 4 {
-		t.Errorf("expected 4 probe requests (3 HEAD + 1 GET fallback), got %d", calls.Load())
+	// Initial pass: HEAD for /a, /b, /dead + GET fallback for /dead = 4 requests.
+	// Retry pass 1: HEAD + GET fallback for /dead = 2 requests.
+	// Retry pass 2: HEAD + GET fallback for /dead = 2 requests.
+	// Total: 8 requests.
+	if calls.Load() != 8 {
+		t.Errorf("expected 8 probe requests (4 initial + 2 retry passes × 2), got %d", calls.Load())
 	}
 }
 

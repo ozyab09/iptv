@@ -32,6 +32,8 @@ func TestFormatReport(t *testing.T) {
 	r := Report{
 		PlaylistsDownloadedBytes: 12_900_000,
 		PlaylistsFilteredBytes:   4_700_000,
+		TotalChannelsBefore:      2600,
+		RemainingChannels:        800,
 		EPGDownloadedBytes:       188_000_000,
 		EPGFilteredBytes:         41_000_000,
 		FailedURLs:               []string{"https://example.com/epg-2.xml.gz"},
@@ -43,6 +45,9 @@ func TestFormatReport(t *testing.T) {
 		"📥 Плейлисты:",
 		"скачано: 12.3 МБ",
 		"после фильтрации: 4.5 МБ (-7.8 МБ, -64%)",
+		"каналов было: 2600",
+		"отфильтровано: 1800",
+		"осталось: 800",
 		"📥 EPG:",
 		"скачано: 179.3 МБ",
 		"после фильтрации: 39.1 МБ (-140.2 МБ, -78%)",
@@ -59,6 +64,8 @@ func TestFormatReportWithoutEPG(t *testing.T) {
 	r := Report{
 		PlaylistsDownloadedBytes: 1000,
 		PlaylistsFilteredBytes:   400,
+		TotalChannelsBefore:      50,
+		RemainingChannels:        20,
 	}
 	got := FormatReport(r)
 	if strings.Contains(got, "EPG") {
@@ -66,6 +73,15 @@ func TestFormatReportWithoutEPG(t *testing.T) {
 	}
 	if strings.Contains(got, "Не удалось") {
 		t.Errorf("FormatReport should omit failed-URLs section when there are none:\n%s", got)
+	}
+	if !strings.Contains(got, "каналов было: 50") {
+		t.Errorf("FormatReport missing channel count:\n%s", got)
+	}
+	if !strings.Contains(got, "отфильтровано: 30") {
+		t.Errorf("FormatReport missing filtered count:\n%s", got)
+	}
+	if !strings.Contains(got, "осталось: 20") {
+		t.Errorf("FormatReport missing remaining count:\n%s", got)
 	}
 }
 
@@ -108,6 +124,10 @@ func TestFormatReportOmitsUnavailableSectionWhenEmpty(t *testing.T) {
 	got := FormatReport(r)
 	if strings.Contains(got, "Недоступные") {
 		t.Errorf("FormatReport should omit unavailable section when empty:\n%s", got)
+	}
+	// Channel count section should also be omitted when counts are zero.
+	if strings.Contains(got, "каналов было") {
+		t.Errorf("FormatReport should omit channel counts when zero:\n%s", got)
 	}
 }
 

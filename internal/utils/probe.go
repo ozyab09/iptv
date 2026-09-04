@@ -16,6 +16,11 @@ import (
 // is used for best reachability.
 const probeUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
+// probeRetryPasses is the number of additional passes over dead candidates
+// after the initial probe. Each pass retries only URLs that were unreachable
+// in the previous pass (network hiccups, short-lived server restarts, etc.).
+const probeRetryPasses = 2
+
 var probeLogger = NewSanitizedLoggerWithPrefix("[probe]")
 
 // ProbeCandidate is a URL to probe together with optional headers extracted
@@ -168,16 +173,96 @@ func ProbeCandidates(ctx context.Context, candidates []ProbeCandidate, concurren
 		}()
 	}
 
-sendLoop:
+	sendLoop:
 	for _, cand := range unique {
 		select {
 		case queue <- cand:
 		case <-ctx.Done():
-			break sendLoop
+		break sendLoop
 		}
 	}
 	close(queue)
 	wg.Wait()
+
+	// Retry passes: re-probe dead candidates up to probeRetryPasses times.
+	// Transient failures (network hiccup, short-lived server restart) often
+	// resolve on a second or third try, so this catches channels that would
+	// otherwise be wrongly marked as dead.
+	for pass := 1; pass <= probeRetryPasses; pass++ {
+		if ctx.Err() != nil {
+			break
+		}
+		var dead []ProbeCandidate
+		for _, c := range unique {
+			if ok, exists := result[c.URL]; exists && !ok {
+				dead = append(dead, c)
+			}
+		}
+		if len(dead) == 0 {
+			break
+		}
+
+		probeLogger.Info("Probe retry pass %d/%d: re-checking %d previously dead URLs", pass, probeRetryPasses, len(dead))
+
+		retryStart := time.Now()
+		retryDone := atomic.Int64{}
+		retryAlive := atomic.Int64{}
+		retryProgressMu := sync.Mutex{}
+		retryLastDecile := int64(0)
+
+		retryQueue := make(chan ProbeCandidate)
+		var retryWg sync.WaitGroup
+
+		retryWorkers := concurrency
+		if retryWorkers > len(dead) {
+			retryWorkers = len(dead)
+		}
+
+		for i := 0; i < retryWorkers; i++ {
+			retryWg.Add(1)
+			go func() {
+				defer retryWg.Done()
+				for cand := range retryQueue {
+					ok := URLIsAliveCandidate(ctx, client, cand, timeout)
+					if ok {
+						mu.Lock()
+						result[cand.URL] = true
+						mu.Unlock()
+					}
+					retryDone.Add(1)
+					if ok {
+						retryAlive.Add(1)
+					}
+
+					var line string
+					retryProgressMu.Lock()
+					if decile := retryDone.Load() * 10 / int64(len(dead)); decile > retryLastDecile {
+						retryLastDecile = decile
+						line = probeProgressLine(int(decile*10), int(retryDone.Load()), len(dead), int(retryAlive.Load()), time.Since(retryStart))
+					}
+					retryProgressMu.Unlock()
+					if line != "" {
+						probeLogger.Info("%s", line)
+					}
+				}
+			}()
+		}
+
+		retrySendLoop:
+		for _, c := range dead {
+			select {
+			case retryQueue <- c:
+			case <-ctx.Done():
+				break retrySendLoop
+			}
+		}
+		close(retryQueue)
+		retryWg.Wait()
+
+		if n := retryAlive.Load(); n > 0 {
+			probeLogger.Info("Probe retry pass %d/%d: recovered %d of %d dead URLs", pass, probeRetryPasses, n, len(dead))
+		}
+	}
 
 	return result
 }
