@@ -41,6 +41,11 @@ type Report struct {
 	PlaylistsDownloadedBytes int64
 	// PlaylistsFilteredBytes is the final filtered playlist size in bytes.
 	PlaylistsFilteredBytes int64
+	// TotalChannelsBefore is the total number of channels across all M3U
+	// sources before any filtering.
+	TotalChannelsBefore int
+	// RemainingChannels is the number of channels after filtering.
+	RemainingChannels int
 	// EPGDownloadedBytes is the total raw bytes downloaded from all EPG
 	// sources (before decompression/filtering). Zero when EPG is not configured.
 	EPGDownloadedBytes int64
@@ -70,6 +75,18 @@ func FormatReport(r Report) string {
 		formatBytes(r.PlaylistsFilteredBytes),
 		formatBytes(r.PlaylistsDownloadedBytes-r.PlaylistsFilteredBytes),
 		reductionPercent(r.PlaylistsDownloadedBytes, r.PlaylistsFilteredBytes)))
+	if r.TotalChannelsBefore > 0 || r.RemainingChannels > 0 {
+		filtered := r.TotalChannelsBefore - r.RemainingChannels
+		if r.TotalChannelsBefore > 0 {
+			b.WriteString(fmt.Sprintf("   каналов было: %d\n", r.TotalChannelsBefore))
+		}
+		if filtered > 0 {
+			b.WriteString(fmt.Sprintf("   отфильтровано: %d\n", filtered))
+		}
+		if r.RemainingChannels > 0 {
+			b.WriteString(fmt.Sprintf("   осталось: %d\n", r.RemainingChannels))
+		}
+	}
 
 	if r.EPGDownloadedBytes > 0 || r.EPGFilteredBytes > 0 {
 		b.WriteString("\n📥 EPG:\n")

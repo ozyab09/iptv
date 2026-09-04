@@ -207,7 +207,7 @@ func TestRunFailsWhenAllM3USourcesFail(t *testing.T) {
 // TestBuildTelegramReportIncludesFailedPlaylistURL verifies that a failed
 // playlist source URL reaches the Telegram report's failed-URLs list.
 func TestBuildTelegramReportIncludesFailedPlaylistURL(t *testing.T) {
-	r := buildTelegramReport(1000, "filtered", 0, 0, []string{"https://bad.example/pl.m3u", "https://bad.example/epg.xml.gz"}, nil, nil)
+	r := buildTelegramReport(1000, "original", "filtered", 0, 0, []string{"https://bad.example/pl.m3u", "https://bad.example/epg.xml.gz"}, nil, nil)
 	if len(r.FailedURLs) != 2 {
 		t.Fatalf("expected 2 failed URLs, got: %v", r.FailedURLs)
 	}

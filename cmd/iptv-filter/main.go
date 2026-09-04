@@ -94,7 +94,7 @@ func parseM3USources(m3uURL string) []string {
 func downloadM3U(ctx context.Context, urlStr string, skipSSLVerify bool) (string, error) {
 	log.Info("Downloading M3U source: %s", urlStr)
 	var original string
-	err := utils.RetryWithContext(ctx, 3, 2*time.Second, 2.0, func() error {
+	err := utils.RetryWithContext(ctx, 4, 3*time.Second, 2.0, func() error {
 		var e error
 		original, e = m3u.DownloadM3UWithContext(ctx, urlStr, skipSSLVerify)
 		return e
@@ -183,10 +183,12 @@ func uploadBoth(ctx context.Context, client *awss3.Client, content, bucket, key 
 // buildTelegramReport assembles the run statistics sent to Telegram. failedURLs
 // covers both playlist and EPG sources that failed but were skipped (the run
 // continued with the remaining sources).
-func buildTelegramReport(m3uDownloadedBytes int64, filteredContent string, epgDownloadedBytes, filteredEPGBytes int64, failedURLs []string, deadBySource map[int]int, m3uSourceURLs []string) telegram.Report {
+func buildTelegramReport(m3uDownloadedBytes int64, originalContent, filteredContent string, epgDownloadedBytes, filteredEPGBytes int64, failedURLs []string, deadBySource map[int]int, m3uSourceURLs []string) telegram.Report {
 	return telegram.Report{
 		PlaylistsDownloadedBytes: m3uDownloadedBytes,
 		PlaylistsFilteredBytes:   int64(len(filteredContent)),
+		TotalChannelsBefore:      m3u.CountChannels(originalContent),
+		RemainingChannels:        m3u.CountChannels(filteredContent),
 		EPGDownloadedBytes:       epgDownloadedBytes,
 		EPGFilteredBytes:         filteredEPGBytes,
 		FailedURLs:               failedURLs,
@@ -425,7 +427,7 @@ func run() int {
 	// non-dry-run, and only when both TELEGRAM_USER_ID and TELEGRAM_BOT_TOKEN
 	// are set; otherwise the report is skipped entirely.
 	if cfg.TelegramEnabled() {
-		report := buildTelegramReport(m3uDownloadedBytes, filteredContent, epgDownloadedBytes, filteredEPGBytes, append(m3uFailedURLs, epgFailedURLs...), deadBySource, m3uURLs)
+		report := buildTelegramReport(m3uDownloadedBytes, originalContent, filteredContent, epgDownloadedBytes, filteredEPGBytes, append(m3uFailedURLs, epgFailedURLs...), deadBySource, m3uURLs)
 		if err := telegram.SendReport(ctx, cfg.TelegramBotToken(), cfg.TelegramUserID(), report, skipSSL); err != nil {
 			log.Warning("Failed to send Telegram report: %v", err)
 		} else {
