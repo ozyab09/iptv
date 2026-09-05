@@ -11,6 +11,7 @@ A robust and secure IPTV M3U playlist filtering application written in Go. Downl
 - **Category Filtering**: Deny-list approach — removes specified categories, keeps everything else
 - **Category Normalization**: Allow-list keeps only quality categories (aliases merge duplicates like `РЕГИОНАЛЬНЫЕ`→`Региональные`, everything else moves to `Основные`) — channels are never removed
 - **Channel Name Processing**: Removes `orig` suffix, excludes regional `+N` variants, excludes number suffixes
+- **Favorite Channels (_Best)**: Duplicates favorite channels into a dedicated `_Best` category with a star prefix (same stream URL), so they appear as separate entries alongside the originals. Favorites are configured by editing the `BestChannels` slice in `internal/config/config.go`
 - **Optional Source Deduplication**: Can retain the highest-quality working source(s) for each channel after bounded concurrent probing
 - **EPG Processing**: Streams gzip/zip/XML EPG data through filtering and gzip output, with configurable time retention
 - **S3 Upload**: Playlists, EPG, and gzip archives uploaded to S3-compatible storage
@@ -67,9 +68,11 @@ Set these environment variables:
 | `PROBE_CONCURRENCY` | Maximum concurrent source probes | `20` |
 | `MAX_CHANNEL_VARIANTS` | Working source variants retained per channel (1–5) | `1` |
 
+The `_Best` favorite channel list is **not** an env var — edit the `BestChannels` slice in `internal/config/config.go` to change it.
+
 Load with:
 ```bash
-export $(grep -v '^#' .env | xargs)
+while read -r line; do case "$line" in \#*|'') continue;; esac; export "$line"; done < .env
 ```
 
 ## Usage
