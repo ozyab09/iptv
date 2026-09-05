@@ -10,6 +10,14 @@ import (
 	"time"
 )
 
+// DefaultDownloadTimeout bounds a single download when the caller's context
+// carries no deadline. A stuck server would otherwise hold the request open
+// until the client timeout, and multiplied by retries could stall a run for
+// hours. Callers that need a different budget pass an already-bounded context.
+// It is a var (not const) so tests can shrink it; treat it as read-only in
+// production code.
+var DefaultDownloadTimeout = 10 * time.Minute
+
 // NewHTTPClient creates an HTTP client with optional SSL verification bypass.
 func NewHTTPClient(skipSSLVerify bool) *http.Client {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
@@ -19,7 +27,7 @@ func NewHTTPClient(skipSSLVerify bool) *http.Client {
 	// global stdlib log redirect installed in logger.go's init.
 	return &http.Client{
 		Transport: transport,
-		Timeout:   30 * time.Minute,
+		Timeout:   DefaultDownloadTimeout,
 	}
 }
 
@@ -71,6 +79,13 @@ func DownloadFileToPathWithContext(ctx context.Context, url, destination string,
 func downloadWithContext(ctx context.Context, url string, maxSize int64, skipSSLVerify bool, consume func(io.Reader) error) error {
 	if ctx == nil {
 		ctx = context.Background()
+	}
+	// Bound each attempt: without a caller deadline, a stuck server would hold
+	// the request until the client timeout (and, with retries, stall the run).
+	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, DefaultDownloadTimeout)
+		defer cancel()
 	}
 	if maxSize < 1 {
 		return fmt.Errorf("maximum download size must be positive")

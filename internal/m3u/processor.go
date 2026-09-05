@@ -921,8 +921,8 @@ func DeduplicateByName(content string, maxVariants int, probe func(candidates []
 		finalLines = append(finalLines, e.ExtraLines...)
 	}
 	return DedupResult{
-		Content:       strings.Join(finalLines, "\n"),
-		DeadBySource:  deadBySource,
+		Content:      strings.Join(finalLines, "\n"),
+		DeadBySource: deadBySource,
 	}
 }
 
@@ -1329,9 +1329,9 @@ func DuplicateToCategory(content string, names []string, targetCategory string) 
 }
 
 // replaceGroupTitle rewrites the group-title attribute in an EXTINF line.
+// Uses the package-level regGroupTitleAttr regexp (compiled once).
 func replaceGroupTitle(extinfLine, newGroup string) string {
-	re := regexp.MustCompile(`group-title="[^"]*"`)
-	return re.ReplaceAllString(extinfLine, `group-title="`+newGroup+`"`)
+	return regGroupTitleAttr.ReplaceAllString(extinfLine, `group-title="`+newGroup+`"`)
 }
 
 // prependStarToName inserts a star emoji (\u2b50) before the display name

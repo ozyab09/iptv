@@ -2,6 +2,7 @@ package utils
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -79,5 +80,59 @@ func TestDownloadFileToPathWithContextRejectsHTTPErrorAndCleansUp(t *testing.T) 
 	}
 	if _, statErr := os.Stat(dest); !os.IsNotExist(statErr) {
 		t.Fatalf("partial destination should be removed, stat err: %v", statErr)
+	}
+}
+
+// TestDownloadWithContextAppliesDefaultDeadline verifies that a download
+// without a caller deadline is bounded by DefaultDownloadTimeout instead of
+// hanging on the server forever (the client-level timeout alone could stall a
+// run for 30 minutes per attempt).
+func TestDownloadWithContextAppliesDefaultDeadline(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Never respond; hang until the client gives up.
+		<-r.Context().Done()
+	}))
+	defer server.Close()
+
+	// Shrink the default so the test finishes quickly; restored on exit.
+	old := DefaultDownloadTimeout
+	DefaultDownloadTimeout = 200 * time.Millisecond
+	defer func() { DefaultDownloadTimeout = old }()
+
+	start := time.Now()
+	err := downloadWithContext(context.Background(), server.URL, 1024, false, func(r io.Reader) error {
+		_, err := copyLimited(io.Discard, r, 1024)
+		return err
+	})
+	if err == nil {
+		t.Fatal("expected error from hanging server")
+	}
+	// The default deadline must fire well before the hard 10m client timeout.
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Fatalf("download did not respect the default deadline, took %s", elapsed)
+	}
+}
+
+// TestDownloadWithContextRespectsCallerDeadline verifies that a caller-supplied
+// deadline wins over the default one.
+func TestDownloadWithContextRespectsCallerDeadline(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-r.Context().Done()
+	}))
+	defer server.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+
+	start := time.Now()
+	err := downloadWithContext(ctx, server.URL, 1024, false, func(r io.Reader) error {
+		_, err := copyLimited(io.Discard, r, 1024)
+		return err
+	})
+	if err == nil {
+		t.Fatal("expected error from hanging server")
+	}
+	if duration := time.Since(start); duration > 3*time.Second {
+		t.Fatalf("caller deadline was not respected: %s", duration)
 	}
 }
