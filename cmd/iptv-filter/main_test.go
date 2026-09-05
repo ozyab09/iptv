@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ozyab/iptv/internal/config"
 	"github.com/ozyab/iptv/internal/m3u"
 )
 
@@ -82,8 +83,8 @@ func TestRunSucceedsInDryRun(t *testing.T) {
 
 func TestRunSucceedsInDryRunWithEPG(t *testing.T) {
 	clearConfigEnv(t)
-	start := time.Now().Add(1 * time.Hour).Format("20060102150405") + " +0000"
-	stop := time.Now().Add(2 * time.Hour).Format("20060102150405") + " +0000"
+	start := time.Now().Add(1*time.Hour).Format("20060102150405") + " +0000"
+	stop := time.Now().Add(2*time.Hour).Format("20060102150405") + " +0000"
 	epgContent := fmt.Sprintf(`<?xml version="1.0"?><tv>
 <channel id="ch1"><display-name>Channel One</display-name></channel>
 <channel id="ch2"><display-name>Channel Two</display-name></channel>
@@ -355,5 +356,28 @@ func TestRunDryRunProbeSourcesSkipsProbing(t *testing.T) {
 	}
 	if strings.Contains(string(filtered), "sd.m3u8") {
 		t.Errorf("expected SD variant to be removed by quality dedup, got:\n%s", filtered)
+	}
+}
+
+func TestSaveFileCreatesNestedDirectories(t *testing.T) {
+	clearConfigEnv(t)
+	outDir := t.TempDir()
+	t.Setenv("OUTPUT_DIR", outDir)
+	cfg := config.New()
+	// S3 keys may contain subdirectories ("lists/playlist.m3u"); saveFile must
+	// create the parent dirs instead of failing on a missing directory.
+	nestedKey := "lists/nested/playlist.m3u"
+	content := "#EXTM3U\n#EXTINF:-1,Test\nhttp://example.com/stream.m3u8\n"
+
+	if err := saveFile(content, nestedKey, cfg); err != nil {
+		t.Fatalf("saveFile with nested key failed: %v", err)
+	}
+	full := filepath.Join(outDir, nestedKey)
+	data, err := os.ReadFile(full)
+	if err != nil {
+		t.Fatalf("read nested output: %v", err)
+	}
+	if string(data) != content {
+		t.Errorf("saved content mismatch:\n got %q\nwant %q", data, content)
 	}
 }

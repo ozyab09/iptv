@@ -10,22 +10,10 @@ on:
   push:
     branches: [main]
 
-env:
-  M3U_SOURCE_URL: ${{ secrets.M3U_SOURCE_URL }}
-  S3_BUCKET_NAME: ${{ secrets.S3_BUCKET_NAME  }}
-  S3_OBJECT_KEY: ${{ secrets.S3_OBJECT_KEY }}
-  S3_ENDPOINT_URL: ${{ secrets.S3_ENDPOINT_URL }}
-  S3_REGION: ${{ secrets.S3_REGION }}
-  S3_EPG_KEY: ${{ secrets.S3_EPG_KEY }}
-  EPG_SOURCE_URL: ${{ secrets.EPG_SOURCE_URL }}
-  LOCAL_EPG_PATH: ${{ secrets.LOCAL_EPG_PATH  }}
-  AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-  AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-
 jobs:
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     permissions:
       contents: read
 
@@ -50,19 +38,32 @@ jobs:
     - name: Run tests
       run: go test ./... -v -count=1
 
+    - name: Race detector
+      run: go test -race ./... -count=1
+
   filter-m3u:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     needs: test
-    if: github.event_name != 'pull_request' || always()
+    # Run only when tests pass (default success() gate). PRs execute a dry-run
+    # (DRY_RUN is set in a step below); pushes/schedule run the real filter.
     permissions:
       contents: read
-    # Эти переменные нужны только этому job'у — не кладём их в общий env,
-    # чтобы не ломать TestProbeConfigDefaults в test job (он ждёт default=false).
+    # Источники и хранилище: job-scoped, чтобы test job их не видел.
     env:
+      M3U_SOURCE_URL: ${{ secrets.M3U_SOURCE_URL }}
+      S3_BUCKET_NAME: ${{ secrets.S3_BUCKET_NAME }}
+      S3_OBJECT_KEY: ${{ secrets.S3_OBJECT_KEY }}
+      S3_ENDPOINT_URL: ${{ secrets.S3_ENDPOINT_URL }}
+      S3_REGION: ${{ secrets.S3_REGION }}
+      S3_EPG_KEY: ${{ secrets.S3_EPG_KEY }}
+      EPG_SOURCE_URL: ${{ secrets.EPG_SOURCE_URL }}
+      LOCAL_EPG_PATH: ${{ secrets.LOCAL_EPG_PATH }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      # Metadata overrides для категорий.
       CATEGORIES_FILE_PATH: categories.txt
-      # Telegram-отчёт по итогам прогона (нужен только этому job'у; без этих
-      # переменных отчёт не отправляется вообще).
+      # Telegram-отчёт по итогам прогона.
       TELEGRAM_USER_ID: ${{ secrets.TELEGRAM_USER_ID }}
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
       # Опрос доступности источников (HEAD+GET Range). В dry-run (PR) probe пропускается.

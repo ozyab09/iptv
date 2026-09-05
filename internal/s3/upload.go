@@ -152,7 +152,9 @@ func UploadArchiveToS3(ctx context.Context, client *s3.Client, content, bucket, 
 	if _, err := gw.Write([]byte(content)); err != nil {
 		return "", fmt.Errorf("failed to compress content: %w", err)
 	}
-	gw.Close()
+	if err := gw.Close(); err != nil {
+		return "", fmt.Errorf("failed to finalize gzip: %w", err)
+	}
 
 	clientForUpload := client
 	originalSizeKB := float64(len(content)) / 1024

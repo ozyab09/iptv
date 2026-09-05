@@ -36,9 +36,15 @@ func gracefulCtx() (context.Context, context.CancelFunc) {
 	return ctx, cancel
 }
 
-// saveFile writes content to a file in the output directory.
+// saveFile writes content to a file in the output directory, creating missing
+// parent directories so S3 keys with subdirectories work as local filenames.
 func saveFile(content, filename string, cfg *config.Config) error {
 	filepath := path.Join(cfg.OutputDir(), filename)
+	if dir := path.Dir(filepath); dir != "" && dir != "." {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			return fmt.Errorf("create output dir %s: %w", dir, err)
+		}
+	}
 	if err := os.WriteFile(filepath, []byte(content), 0644); err != nil {
 		return fmt.Errorf("write %s: %w", filepath, err)
 	}
