@@ -1260,6 +1260,93 @@ func CountChannels(content string) int {
 	return count
 }
 
+// DuplicateToCategory clones matching channels into a separate category.
+// Each matching channel gets a copy with the group-title changed to targetCategory
+// and a star prefix (\u2b50) prepended to its name so it appears as a distinct
+// entry in the playlist. The original entry is left unchanged.
+//
+// Matching is case-insensitive on the emoji-stripped channel name. names must
+// be pre-lowercased. Returns the content unchanged when names is nil or empty.
+func DuplicateToCategory(content string, names []string, targetCategory string) string {
+	if len(names) == 0 || targetCategory == "" {
+		return content
+	}
+
+	lines := strings.Split(content, "\n")
+	headers, entries := ParseChannelEntries(lines)
+
+	var duplicates []ChannelEntry
+	for _, e := range entries {
+		// Extract the display name (after the last comma in #EXTINF).
+		parts := strings.SplitN(e.EXTINFLine, ",", 2)
+		if len(parts) < 2 {
+			continue
+		}
+		displayName := strings.TrimSpace(parts[1])
+		// Strip trailing emoji to get the plain name for matching.
+		plainName := strings.ToLower(utils.StripTrailingEmoji(displayName))
+
+		matched := false
+		for _, n := range names {
+			if strings.Contains(plainName, n) {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			continue
+		}
+
+		// Clone the entry: change group-title, prepend star to name.
+		clonedEXTINF := replaceGroupTitle(e.EXTINFLine, targetCategory)
+		clonedEXTINF = prependStarToName(clonedEXTINF)
+		duplicates = append(duplicates, ChannelEntry{
+			EXTINFLine: clonedEXTINF,
+			ExtraLines: append([]string(nil), e.ExtraLines...),
+			SourceIdx:  e.SourceIdx,
+		})
+	}
+
+	if len(duplicates) == 0 {
+		logger.Info("DuplicateToCategory: no channels matched for _Best category")
+		return content
+	}
+
+	logger.Info("DuplicateToCategory: duplicating %d channels into \"%s\" category", len(duplicates), targetCategory)
+
+	// Append duplicates after all existing entries.
+	var finalLines []string
+	finalLines = append(finalLines, headers...)
+	for _, e := range entries {
+		finalLines = append(finalLines, e.EXTINFLine)
+		finalLines = append(finalLines, e.ExtraLines...)
+	}
+	for _, e := range duplicates {
+		finalLines = append(finalLines, e.EXTINFLine)
+		finalLines = append(finalLines, e.ExtraLines...)
+	}
+	return strings.Join(finalLines, "\n")
+}
+
+// replaceGroupTitle rewrites the group-title attribute in an EXTINF line.
+func replaceGroupTitle(extinfLine, newGroup string) string {
+	re := regexp.MustCompile(`group-title="[^"]*"`)
+	return re.ReplaceAllString(extinfLine, `group-title="`+newGroup+`"`)
+}
+
+// prependStarToName inserts a star emoji (\u2b50) before the display name
+// in an EXTINF line. The star is placed after the last comma so the name
+// reads like "Channel Name ⭐existing-emoji".
+func prependStarToName(extinfLine string) string {
+	idx := strings.LastIndex(extinfLine, ",")
+	if idx < 0 {
+		return extinfLine
+	}
+	prefix := extinfLine[:idx+1]
+	displayName := strings.TrimSpace(extinfLine[idx+1:])
+	return prefix + "\u2b50 " + displayName
+}
+
 // ─── Categories file handling ─────────────────────────────────────────────────────
 
 // ParseCategoriesFile reads categories.txt and returns a map of lowercase channel name → {group, tvg_id}.

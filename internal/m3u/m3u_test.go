@@ -1801,3 +1801,116 @@ func TestShouldFilterByNameDateSuffixes(t *testing.T) {
 		t.Error("ordinary channel must not be filtered")
 	}
 }
+
+func TestDuplicateToCategory(t *testing.T) {
+	// Simple playlist with 3 channels.
+	content := `#EXTM3U
+#EXTINF:-1 group-title="Новости" tvg-id="ch1",Москва 24 🔴🐱
+http://stream1
+#EXTINF:-1 group-title="Документальные" tvg-id="ch2",TLC HD 🟢🐶
+http://stream2
+#EXTINF:-1 group-title="Эфирные" tvg-id="ch3",Первый канал
+http://stream3`
+
+	result := DuplicateToCategory(content, []string{"москва 24", "tlc"}, "_Best")
+
+	// Original entries must remain unchanged.
+	if !strings.Contains(result, `group-title="Новости"`) {
+		t.Error("original Moscow 24 entry should keep its original category")
+	}
+	if !strings.Contains(result, `group-title="Документальные"`) {
+		t.Error("original TLC entry should keep its original category")
+	}
+
+	// Duplicates must have _Best category and star prefix.
+	bestCount := 0
+	for _, line := range strings.Split(result, "\n") {
+		if strings.Contains(line, "#EXTINF:") && strings.Contains(line, `group-title="_Best"`) {
+			bestCount++
+			if !strings.Contains(line, "\u2b50") {
+				t.Errorf("duplicate should have star prefix: %s", line)
+			}
+		}
+	}
+	if bestCount != 2 {
+		t.Errorf("expected 2 duplicates in _Best, got %d", bestCount)
+	}
+
+	// Non-matching channel should NOT be duplicated.
+	if strings.Count(result, "Первый канал") != 1 {
+		t.Error("Первый канал should appear only once (no duplicate)")
+	}
+
+	// Total channel count: 3 originals + 2 duplicates = 5.
+	if got := CountChannels(result); got != 5 {
+		t.Errorf("expected 5 total channels, got %d", got)
+	}
+}
+
+func TestDuplicateToCategoryEmpty(t *testing.T) {
+	content := `#EXTM3U
+#EXTINF:-1 group-title="Новости",Канал 1
+http://stream1`
+	result := DuplicateToCategory(content, nil, "_Best")
+	if result != content {
+		t.Error("nil names should return content unchanged")
+	}
+	result = DuplicateToCategory(content, []string{"test"}, "")
+	if result != content {
+		t.Error("empty category should return content unchanged")
+	}
+}
+
+func TestDuplicateToCategoryNoMatch(t *testing.T) {
+	content := `#EXTM3U
+#EXTINF:-1 group-title="Новости",Первый канал
+http://stream1`
+	result := DuplicateToCategory(content, []string{"несуществующий"}, "_Best")
+	if result != content {
+		t.Error("no match should return content unchanged")
+	}
+}
+
+func TestDuplicateToCategoryCaseInsensitive(t *testing.T) {
+	content := `#EXTM3U
+#EXTINF:-1 group-title="Документальные",TLC HD 🔴🐱
+http://stream1`
+	// Search with lowercase "tlc" should match "TLC HD".
+	result := DuplicateToCategory(content, []string{"tlc"}, "_Best")
+	bestCount := 0
+	for _, line := range strings.Split(result, "\n") {
+		if strings.Contains(line, "#EXTINF:") && strings.Contains(line, `group-title="_Best"`) {
+				bestCount++
+		}
+	}
+	if bestCount != 1 {
+		t.Errorf("expected 1 duplicate in _Best, got %d", bestCount)
+	}
+}
+
+func TestDuplicateToCategoryPreservesExtraLines(t *testing.T) {
+	content := `#EXTM3U
+#EXTINF:-1 group-title="Новости" tvg-id="ch1",Москва 24
+#EXTVLCOPT:http-user-agent=Mozilla/5.0
+#EXTVLCOPT:http-referrer=http://example.com
+http://stream1`
+	result := DuplicateToCategory(content, []string{"москва 24"}, "_Best")
+	// Both the duplicate EXTINF and its extra lines should appear after originals.
+	lines := strings.Split(result, "\n")
+	foundDuplicate := false
+	for i, line := range lines {
+		if strings.Contains(line, `group-title="_Best"`) {
+			foundDuplicate = true
+			// Next lines should be the EXTVLCOPT lines.
+			if i+1 < len(lines) && !strings.Contains(lines[i+1], "EXTVLCOPT") {
+				t.Error("duplicate should be followed by its EXTVLCOPT lines")
+			}
+			if i+2 < len(lines) && !strings.Contains(lines[i+2], "EXTVLCOPT") {
+				t.Error("duplicate should be followed by its EXTVLCOPT lines")
+			}
+		}
+	}
+	if !foundDuplicate {
+		t.Error("expected a duplicate entry with _Best category")
+	}
+}

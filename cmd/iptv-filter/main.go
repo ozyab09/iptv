@@ -373,6 +373,12 @@ func run() int {
 		deadBySource = dedupResult.DeadBySource
 	}
 
+	// Step 2d: Duplicate favorite channels into "_Best" category (same
+	// stream URL, different emoji so they appear as separate entries).
+	if bestNames := cfg.BestChannelsList(); len(bestNames) > 0 {
+		filteredContent = m3u.DuplicateToCategory(filteredContent, bestNames, "_Best")
+	}
+
 	// Step 3: Save files locally.
 	if err := saveFile(filteredContent, cfg.LocalFilteredPlaylistPath(), cfg); err != nil {
 		log.Error("Failed to save filtered playlist: %v", err)
