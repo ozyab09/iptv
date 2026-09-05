@@ -32,6 +32,7 @@ type Config struct {
 	maxChannelVariants int
 	telegramUserID     string
 	telegramBotToken   string
+	bestChannels       string
 }
 
 // New reads all environment variables once and caches them.
@@ -57,6 +58,7 @@ func New() *Config {
 		maxChannelVariants: envIntClampMax("MAX_CHANNEL_VARIANTS", 1, 5),
 		telegramUserID:     os.Getenv("TELEGRAM_USER_ID"),
 		telegramBotToken:   os.Getenv("TELEGRAM_BOT_TOKEN"),
+		bestChannels:       os.Getenv("BEST_CHANNELS"),
 	}
 }
 
@@ -188,6 +190,27 @@ func (c *Config) TelegramBotToken() string { return c.telegramBotToken }
 // TELEGRAM_BOT_TOKEN are set; only then is the run report sent to Telegram.
 func (c *Config) TelegramEnabled() bool {
 	return c.telegramUserID != "" && c.telegramBotToken != ""
+}
+
+// BestChannels returns the comma-separated list of channel names to duplicate
+// into the "_Best" category. Empty when the feature is disabled.
+func (c *Config) BestChannels() string { return c.bestChannels }
+
+// BestChannelsList parses BEST_CHANNELS into a trimmed, lowercased slice.
+// Returns nil when the env var is empty.
+func (c *Config) BestChannelsList() []string {
+	if c.bestChannels == "" {
+		return nil
+	}
+	parts := strings.Split(c.bestChannels, ",")
+	var out []string
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			out = append(out, strings.ToLower(p))
+		}
+	}
+	return out
 }
 
 // BuildCustomEPGURL constructs the public URL for the EPG file in S3.
