@@ -32,7 +32,6 @@ type Config struct {
 	maxChannelVariants int
 	telegramUserID     string
 	telegramBotToken   string
-	bestChannels       string
 }
 
 // New reads all environment variables once and caches them.
@@ -58,7 +57,6 @@ func New() *Config {
 		maxChannelVariants: envIntClampMax("MAX_CHANNEL_VARIANTS", 1, 5),
 		telegramUserID:     os.Getenv("TELEGRAM_USER_ID"),
 		telegramBotToken:   os.Getenv("TELEGRAM_BOT_TOKEN"),
-		bestChannels:       os.Getenv("BEST_CHANNELS"),
 	}
 }
 
@@ -192,23 +190,18 @@ func (c *Config) TelegramEnabled() bool {
 	return c.telegramUserID != "" && c.telegramBotToken != ""
 }
 
-// BestChannels returns the comma-separated list of channel names to duplicate
-// into the "_Best" category. Empty when the feature is disabled.
-func (c *Config) BestChannels() string { return c.bestChannels }
+// BestChannels lists favorite channel names duplicated into the "_Best"
+// category (see m3u.DuplicateToCategory). Matching is a case-insensitive
+// substring match on the emoji-stripped channel name; names are stored
+// natural-case and lowercased by BestChannelNames.
+var BestChannels = []string{"Москва 24", "tlc", "hgtv", "euronews"}
 
-// BestChannelsList parses BEST_CHANNELS into a trimmed, lowercased slice.
-// Returns nil when the env var is empty.
-func (c *Config) BestChannelsList() []string {
-	if c.bestChannels == "" {
-		return nil
-	}
-	parts := strings.Split(c.bestChannels, ",")
-	var out []string
-	for _, p := range parts {
-		p = strings.TrimSpace(p)
-		if p != "" {
-			out = append(out, strings.ToLower(p))
-		}
+// BestChannelNames returns BestChannels as a trimmed, lowercased slice for
+// DuplicateToCategory, which expects pre-lowercased names.
+func BestChannelNames() []string {
+	out := make([]string, len(BestChannels))
+	for i, n := range BestChannels {
+		out[i] = strings.ToLower(strings.TrimSpace(n))
 	}
 	return out
 }

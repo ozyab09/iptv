@@ -375,7 +375,7 @@ func run() int {
 
 	// Step 2d: Duplicate favorite channels into "_Best" category (same
 	// stream URL, different emoji so they appear as separate entries).
-	if bestNames := cfg.BestChannelsList(); len(bestNames) > 0 {
+	if bestNames := config.BestChannelNames(); len(bestNames) > 0 {
 		filteredContent = m3u.DuplicateToCategory(filteredContent, bestNames, "_Best")
 	}
 
