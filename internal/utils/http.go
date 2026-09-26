@@ -22,9 +22,14 @@ var DefaultDownloadTimeout = 10 * time.Minute
 func NewHTTPClient(skipSSLVerify bool) *http.Client {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: skipSSLVerify}
-	// Transport-level messages (e.g. "Unsolicited response received on idle
-	// HTTP channel" from HLS probes) are routed through the sanitizer by the
-	// global stdlib log redirect installed in logger.go's init.
+	// Probe responses are only status-checked, never fully read. A half-drained
+	// body leaves the keep-alive connection in an unusable state; when the
+	// transport later reaps the idle channel, net/http logs "Unsolicited
+	// response received on idle HTTP channel" (with the leftover playlist body)
+	// via the global logger. Disabling keep-alive reuse avoids the noise at the
+	// source — probes are one-shot requests anyway, so connection reuse buys
+	// nothing. It also removes the need to rely on log-masking for this case.
+	transport.DisableKeepAlives = true
 	return &http.Client{
 		Transport: transport,
 		Timeout:   DefaultDownloadTimeout,
