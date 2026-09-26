@@ -12,7 +12,10 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    # Пин к ubuntu-24.04: ubuntu-latest мигрирует на Ubuntu 26.04 с 19.10.2026
+    # (actions/runner-images#14748), что меняет набор предустановленных тулов.
+    # Переход на 26.04 — отдельное осознанное изменение.
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
       contents: read
@@ -36,7 +39,10 @@ jobs:
       run: go test -race ./... -v -count=1
 
   filter-m3u:
-    runs-on: ubuntu-latest
+    # Пин к ubuntu-24.04: ubuntu-latest мигрирует на Ubuntu 26.04 с 19.10.2026
+    # (actions/runner-images#14748), что меняет набор предустановленных тулов.
+    # Переход на 26.04 — отдельное осознанное изменение.
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     # On pull requests this job is a pure dry-run (no secrets, no S3 upload,
     # no Telegram report), so it runs in parallel with the test job instead of
