@@ -95,9 +95,9 @@ jobs:
 
 
   # PR-only dry-run: runs the filter in parallel with the test job (no needs
-  # gate) for fast MR feedback. No secrets are exposed on pull_request events,
-  # DRY_RUN is forced and skip-if-empty env keeps S3/EPG disabled, so nothing
-  # is uploaded. The gated filter-m3u job above is skipped on pull_request.
+  # gate) for fast MR feedback. PR runs have no access to secrets, so the
+  # pipeline needs a real M3U source — the public iptv-org demo playlist is
+  # used, and DRY_RUN keeps everything local (no S3, no Telegram report).
   dry-run:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-24.04
@@ -124,4 +124,7 @@ jobs:
       env:
         DRY_RUN: "true"
         OUTPUT_DIR: output
+        # No secrets on pull_request events: use a public demo playlist so the
+        # full pipeline (download → filter → save) still gets exercised.
+        M3U_SOURCE_URL: "https://iptv-org.github.io/iptv/index.m3u"
       run: ./iptv-filter
