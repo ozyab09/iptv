@@ -29,22 +29,20 @@ jobs:
         go-version: '1.25'
         cache: true
 
-    - name: Build
-      run: go build -o /dev/null ./...
-
-    - name: Vet
-      run: go vet ./...
-
-    - name: Run tests
-      run: go test ./... -v -count=1
-
-    - name: Race detector
-      run: go test -race ./... -count=1
+    - name: Test (race detector)
+      # Single full pass under -race: the race build is a strict superset of a
+      # plain test run (same tests, with data-race checking), so running both
+      # would just double CI time (~80 s + ~106 s → ~106 s total).
+      run: go test -race ./... -v -count=1
 
   filter-m3u:
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    needs: test
+    # On pull requests this job is a pure dry-run (no secrets, no S3 upload,
+    # no Telegram report), so it runs in parallel with the test job instead of
+    # waiting for it — MR feedback drops by ~3 min. On push/schedule it still
+    # gates on tests passing via needs.
+    needs: ${{ github.event_name == 'pull_request' && [] || ['test'] }}
     # Run only when tests pass (default success() gate). PRs execute a dry-run
     # (DRY_RUN is set in a step below); pushes/schedule run the real filter.
     permissions:

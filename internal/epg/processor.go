@@ -234,7 +234,20 @@ func DownloadEPGToFile(ctx context.Context, urlStr string, cfg *config.Config) (
 func downloadSingleEPGToFileWithRetry(ctx context.Context, urlStr string, cfg *config.Config) (string, int64, error) {
 	var p string
 	var n int64
-	err := utils.RetryWithContext(ctx, 3, 2*time.Second, 2.0, func() error {
+	// Retry tuning via env lets tests shorten the backoff (see utils.RetryWithContext):
+	// RETRY_ATTEMPTS / RETRY_DELAY_MS override the 3-attempts / 2 s production defaults.
+	attempts, delay := 3, 2*time.Second
+	if v := strings.TrimSpace(os.Getenv("RETRY_ATTEMPTS")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 1 {
+			attempts = n
+		}
+	}
+	if v := strings.TrimSpace(os.Getenv("RETRY_DELAY_MS")); v != "" {
+		if ms, err := strconv.Atoi(v); err == nil && ms >= 0 {
+			delay = time.Duration(ms) * time.Millisecond
+		}
+	}
+	err := utils.RetryWithContext(ctx, attempts, delay, 2.0, func() error {
 		var e error
 		p, n, e = downloadSingleEPGToFile(ctx, urlStr, cfg)
 		return e

@@ -713,6 +713,10 @@ func TestMergeEPGFiles(t *testing.T) {
 func TestDownloadEPGToFileSkipsFailedSource(t *testing.T) {
 	t.Setenv("OUTPUT_DIR", t.TempDir())
 	t.Setenv("SKIP_SSL_VERIFY", "false")
+	// Shorten retry backoff so the failing source does not sleep through
+	// the production exponential backoff.
+	t.Setenv("RETRY_ATTEMPTS", "1")
+	t.Setenv("RETRY_DELAY_MS", "0")
 	cfg := config.New()
 
 	good := `<?xml version="1.0"?><tv>
@@ -775,6 +779,8 @@ func TestDownloadEPGToFileSkipsFailedSource(t *testing.T) {
 func TestDownloadEPGToFileFailsWhenAllSourcesFail(t *testing.T) {
 	t.Setenv("OUTPUT_DIR", t.TempDir())
 	t.Setenv("SKIP_SSL_VERIFY", "false")
+	t.Setenv("RETRY_ATTEMPTS", "1")
+	t.Setenv("RETRY_DELAY_MS", "0")
 	cfg := config.New()
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
