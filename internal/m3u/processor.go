@@ -791,7 +791,28 @@ func inheritTvgID(group []dedupCandidate, selfIdx int, validEPGIDs map[string]bo
 // Kept entries that lack a tvg-id inherit it from a sibling variant in the same
 // group (option C merge): only ids present in validEPGIDs are inherited; a nil
 // validEPGIDs disables validation and inherits any non-empty id.
-func DeduplicateByName(content string, maxVariants int, probe func(candidates []utils.ProbeCandidate) map[string]bool, validEPGIDs map[string]bool) DedupResult {
+//
+// Channels matching config.BestChannels (favorites) are deduplicated by name
+// and URL like everyone else, but their source availability is never probed —
+// all variants are kept up to maxVariants regardless of reachability.
+func DeduplicateByName(content string, maxVariants int, probe func(candidates []utils.ProbeCandidate) map[string]bool, validEPGIDs map[string]bool, bestNames []string) DedupResult {
+	return dedupByName(content, maxVariants, probe, validEPGIDs, bestNames)
+}
+
+// isBestChannelKey reports whether a normalized-name group key matches one of
+// the favorite channels (case-insensitive substring, like DuplicateToCategory).
+func isBestChannelKey(key string, bestNames []string) bool {
+	for _, n := range bestNames {
+		if n != "" && strings.Contains(key, n) {
+			return true
+		}
+	}
+	return false
+}
+
+// dedupByName is the implementation of DeduplicateByName; bestNames (optional,
+// pre-lowercased) marks favorite-channel groups that skip availability probing.
+func dedupByName(content string, maxVariants int, probe func(candidates []utils.ProbeCandidate) map[string]bool, validEPGIDs map[string]bool, bestNames []string) DedupResult {
 	if maxVariants < 1 {
 		maxVariants = 1
 	}
@@ -811,20 +832,23 @@ func DeduplicateByName(content string, maxVariants int, probe func(candidates []
 		})
 	}
 
-	// Collect unique probe-able candidate URLs from duplicate groups only.
-	var probeCands []utils.ProbeCandidate
-	probeSet := make(map[string]bool)
-	for _, group := range groups {
-		if len(group) <= 1 {
-			continue
-		}
-		for _, cand := range group {
-			if cand.probe.URL != "" && canProbeURL(cand.probe.URL) && !probeSet[cand.probe.URL] {
-				probeSet[cand.probe.URL] = true
-				probeCands = append(probeCands, cand.probe)
-			}
+// Collect unique probe-able candidate URLs from duplicate groups only.
+// Groups matching a best-channel name (favorites) are excluded from probing:
+// their availability is never checked, but they still go through the
+// maxVariants/quality dedup below. bestNames must be pre-lowercased.
+var probeCands []utils.ProbeCandidate
+probeSet := make(map[string]bool)
+for key, group := range groups {
+	if len(group) <= 1 || isBestChannelKey(key, bestNames) {
+		continue
+	}
+	for _, cand := range group {
+		if cand.probe.URL != "" && canProbeURL(cand.probe.URL) && !probeSet[cand.probe.URL] {
+			probeSet[cand.probe.URL] = true
+			probeCands = append(probeCands, cand.probe)
 		}
 	}
+}
 
 	var alive map[string]bool
 	if probe != nil && len(probeCands) > 0 {

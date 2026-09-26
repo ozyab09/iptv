@@ -374,7 +374,7 @@ func run() int {
 				return utils.ProbeCandidates(ctx, candidates, cfg.ProbeConcurrency(), cfg.ProbeTimeout(), skipSSL)
 			}
 		}
-		dedupResult := m3u.DeduplicateByName(filteredContent, cfg.MaxChannelVariants(), probe, epgIDSet)
+		dedupResult := m3u.DeduplicateByName(filteredContent, cfg.MaxChannelVariants(), probe, epgIDSet, config.BestChannelNames())
 		filteredContent = dedupResult.Content
 		deadBySource = dedupResult.DeadBySource
 	}
