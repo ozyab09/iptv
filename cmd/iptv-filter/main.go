@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/signal"
 	"path"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -100,12 +101,33 @@ func parseM3USources(m3uURL string) []string {
 func downloadM3U(ctx context.Context, urlStr string, skipSSLVerify bool) (string, error) {
 	log.Info("Downloading M3U source: %s", urlStr)
 	var original string
-	err := utils.RetryWithContext(ctx, 4, 3*time.Second, 2.0, func() error {
+	err := utils.RetryWithContext(ctx, retryAttempts(), retryDelay(), 2.0, func() error {
 		var e error
 		original, e = m3u.DownloadM3UWithContext(ctx, urlStr, skipSSLVerify)
 		return e
 	})
 	return original, err
+}
+
+// retryTuning lets tests shorten the exponential-backoff retries: env vars
+// RETRY_ATTEMPTS / RETRY_DELAY_MS override the production defaults (4 attempts,
+// 3 s delay). Unset/invalid values fall back to production behavior.
+func retryAttempts() int {
+	if v := strings.TrimSpace(os.Getenv("RETRY_ATTEMPTS")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 1 {
+			return n
+		}
+	}
+	return 4
+}
+
+func retryDelay() time.Duration {
+	if v := strings.TrimSpace(os.Getenv("RETRY_DELAY_MS")); v != "" {
+		if ms, err := strconv.Atoi(v); err == nil && ms >= 0 {
+			return time.Duration(ms) * time.Millisecond
+		}
+	}
+	return 3 * time.Second
 }
 
 // ─── Pipeline step: filter M3U ──────────────────────────────────────────────────
@@ -174,7 +196,7 @@ func processEPG(ctx context.Context, cfg *config.Config, epgPath string, epgName
 // ─── Pipeline step: upload ──────────────────────────────────────────────────────
 
 func uploadWithRetry(ctx context.Context, fn func() error) error {
-	if err := utils.RetryWithContext(ctx, 3, 2*time.Second, 2.0, fn); err != nil {
+	if err := utils.RetryWithContext(ctx, retryAttempts(), retryDelay(), 2.0, fn); err != nil {
 		return fmt.Errorf("upload failed after retries: %w", err)
 	}
 	return nil

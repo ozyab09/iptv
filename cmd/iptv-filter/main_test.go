@@ -36,9 +36,14 @@ func clearConfigEnv(t *testing.T) {
 		"SKIP_SSL_VERIFY", "PROBE_SOURCES", "PROBE_TIMEOUT_SECONDS",
 		"PROBE_CONCURRENCY", "MAX_CHANNEL_VARIANTS",
 		"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY",
+		// Shorten retry backoff: failure-path tests would otherwise sleep through
+		// the full production exponential backoff (~20 s per test).
+		"RETRY_ATTEMPTS", "RETRY_DELAY_MS",
 	} {
 		t.Setenv(key, "")
 	}
+	t.Setenv("RETRY_ATTEMPTS", "1")
+	t.Setenv("RETRY_DELAY_MS", "0")
 }
 
 func TestRunFailsForInvalidConfiguration(t *testing.T) {

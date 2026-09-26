@@ -12,7 +12,10 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    # Пин к ubuntu-24.04: ubuntu-latest мигрирует на Ubuntu 26.04 с 19.10.2026
+    # (actions/runner-images#14748), что меняет набор предустановленных тулов.
+    # Переход на 26.04 — отдельное осознанное изменение.
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
       contents: read
@@ -29,24 +32,23 @@ jobs:
         go-version: '1.25'
         cache: true
 
-    - name: Build
-      run: go build -o /dev/null ./...
-
-    - name: Vet
-      run: go vet ./...
-
-    - name: Run tests
-      run: go test ./... -v -count=1
-
-    - name: Race detector
-      run: go test -race ./... -count=1
+    - name: Test (race detector)
+      # Single full pass under -race: the race build is a strict superset of a
+      # plain test run (same tests, with data-race checking), so running both
+      # would just double CI time (~80 s + ~106 s → ~106 s total).
+      run: go test -race ./... -v -count=1
 
   filter-m3u:
-    runs-on: ubuntu-latest
+    # Real filter run (with secrets + upload) only on push/schedule; PRs use
+    # the parallel dry-run job at the bottom instead.
+    if: github.event_name != 'pull_request'
+    # Пин к ubuntu-24.04: ubuntu-latest мигрирует на Ubuntu 26.04 с 19.10.2026
+    # (actions/runner-images#14748), что меняет набор предустановленных тулов.
+    # Переход на 26.04 — отдельное осознанное изменение.
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
+    # Run only when tests pass (default success() gate).
     needs: test
-    # Run only when tests pass (default success() gate). PRs execute a dry-run
-    # (DRY_RUN is set in a step below); pushes/schedule run the real filter.
     permissions:
       contents: read
     # Источники и хранилище: job-scoped, чтобы test job их не видел.
@@ -88,10 +90,41 @@ jobs:
     - name: Build binary
       run: go build -o iptv-filter ./cmd/iptv-filter/
 
-    - name: Set dry-run mode for pull requests
-      if: github.event_name == 'pull_request'
-      run: echo "DRY_RUN=true" >> $GITHUB_ENV
-
     - name: Run M3U filter script
       run: ./iptv-filter
 
+
+  # PR-only dry-run: runs the filter in parallel with the test job (no needs
+  # gate) for fast MR feedback. PR runs have no access to secrets, so the
+  # pipeline needs a real M3U source — the public iptv-org demo playlist is
+  # used, and DRY_RUN keeps everything local (no S3, no Telegram report).
+  dry-run:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v7
+      with:
+        fetch-depth: 1
+
+    - name: Set up Go
+      uses: actions/setup-go@v7
+      with:
+        go-version: '1.25'
+        cache: true
+
+    - name: Build binary
+      run: go build -o iptv-filter ./cmd/iptv-filter/
+
+    - name: Run M3U filter script (dry-run)
+      env:
+        DRY_RUN: "true"
+        OUTPUT_DIR: output
+        # No secrets on pull_request events: use a public demo playlist so the
+        # full pipeline (download → filter → save) still gets exercised.
+        M3U_SOURCE_URL: "https://iptv-org.github.io/iptv/index.m3u"
+      run: ./iptv-filter
