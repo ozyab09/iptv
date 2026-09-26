@@ -746,7 +746,7 @@ http://example.com/sd.m3u8
 #EXTINF:-1 group-title="B",Одинокий канал
 http://example.com/one.m3u8`
 
-	result := DeduplicateByName(content, 1, nil, nil)
+	result := DeduplicateByName(content, 1, nil, nil, nil)
 
 	if !strings.Contains(result.Content, "Канал HD") {
 		t.Error("expected HD variant to be kept")
@@ -771,7 +771,7 @@ http://example.com/uhd.m3u8
 #EXTINF:-1 group-title="A",Канал SD 🔵💧
 http://example.com/sd.m3u8`
 
-	result := DeduplicateByName(content, 1, nil, nil)
+	result := DeduplicateByName(content, 1, nil, nil, nil)
 
 	// "Канал HD" и "КАНАЛᴴᴰ" оба ранг 2 (HD) — остаётся первый по порядку.
 	if !strings.Contains(result.Content, "Канал HD 🔴🐱") {
@@ -805,7 +805,7 @@ http://example.com/sd.m3u8`
 		return m
 	}
 
-	result := DeduplicateByName(content, 1, probe, nil)
+	result := DeduplicateByName(content, 1, probe, nil, nil)
 
 	// Мёртвый 4K пропускается в пользу живого HD, несмотря на качество.
 	if !strings.Contains(result.Content, "Канал HD") {
@@ -843,7 +843,7 @@ http://example.com/single.m3u8`
 		return m
 	}
 
-	DeduplicateByName(content, 1, probe, nil)
+	DeduplicateByName(content, 1, probe, nil, nil)
 
 	for _, u := range probed {
 		if u == "http://example.com/single.m3u8" {
@@ -861,7 +861,7 @@ http://example.com/hd.m3u8
 #EXTINF:-1 group-title="A",Канал SD
 http://example.com/sd.m3u8`
 
-	result := DeduplicateByName(content, 2, nil, nil)
+	result := DeduplicateByName(content, 2, nil, nil, nil)
 
 	if c := CountChannels(result.Content); c != 2 {
 		t.Errorf("expected 2 channels, got %d", c)
@@ -889,7 +889,7 @@ http://example.com/sd.m3u8`
 		return m
 	}
 
-	result := DeduplicateByName(content, 1, probe, nil)
+	result := DeduplicateByName(content, 1, probe, nil, nil)
 
 	if !strings.Contains(result.Content, "Канал 4K") {
 		t.Error("expected best-quality fallback to be kept when all variants are dead")
@@ -913,7 +913,7 @@ http://example.com/dead.m3u8`
 		return map[string]bool{cands[0].URL: false}
 	}
 
-	result := DeduplicateByName(content, 1, probe, nil)
+	result := DeduplicateByName(content, 1, probe, nil, nil)
 
 	// rtmp не пробируется (считается живым), мёртвый HD удаляется,
 	// несмотря на то что HD по качеству выше.
@@ -950,7 +950,7 @@ http://example.com/sd.m3u8`
 		return m
 	}
 
-	DeduplicateByName(content, 1, probe, nil)
+	DeduplicateByName(content, 1, probe, nil, nil)
 
 	if gotUA != "WINK/1.130.1 (AndroidTV/9) HlsWinkPlayer" {
 		t.Errorf("expected #EXTVLCOPT user-agent to be passed to probe, got %q", gotUA)
@@ -968,7 +968,7 @@ https://example.com/hd.m3u8
 #EXTINF:-1 group-title="A",Канал SD
 http://example.com/sd.m3u8`
 
-	result := DeduplicateByName(content, 1, nil, nil)
+	result := DeduplicateByName(content, 1, nil, nil, nil)
 
 	if !strings.Contains(result.Content, "#EXTVLCOPT:http-user-agent=WINK/1.0") {
 		t.Error("expected EXTVLCOPT line preserved with the kept variant")
@@ -989,7 +989,7 @@ http://example.com/hd.m3u8
 http://example.com/sd.m3u8`
 
 	valid := map[string]bool{"123": true}
-	result := DeduplicateByName(content, 1, nil, valid)
+	result := DeduplicateByName(content, 1, nil, valid, nil)
 
 	if !strings.Contains(result.Content, `tvg-id="123"`) {
 		t.Error("expected tvg-id to be inherited from sibling variant")
@@ -1014,7 +1014,7 @@ http://example.com/sd.m3u8`
 
 	// validEPGIDs не содержит "stale" → наследовать нельзя.
 	valid := map[string]bool{"456": true}
-	result := DeduplicateByName(content, 1, nil, valid)
+	result := DeduplicateByName(content, 1, nil, valid, nil)
 
 	if strings.Contains(result.Content, `tvg-id="stale"`) {
 		t.Error("expected stale sibling tvg-id NOT to be inherited")
@@ -1039,7 +1039,7 @@ http://example.com/hd.m3u8
 http://example.com/sd.m3u8`
 
 	// validEPGIDs = nil → наследуется любой непустой id.
-	result := DeduplicateByName(content, 1, nil, nil)
+	result := DeduplicateByName(content, 1, nil, nil, nil)
 
 	if !strings.Contains(result.Content, `tvg-id="777"`) {
 		t.Error("expected any sibling tvg-id to be inherited when EPG set is nil")
@@ -1060,7 +1060,7 @@ http://example.com/hd.m3u8
 http://example.com/sd.m3u8`
 
 	valid := map[string]bool{"123": true}
-	result := DeduplicateByName(content, 1, nil, valid)
+	result := DeduplicateByName(content, 1, nil, valid, nil)
 
 	if !strings.Contains(result.Content, "Канал HD 🔴🐱") {
 		t.Error("expected kept variant name with emoji to be preserved")
@@ -1140,7 +1140,7 @@ http://example.com/two-hd.m3u8`
 		return m
 	}
 
-	result := DeduplicateByName(content, 1, probe, nil)
+	result := DeduplicateByName(content, 1, probe, nil, nil)
 
 	if c := CountChannels(result.Content); c != 2 {
 		t.Errorf("expected 2 channels, got %d\n%s", c, result.Content)
@@ -1152,6 +1152,55 @@ http://example.com/two-hd.m3u8`
 	// Source 0 had no dead entries.
 	if result.DeadBySource[0] != 0 {
 		t.Errorf("expected 0 dead from source 0, got %d", result.DeadBySource[0])
+	}
+}
+
+func TestDeduplicateByNameSkipsProbeForBestChannels(t *testing.T) {
+	var probed []string
+	content := `#EXTM3U
+#EXTINF:-1 group-title="A",Москва 24 HD
+#source:0
+http://example.com/msk24-hd.m3u8
+#EXTINF:-1 group-title="A",Москва 24 SD
+#source:1
+http://example.com/msk24-sd.m3u8
+#EXTINF:-1 group-title="B",Другой HD
+#source:0
+http://example.com/other-hd.m3u8
+#EXTINF:-1 group-title="B",Другой SD
+#source:1
+http://example.com/other-sd.m3u8`
+
+	probe := func(cands []utils.ProbeCandidate) map[string]bool {
+		for _, c := range cands {
+			probed = append(probed, c.URL)
+		}
+		m := make(map[string]bool)
+		for _, c := range cands {
+			// Only the non-best group is alive; best-channel URLs are dead.
+			m[c.URL] = strings.Contains(c.URL, "other-hd")
+		}
+		return m
+	}
+
+	result := DeduplicateByName(content, 2, probe, nil, []string{"москва 24"})
+
+	// Best-channel URLs are never probed...
+	for _, u := range probed {
+		if strings.Contains(u, "msk24") {
+			t.Errorf("best-channel URL should not be probed: %s", u)
+		}
+	}
+	// ...and both best-channel variants are kept despite being "dead".
+	if !strings.Contains(result.Content, "Москва 24 HD") || !strings.Contains(result.Content, "Москва 24 SD") {
+		t.Error("expected both best-channel variants to be kept without probing")
+	}
+	// Non-best group still goes through probing: only the alive HD variant stays.
+	if strings.Contains(result.Content, "Другой SD") {
+		t.Error("expected dead non-best variant to be removed")
+	}
+	if !strings.Contains(result.Content, "Другой HD") {
+		t.Error("expected alive non-best variant to be kept")
 	}
 }
 
@@ -1172,7 +1221,7 @@ http://example.com/one-sd.m3u8`
 		return m
 	}
 
-	result := DeduplicateByName(content, 1, probe, nil)
+	result := DeduplicateByName(content, 1, probe, nil, nil)
 
 	if c := CountChannels(result.Content); c != 1 {
 		t.Errorf("expected 1 channel (best fallback), got %d", c)
@@ -1494,7 +1543,7 @@ http://example.com/360-hd.m3u8
 #EXTINF:-1 group-title="Региональные",360 (Армавир) 💟🦒
 http://example.com/360-armavir.m3u8`
 
-	result := DeduplicateByName(content, 1, nil, nil)
+	result := DeduplicateByName(content, 1, nil, nil, nil)
 
 	// (2), (3) и HD-вариант склеиваются в один канал "360" (остаётся лучший — HD).
 	if c := CountChannels(result.Content); c != 2 {
