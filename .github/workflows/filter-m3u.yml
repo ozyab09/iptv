@@ -12,6 +12,10 @@ on:
 
 jobs:
   test:
+    # На push в main тесты не запускаем: код уже проверен тестами на PR,
+    # а filter-m3u гоняет их же плейлист — экономим время сборки. Тесты
+    # остаются обязательными для pull_request (параллельный dry-run job).
+    if: github.event_name != 'push'
     # Пин к ubuntu-24.04: ubuntu-latest мигрирует на Ubuntu 26.04 с 19.10.2026
     # (actions/runner-images#14748), что меняет набор предустановленных тулов.
     # Переход на 26.04 — отдельное осознанное изменение.
@@ -47,7 +51,9 @@ jobs:
     # Переход на 26.04 — отдельное осознанное изменение.
     runs-on: ubuntu-24.04
     timeout-minutes: 30
-    # Run only when tests pass (default success() gate).
+    # Gate on tests only when the test job actually runs (schedule/dispatch);
+    # on push to main the test job is skipped — success() treats skipped
+    # dependencies as satisfied, so the filter run is not blocked.
     needs: test
     permissions:
       contents: read
