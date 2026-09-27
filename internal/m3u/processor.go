@@ -472,6 +472,26 @@ func shouldFilterByName(channelName string, excludeLower []string) bool {
 	return false
 }
 
+// isBestChannelName reports whether a raw display name (possibly with trailing
+// emoji) matches one of the favorite-channel names — case-insensitive
+// substring on the emoji-stripped name, like DuplicateToCategory. bestNames
+// must be pre-lowercased.
+func isBestChannelName(name string, bestNames []string) bool {
+	if len(bestNames) == 0 {
+		return false
+	}
+	n := strings.ToLower(strings.TrimSpace(utils.StripTrailingEmoji(name)))
+	if n == "" {
+		return false
+	}
+	for _, b := range bestNames {
+		if b != "" && strings.Contains(n, b) {
+			return true
+		}
+	}
+	return false
+}
+
 func isRegionalChannel(name string) bool {
 	return regRegional.MatchString(name)
 }
@@ -487,9 +507,22 @@ type filterResult struct {
 	keep         bool
 }
 
-func filterEntry(line string, exactMatchLower, substringLower, excludeLower []string) filterResult {
+func filterEntry(line string, exactMatchLower, substringLower, excludeLower, bestNames []string) filterResult {
 	// Default: keep if no filters configured for the category.
 	keep := len(exactMatchLower) == 0 && len(substringLower) == 0
+
+	// Favorite channels bypass removal filters entirely: their variants are
+	// precious, so category deny-lists, name exclusions and regional/numeric
+	// suffix removal never drop them. Name normalization (orig, cleaning) still
+	// applies below. Best-status is checked on the raw display name first so
+	// favorites are kept even when their category is on the deny-list.
+	parts := strings.SplitN(line, ",", 2)
+	isBest := len(parts) > 1 && isBestChannelName(strings.TrimSpace(parts[1]), bestNames)
+
+	if isBest {
+		// Favorites are never dropped by the category deny-list.
+		keep = true
+	}
 
 	if m := regGroupTitle.FindStringSubmatch(line); m != nil {
 		originalGroup := m[1]
@@ -501,7 +534,9 @@ func filterEntry(line string, exactMatchLower, substringLower, excludeLower []st
 			line = regGroupTitleAttr.ReplaceAllString(line, newAttr)
 		}
 
-		keep = !shouldFilterByCategory(normalized, exactMatchLower, substringLower)
+		if !isBest {
+			keep = !shouldFilterByCategory(normalized, exactMatchLower, substringLower)
+		}
 	}
 
 	if !keep {
@@ -509,9 +544,18 @@ func filterEntry(line string, exactMatchLower, substringLower, excludeLower []st
 	}
 
 	// Channel name checks.
-	parts := strings.SplitN(line, ",", 2)
 	if len(parts) > 1 {
 		channelName := strings.TrimSpace(parts[1])
+
+		if isBest {
+			// Favorites skip the removal checks but keep name normalization.
+			newName := RemoveOrigSuffix(channelName)
+			newName = CleanChannelName(newName)
+			if newName != channelName {
+				line = parts[0] + "," + newName
+			}
+			return filterResult{filteredLine: line, keep: true}
+		}
 
 		if shouldFilterByName(channelName, excludeLower) {
 			return filterResult{keep: false}
@@ -1183,7 +1227,12 @@ func InheritTvgIDsFromSiblings(content string, validEPGIDs map[string]bool) stri
 // ─── Main pipeline ───────────────────────────────────────────────────────────────
 
 // FilterContent is the main pipeline: normalize → filter → dedup → sort → add emoji.
-func FilterContent(content string, categoriesToRemove, categoriesToRemoveSubstring, channelNamesToExclude []string, customEPGURL string) string {
+//
+// If bestNames is non-empty, entries whose name contains one of these
+// (lowercased, substring match like DuplicateToCategory) are never removed —
+// favorite channels keep all their variants regardless of category or name
+// filters.
+func FilterContent(content string, categoriesToRemove, categoriesToRemoveSubstring, channelNamesToExclude, bestNames []string, customEPGURL string) string {
 	logger.Info("Starting filtering process")
 
 	// Normalize line endings.
@@ -1193,6 +1242,7 @@ func FilterContent(content string, categoriesToRemove, categoriesToRemoveSubstri
 	exactMatchLower := utils.ToLowerSlice(categoriesToRemove)
 	substringLower := utils.ToLowerSlice(categoriesToRemoveSubstring)
 	excludeLower := utils.ToLowerSlice(channelNamesToExclude)
+	bestNamesLower := utils.ToLowerSlice(bestNames)
 
 	lines := strings.Split(content, "\n")
 	var filteredLines []string
@@ -1231,7 +1281,7 @@ func FilterContent(content string, categoriesToRemove, categoriesToRemoveSubstri
 		// Channel entry: filter and normalize.
 		if strings.HasPrefix(trimmed, "#EXTINF:") {
 			closeEntry()
-			result := filterEntry(line, exactMatchLower, substringLower, excludeLower)
+			result := filterEntry(line, exactMatchLower, substringLower, excludeLower, bestNamesLower)
 			if result.keep {
 				filteredLines = append(filteredLines, result.filteredLine)
 				pendingEntry = len(filteredLines) - 1
@@ -1510,10 +1560,12 @@ func NormalizeCategories(content string, aliases map[string]string, allowed map[
 // reclassified — used to deny a genre category that the allow-list pass would
 // otherwise re-create by name (e.g. «Кино»). Channels without a group-title or
 // without a match stay untouched.
-func ClassifyFallbackCategories(content string, keywords map[string][]string, allowed map[string]bool, fallback string, removeCategories map[string]bool) string {
+func ClassifyFallbackCategories(content string, keywords map[string][]string, allowed map[string]bool, fallback string, removeCategories map[string]bool, bestNames []string) string {
 	if len(keywords) == 0 {
 		return content
 	}
+
+	bestNamesLower := utils.ToLowerSlice(bestNames)
 
 	lines := strings.Split(content, "\n")
 	// Deterministic category iteration: specific genres (Спорт, Детские, Кино)
@@ -1570,6 +1622,12 @@ func ClassifyFallbackCategories(content string, keywords map[string][]string, al
 		}
 		channelName := strings.ToLower(utils.StripTrailingEmoji(parts[1]))
 		if channelName == "" {
+			out = append(out, line)
+			continue
+		}
+		if isBestChannelName(channelName, bestNamesLower) {
+			// Favorites are never removed by denied categories — leave them
+			// in the fallback category untouched.
 			out = append(out, line)
 			continue
 		}
