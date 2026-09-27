@@ -138,6 +138,7 @@ func filterM3U(content string, cfg *config.Config, customEPGURL string) string {
 		config.CategoriesToRemove,
 		config.CategoriesToRemoveSubstring,
 		config.ChannelNamesToExclude,
+		config.BestChannelNames(),
 		customEPGURL,
 	)
 }
@@ -343,6 +344,7 @@ func run() int {
 		config.AllowedCategorySet(),
 		config.FallbackCategory,
 		config.CategoriesToRemoveByKeywordSet(),
+		config.BestChannelNames(),
 	)
 
 	// Step 2b: Download EPG once, early. Its channel-id set is used to validate

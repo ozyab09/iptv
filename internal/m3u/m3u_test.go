@@ -389,6 +389,77 @@ func TestEmojiPoolsExpanded(t *testing.T) {
 	}
 }
 
+func TestFilterContentKeepsBestChannelsDespiteCategoryFilter(t *testing.T) {
+	// "TLC HD" lives in a denied category, "TLC (+2)" has a regional suffix,
+	// "TLC Fashion" matches a name exclusion — favorites must survive all of
+	// them, while a non-favorite in the same category is still removed.
+	content := `#EXTM3U
+#EXTINF:-1 group-title="Развлекательные",TLC HD
+http://example.com/tlc-hd
+#EXTINF:-1 group-title="Ott Club+Реклама",TLC
+http://example.com/tlc
+#EXTINF:-1 group-title="Развлекательные",TLC (+2)
+http://example.com/tlc-2
+#EXTINF:-1 group-title="Развлекательные",TLC Fashion
+http://example.com/tlc-fashion
+#EXTINF:-1 group-title="Развлекательные",Some Fashion Show
+http://example.com/fashion`
+
+	result := FilterContent(content, nil, []string{"реклама"}, []string{"fashion"}, []string{"tlc"}, "")
+
+	for _, want := range []string{"TLC HD", "http://example.com/tlc", "TLC (+2)", "TLC Fashion"} {
+		if !strings.Contains(result, want) {
+			t.Errorf("expected favorite to be kept: %s\nResult:\n%s", want, result)
+		}
+	}
+	if strings.Contains(result, "Some Fashion Show") {
+		t.Error("expected non-favorite name-excluded channel to be removed")
+	}
+}
+
+func TestFilterContentKeepsBestChannelsInDeniedCategory(t *testing.T) {
+	// "TLC TR" lives in the denied "Турция" category — the favorite must
+	// survive, while a non-favorite in the same category is still removed.
+	content := `#EXTM3U
+#EXTINF:-1 tvg-id="taptv-9034453807" group-title="🇹🇷 Турция",TLC HD TR
+http://example.com/tlc-hd-tr
+#EXTINF:-1 tvg-id="taptv-7385821334" group-title="🇹🇷 Турция",TLC TR
+http://example.com/tlc-tr
+#EXTINF:-1 group-title="🇹🇷 Турция",Random Turkish Channel
+http://example.com/tr
+`
+
+	result := FilterContent(content, nil, []string{"турци"}, nil, []string{"tlc"}, "")
+
+	for _, want := range []string{"TLC HD TR", "TLC TR", "http://example.com/tlc-tr"} {
+		if !strings.Contains(result, want) {
+			t.Errorf("expected favorite to be kept: %s\nResult:\n%s", want, result)
+		}
+	}
+	if strings.Contains(result, "Random Turkish Channel") {
+		t.Error("expected non-favorite channel in denied category to be removed")
+	}
+}
+
+func TestClassifyFallbackCategoriesKeepsBestChannels(t *testing.T) {
+	allowed := map[string]bool{"Познавательные": true}
+	remove := map[string]bool{"Кино": true}
+	content := `#EXTM3U
+#EXTINF:-1 group-title="Основные",TLC HD
+http://example.com/tlc
+#EXTINF:-1 group-title="Основные",Random Cinema Channel
+http://example.com/cinema`
+
+	result := ClassifyFallbackCategories(content, config.CategoryKeywords, allowed, "Основные", remove, []string{"tlc"})
+
+	if !strings.Contains(result, "TLC HD") {
+		t.Errorf("expected favorite to survive denied category:\n%s", result)
+	}
+	if strings.Contains(result, "Random Cinema Channel") {
+		t.Error("expected non-favorite cinema channel to be removed")
+	}
+}
+
 func TestFilterContentWithCategories(t *testing.T) {
 	content := `#EXTM3U
 #EXTINF:-1 group-title="Взрослые",Adult Channel
@@ -398,7 +469,7 @@ http://example.com/1
 #EXTINF:-1 group-title="Развлекательные",Channel 2
 http://example.com/2`
 
-	result := FilterContent(content, []string{"Взрослые"}, nil, nil, "")
+	result := FilterContent(content, []string{"Взрослые"}, nil, nil, nil, "")
 
 	if strings.Contains(result, "Adult Channel") {
 		t.Error("expected Adult Channel to be filtered out")
@@ -418,7 +489,7 @@ http://example.com/1
 #EXTINF:-1 group-title="Развлекательные",Channel 2 orig
 http://example.com/2`
 
-	result := FilterContent(content, nil, nil, nil, "")
+	result := FilterContent(content, nil, nil, nil, nil, "")
 
 	if !strings.Contains(result, "Channel 1") {
 		t.Error("expected 'Channel 1' in result")
@@ -450,7 +521,7 @@ http://example.com/25
 #EXTINF:-1 group-title="Россия | Russia",Normal Channel
 http://example.com/normal`
 
-	result := FilterContent(content, nil, nil, nil, "")
+	result := FilterContent(content, nil, nil, nil, nil, "")
 
 	if !strings.Contains(result, "Channel 1") {
 		t.Error("expected 'Channel 1' in result")
@@ -489,7 +560,7 @@ http://example.com/news
 #EXTINF:-1 group-title="Россия | Russia",Sports Channel
 http://example.com/sports`
 
-	result := FilterContent(content, nil, nil, []string{"Fashion"}, "")
+	result := FilterContent(content, nil, nil, []string{"Fashion"}, nil, "")
 
 	if strings.Contains(result, "Fashion TV") {
 		t.Error("expected 'Fashion TV' to be excluded")
@@ -516,7 +587,7 @@ http://example.com/fashion3
 #EXTINF:-1 group-title="Россия | Russia",Regular Channel
 http://example.com/regular`
 
-	result := FilterContent(content, nil, nil, []string{"Fashion"}, "")
+	result := FilterContent(content, nil, nil, []string{"Fashion"}, nil, "")
 
 	if strings.Contains(result, "FASHION TV") {
 		t.Error("expected 'FASHION TV' to be excluded")
@@ -543,7 +614,7 @@ http://example.com/gambling
 #EXTINF:-1 group-title="Россия | Russia",Regular Channel
 http://example.com/regular`
 
-	result := FilterContent(content, nil, nil, []string{"Fashion", "Adult", "Gambling"}, "")
+	result := FilterContent(content, nil, nil, []string{"Fashion", "Adult", "Gambling"}, nil, "")
 
 	if strings.Contains(result, "Fashion TV") {
 		t.Error("expected 'Fashion TV' to be excluded")
@@ -574,7 +645,7 @@ http://example.com/normal
 #EXTINF:-1 group-title="Тест 🛒 🎧",Shop Music
 http://example.com/shop`
 
-	result := FilterContent(content, nil, nil, nil, "")
+	result := FilterContent(content, nil, nil, nil, nil, "")
 
 	// Все каналы должны остаться (фильтрация не настроена).
 	// group-title должен быть очищен: цифры + эмодзи.
@@ -626,7 +697,7 @@ https://example.com/blankline.m3u8
 http://example.com/first.m3u8
 http://example.com/second.m3u8`
 
-	result := FilterContent(content, nil, nil, nil, "")
+	result := FilterContent(content, nil, nil, nil, nil, "")
 
 	for _, want := range []string{
 		"Первый канал",
@@ -665,7 +736,7 @@ http://example.com/ok.m3u8
 https://example.com/ok2.m3u8
 #EXTINF:-1 group-title="X",Хвостовая мёртвая запись`
 
-	result := FilterContent(content, nil, nil, nil, "")
+	result := FilterContent(content, nil, nil, nil, nil, "")
 
 	if !strings.Contains(result, "Канал с URL") {
 		t.Error("expected 'Канал с URL' to be kept")
@@ -691,7 +762,7 @@ rtmp://cdn.example.com/live/ch1
 #EXTINF:-1 group-title="Россия | Russia",Http канал
 http://example.com/ch2.m3u8`
 
-	result := FilterContent(content, nil, nil, nil, "")
+	result := FilterContent(content, nil, nil, nil, nil, "")
 
 	if !strings.Contains(result, "Rtmp канал") {
 		t.Error("expected rtmp channel to be kept")
@@ -1309,7 +1380,7 @@ http://example.com/sports
 #EXTINF:-1 group-title="TEST* 👈",Test Channel
 http://example.com/test`
 
-	result := FilterContent(content, nil, []string{"кино", "детск", "спорт", "test"}, nil, "")
+	result := FilterContent(content, nil, []string{"кино", "детск", "спорт", "test"}, nil, nil, "")
 
 	tests := []struct {
 		name    string
@@ -1706,7 +1777,7 @@ http://example.com/kino.m3u8
 `
 	allowed := map[string]bool{"Спорт": true, "Детские": true, "Познавательные": true, "Основные": true}
 	remove := config.CategoriesToRemoveByKeywordSet()
-	result := ClassifyFallbackCategories(content, config.CategoryKeywords, allowed, "Основные", remove)
+	result := ClassifyFallbackCategories(content, config.CategoryKeywords, allowed, "Основные", remove, nil)
 
 	// «Спорт» и «Кино» are in the deny set — matching channels must be REMOVED
 	// (entry + URL gone), not reclassified.
@@ -1734,7 +1805,7 @@ func TestClassifyFallbackCategoriesKeepsDeniedWhenNotConfigured(t *testing.T) {
 http://example.com/kino.m3u8
 `
 	allowed := map[string]bool{"Кино": true, "Основные": true}
-	result := ClassifyFallbackCategories(content, config.CategoryKeywords, allowed, "Основные", nil)
+	result := ClassifyFallbackCategories(content, config.CategoryKeywords, allowed, "Основные", nil, nil)
 	if !strings.Contains(result, `group-title="Кино",Кинопоказ HD`) {
 		t.Errorf("expected Кинопоказ → Кино when not denied:\n%s", result)
 	}
