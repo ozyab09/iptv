@@ -51,10 +51,9 @@ jobs:
     # Переход на 26.04 — отдельное осознанное изменение.
     runs-on: ubuntu-24.04
     timeout-minutes: 30
-    # Gate on tests only when the test job actually runs (schedule/dispatch);
-    # on push to main the test job is skipped — success() treats skipped
-    # dependencies as satisfied, so the filter run is not blocked.
-    needs: test
+    # Без needs: test — тесты гейтят каждый PR, а skipped-зависимость при
+    # выключенном на push тестовом job'е может каскадно заskip'ить и этот job.
+    # Было: needs: test (см. комментарий к test job выше).
     permissions:
       contents: read
     # Источники и хранилище: job-scoped, чтобы test job их не видел.
