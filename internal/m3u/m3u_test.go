@@ -450,7 +450,7 @@ http://example.com/tlc
 #EXTINF:-1 group-title="Основные",Random Cinema Channel
 http://example.com/cinema`
 
-	result := ClassifyFallbackCategories(content, config.CategoryKeywords, allowed, "Основные", remove, []string{"tlc"})
+	result := ClassifyFallbackCategories(content, config.CategoryKeywords, allowed, "Основные", remove, []string{"tlc"}, nil)
 
 	if !strings.Contains(result, "TLC HD") {
 		t.Errorf("expected favorite to survive denied category:\n%s", result)
@@ -1777,7 +1777,7 @@ http://example.com/kino.m3u8
 `
 	allowed := map[string]bool{"Спорт": true, "Детские": true, "Познавательные": true, "Основные": true}
 	remove := config.CategoriesToRemoveByKeywordSet()
-	result := ClassifyFallbackCategories(content, config.CategoryKeywords, allowed, "Основные", remove, nil)
+	result := ClassifyFallbackCategories(content, config.CategoryKeywords, allowed, "Основные", remove, nil, nil)
 
 	// «Спорт» и «Кино» are in the deny set — matching channels must be REMOVED
 	// (entry + URL gone), not reclassified.
@@ -1805,7 +1805,7 @@ func TestClassifyFallbackCategoriesKeepsDeniedWhenNotConfigured(t *testing.T) {
 http://example.com/kino.m3u8
 `
 	allowed := map[string]bool{"Кино": true, "Основные": true}
-	result := ClassifyFallbackCategories(content, config.CategoryKeywords, allowed, "Основные", nil, nil)
+	result := ClassifyFallbackCategories(content, config.CategoryKeywords, allowed, "Основные", nil, nil, nil)
 	if !strings.Contains(result, `group-title="Кино",Кинопоказ HD`) {
 		t.Errorf("expected Кинопоказ → Кино when not denied:\n%s", result)
 	}

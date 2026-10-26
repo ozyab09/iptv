@@ -124,7 +124,7 @@ func main() {
 	}
 	filtered := m3u.FilterContent(string(allData), config.CategoriesToRemove, config.CategoriesToRemoveSubstring, config.ChannelNamesToExclude, config.BestChannelNames(), "")
 	filtered = m3u.NormalizeCategories(filtered, config.CategoryAliases, config.AllowedCategorySet(), config.FallbackCategory)
-	filtered = m3u.ClassifyFallbackCategories(filtered, config.CategoryKeywords, config.AllowedCategorySet(), config.FallbackCategory, config.CategoriesToRemoveByKeywordSet(), config.BestChannelNames())
+	filtered = m3u.ClassifyFallbackCategories(filtered, config.CategoryKeywords, config.AllowedCategorySet(), config.FallbackCategory, config.CategoriesToRemoveByKeywordSet(), config.BestChannelNames(), nil)
 	_, entries := m3u.ParseChannelEntries(strings.Split(filtered, "\n"))
 	fmt.Printf("Pool after filter: %d entries\n", len(entries))
 

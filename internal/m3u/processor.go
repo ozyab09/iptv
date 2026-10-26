@@ -1560,7 +1560,7 @@ func NormalizeCategories(content string, aliases map[string]string, allowed map[
 // reclassified — used to deny a genre category that the allow-list pass would
 // otherwise re-create by name (e.g. «Кино»). Channels without a group-title or
 // without a match stay untouched.
-func ClassifyFallbackCategories(content string, keywords map[string][]string, allowed map[string]bool, fallback string, removeCategories map[string]bool, bestNames []string) string {
+func ClassifyFallbackCategories(content string, keywords map[string][]string, allowed map[string]bool, fallback string, removeCategories map[string]bool, bestNames []string, nameRemoveSubstrings []string) string {
 	if len(keywords) == 0 {
 		return content
 	}
@@ -1633,6 +1633,10 @@ func ClassifyFallbackCategories(content string, keywords map[string][]string, al
 		}
 		matchedCat := ""
 		for _, rule := range rules {
+			if strings.Contains(channelName, "сезон") || strings.Contains(channelName, "season") {
+				matchedCat = "Кино"
+				break
+			}
 			if matched := matchCategoryKeyword(channelName, rule.keywords); matched != "" {
 				matchedCat = rule.cat
 				break
@@ -1647,6 +1651,20 @@ func ClassifyFallbackCategories(content string, keywords map[string][]string, al
 			skipEntry = true
 			removed++
 			continue
+		}
+		// Удаляем каналы со словами из nameRemoveSubstrings (например, adult/dick/tits)
+		if len(nameRemoveSubstrings) > 0 {
+			cnLower := channelName
+			for _, ns := range nameRemoveSubstrings {
+				if strings.Contains(cnLower, ns) {
+					skipEntry = true
+					removed++
+					break
+				}
+			}
+			if skipEntry {
+				continue
+			}
 		}
 		out = append(out, regGroupTitleAttr.ReplaceAllString(line, fmt.Sprintf(`group-title="%s"`, matchedCat)))
 		classified++

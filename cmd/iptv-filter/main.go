@@ -345,6 +345,7 @@ func run() int {
 		config.FallbackCategory,
 		config.CategoriesToRemoveByKeywordSet(),
 		config.BestChannelNames(),
+		config.AdultNameExcludeSubstrings,
 	)
 
 	// Step 2b: Download EPG once, early. Its channel-id set is used to validate
