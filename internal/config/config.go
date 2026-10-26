@@ -228,7 +228,6 @@ func (c *Config) BuildCustomEPGURL() string {
 var CategoriesToRemove = []string{
 	// Adult / 18+
 	"Взрослые",
-	"Adult (18+)",
 	"XXX (18+)",
 	"XXX",
 	// Религия
