@@ -272,10 +272,7 @@ var CategoriesToRemove = []string{
 
 // CategoriesToRemoveSubstring lists substrings to match against group-title (case-insensitive).
 // Any category whose name contains one of these substrings will be filtered out.
-var CategoriesToRemoveSubstring = []string{
-
-	// Adult / 18+
-	"xxx",
+var CategoriesToRemoveSubstring = append(adultSubstrings,
 	// Спорт (обычный текст)
 	"спорт", "sport", "матч",
 	// Спорт (bold unicode: ℂп𝕠𝕡т)
@@ -340,7 +337,9 @@ var CategoriesToRemoveSubstring = []string{
 	"домашний арест", "мир! дружба! жвачка",
 	"полицейский с рублёвки", "прощание",
 	"следствие вели", "слово пацана", "советские артисты",
-}
+)
+
+
 
 // ChannelNamesToExclude lists channels removed by name substring match (case-insensitive).
 var ChannelNamesToExclude = []string{

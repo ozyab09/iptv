@@ -143,6 +143,25 @@ func TestCategoriesToRemoveSubstring(t *testing.T) {
 			t.Errorf("CategoriesToRemoveSubstring[%d] is not lowercase: %q", i, s)
 		}
 	}
+
+	// Adult/18+ substrings must be present so categories like "Взрослые",
+	// "🔞 Взрослые", "Adult (18+)" and "XXX" are caught by substring matching.
+	hasAdult := false
+	hasRussian := false
+	for _, s := range CategoriesToRemoveSubstring {
+		if strings.Contains(s, "взрослые") || strings.Contains(s, "adult") {
+			hasAdult = true
+		}
+		if strings.Contains(s, "взрослые") {
+			hasRussian = true
+		}
+	}
+	if !hasAdult {
+		t.Error("CategoriesToRemoveSubstring is missing adult/18+ substrings")
+	}
+	if !hasRussian {
+		t.Error("CategoriesToRemoveSubstring is missing a Russian adult substring")
+	}
 }
 
 func TestChannelNamesToExclude(t *testing.T) {
