@@ -94,7 +94,6 @@ func TestLocalPlaylistPaths(t *testing.T) {
 func TestCategoriesToRemove(t *testing.T) {
 	expected := []string{
 		"Взрослые",
-		"Adult (18+)",
 		"XXX (18+)",
 		"XXX",
 		"Религия",
