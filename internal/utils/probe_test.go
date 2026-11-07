@@ -207,3 +207,138 @@ func TestProbeURLsCancellation(t *testing.T) {
 		}
 	}
 }
+
+// ---------- HLS two-step probe tests ----------
+
+func TestHLSProbeManifestDeadSegment(t *testing.T) {
+	// Manifest serves OK but segment URL is dead (404).
+	segmentDone := atomic.Bool{}
+	segmentSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		segmentDone.Store(true)
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer segmentSrv.Close()
+
+	manifest := "#EXTM3U\n#EXT-X-VERSION:3\n" + segmentSrv.URL + "/seg.ts\n"
+
+	var manifestCalled atomic.Bool
+	mSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		manifestCalled.Store(true)
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(manifest))
+	}))
+	defer mSrv.Close()
+
+	client := NewHTTPClient(false)
+	ok := hlsProbe(context.Background(), client, ProbeCandidate{URL: mSrv.URL}, time.Second)
+
+	if ok {
+		t.Error("expected false when segment returns 404")
+	}
+	if !manifestCalled.Load() {
+		t.Error("expected manifest to be fetched")
+	}
+	if !segmentDone.Load() {
+		t.Error("expected segment to be probed after manifest")
+	}
+}
+
+func TestHLSProbeBothAlive(t *testing.T) {
+	var called atomic.Int32
+	var manifestURL string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called.Add(1)
+		if r.URL.Path == "/live.m3u8" {
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte("#EXTM3U\n#EXTINF:10,\n" + manifestURL + "/seg0.ts\n"))
+		} else if r.URL.Path == "/seg0.ts" {
+			w.WriteHeader(http.StatusOK)
+		}
+	}))
+	defer srv.Close()
+	manifestURL = srv.URL
+
+	client := NewHTTPClient(false)
+	ok := hlsProbe(context.Background(), client, ProbeCandidate{URL: srv.URL + "/live.m3u8"}, time.Second)
+
+	if !ok {
+		t.Error("expected true when both manifest and segment are 2xx")
+	}
+	if called.Load() < 2 {
+		t.Errorf("expected at least 2 requests (manifest + segment), got %d", called.Load())
+	}
+}
+
+func TestHLSProbeNoSegments(t *testing.T) {
+	// Manifest has no .ts lines.
+	manifest := "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:10\n"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(manifest))
+	}))
+	defer srv.Close()
+
+	client := NewHTTPClient(false)
+	ok := hlsProbe(context.Background(), client, ProbeCandidate{URL: srv.URL}, time.Second)
+
+	if ok {
+		t.Error("expected false when manifest contains no segments")
+	}
+}
+
+func TestHLSProbeManifest500(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	client := NewHTTPClient(false)
+	ok := hlsProbe(context.Background(), client, ProbeCandidate{URL: srv.URL}, time.Second)
+
+	if ok {
+		t.Error("expected false when manifest returns 500")
+	}
+}
+
+func TestFindFirstSegment(t *testing.T) {
+	tests := []struct {
+		name   string
+		body   string
+		expect string
+	}{
+		{
+			name:   "simple ts",
+			body:   "#EXTM3U\n#EXTINF:10,\nhttp://cdn.example.com/seg0.ts\n#EXTINF:10,\nhttp://cdn.example.com/seg1.ts\n",
+			expect: "http://cdn.example.com/seg0.ts",
+		},
+		{
+			name:   "with query params",
+			body:   "#EXT-X-MEDIA-SEQUENCE:1\nhttp://host/stream/abc123.ts?token=xyz&md5=hash\n",
+			expect: "http://host/stream/abc123.ts?token=xyz&md5=hash",
+		},
+		{
+			name:   "no ts only m3u8",
+			body:   "#EXTM3U\n#EXT-X-VERSION:6\nplaylist_alt.m3u8\n",
+			expect: "",
+		},
+		{
+			name:   "local path ignored",
+			body:   "seg0.ts\nhttp://cdn.example.com/seg1.ts\n",
+			expect: "http://cdn.example.com/seg1.ts",
+		},
+		{
+			name:   "blank lines skipped",
+			body:   "\n\n#EXTINF:10,\n\nhttp://cdn.example.com/seg.ts\n\n",
+			expect: "http://cdn.example.com/seg.ts",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := findFirstSegment(tc.body)
+			if got != tc.expect {
+				t.Errorf("findFirstSegment() = %q, want %q", got, tc.expect)
+			}
+		})
+	}
+}
