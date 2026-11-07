@@ -31,9 +31,16 @@ type ProbeCandidate struct {
 	Referer   string
 }
 
+// hlsManifestExtension matches .m3u8 files — HLS manifest playlists.
+const hlsManifestExtension = ".m3u8"
+
 // URLIsAlive reports whether url responds to an availability check:
 // a HEAD request is tried first; servers that reject HEAD are retried with a
 // GET + "Range: bytes=0-0". Any final status in [200, 400) counts as alive.
+// For HLS manifests (.m3u8), a second step probes the first video segment
+// (first *.ts URL found in the manifest); the channel is alive only if both
+// manifest and segment respond 2xx. This prevents false-positives where the
+// manifest is reachable but actual segments require auth or are broken.
 // Non-HTTP(S) schemes (e.g. rtmp://) cannot be probed and are treated as alive.
 func URLIsAlive(ctx context.Context, client *http.Client, url string, timeout time.Duration) bool {
 	return URLIsAliveCandidate(ctx, client, ProbeCandidate{URL: url}, timeout)
@@ -44,10 +51,16 @@ func URLIsAliveCandidate(ctx context.Context, client *http.Client, cand ProbeCan
 	if !strings.HasPrefix(cand.URL, "http://") && !strings.HasPrefix(cand.URL, "https://") {
 		return true
 	}
+
+	// HLS manifests: two-step probe — manifest + first segment.
+	if strings.HasSuffix(strings.ToLower(cand.URL), hlsManifestExtension) {
+		return hlsProbe(ctx, client, cand, timeout)
+	}
+
+	// Standard probe for plain URLs: HEAD → GET+Range fallback.
 	if probeWithMethod(ctx, client, cand, http.MethodHead, timeout, nil) {
 		return true
 	}
-	// Fallback for servers that reject HEAD (405, connection reset, ...).
 	return probeWithMethod(ctx, client, cand, http.MethodGet, timeout, func(req *http.Request) {
 		req.Header.Set("Range", "bytes=0-0")
 	})
@@ -85,6 +98,108 @@ func probeWithMethod(ctx context.Context, client *http.Client, cand ProbeCandida
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1024))
 
 	return resp.StatusCode >= 200 && resp.StatusCode < 400
+}
+
+// hlsProbe performs a two-step liveness check for HLS channels:
+//  1. Download the .m3u8 manifest.
+//  2. Extract the first *.ts segment URL and probe it with HEAD/GET fallback.
+//     Both steps must succeed for the channel to be considered alive.
+func hlsProbe(ctx context.Context, client *http.Client, cand ProbeCandidate, timeout time.Duration) bool {
+	manifest, err := downloadManifest(ctx, client, cand, timeout)
+	if err != nil || manifest == "" {
+		probeLogger.Debug("HLS probe [%s]: manifest failed (%v) or empty", cand.URL, err)
+		return false
+	}
+
+	segURL := findFirstSegment(manifest)
+	if segURL == "" {
+		probeLogger.Debug("HLS probe [%s]: no .ts segments in manifest", cand.URL)
+		return false
+	}
+
+	ok := probeURL(ctx, client, segURL, cand.UserAgent, cand.Referer, timeout)
+	if ok {
+		probeLogger.Debug("HLS probe [%s]: manifest OK, segment %s alive", cand.URL, segURL)
+	} else {
+		probeLogger.Debug("HLS probe [%s]: manifest OK, segment %s dead", cand.URL, segURL)
+	}
+	return ok
+}
+
+// downloadManifest fetches an HLS .m3u8 manifest within the given timeout.
+func downloadManifest(ctx context.Context, client *http.Client, cand ProbeCandidate, timeout time.Duration) (string, error) {
+	reqCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, cand.URL, nil)
+	if err != nil {
+		return "", fmt.Errorf("create request: %w", err)
+	}
+	ua := cand.UserAgent
+	if ua == "" {
+		ua = probeUserAgent
+	}
+	req.Header.Set("User-Agent", ua)
+	if cand.Referer != "" {
+		req.Header.Set("Referer", cand.Referer)
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("manifest GET failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 400 {
+		return "", fmt.Errorf("manifest returned status %d", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 2*1024*1024)) // max 2 MiB
+	if err != nil {
+		return "", fmt.Errorf("read manifest body: %w", err)
+	}
+	return string(body), nil
+}
+
+// findFirstSegment extracts the first media segment URL (*.ts) from an m3u8
+// manifest body. Skips blank lines, comments (#), EXT* directives, and local
+// paths. Returns empty string if none found.
+func findFirstSegment(manifest string) string {
+	for _, line := range strings.Split(manifest, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		// Must start with http(s) and end with .ts (with optional query params).
+		if len(line) < 4 {
+			continue
+		}
+		hasHTTP := strings.HasPrefix(line, "http://") || strings.HasPrefix(line, "https://")
+		if !hasHTTP {
+			continue
+		}
+		if strings.HasSuffix(line, ".ts") {
+			return line
+		}
+		// Check .ts with query string: cut after ?.ts prefix.
+		qi := strings.Index(line, "?")
+		if qi > 0 && strings.HasSuffix(line[:qi], ".ts") {
+			return line
+		}
+	}
+	return ""
+}
+
+// probeURL performs a HEAD→GET fallback probe on a single URL using the
+// provided user-agent and referer.
+func probeURL(ctx context.Context, client *http.Client, url, ua, referer string, timeout time.Duration) bool {
+	cand := ProbeCandidate{URL: url, UserAgent: ua, Referer: referer}
+	if probeWithMethod(ctx, client, cand, http.MethodHead, timeout, nil) {
+		return true
+	}
+	return probeWithMethod(ctx, client, cand, http.MethodGet, timeout, func(req *http.Request) {
+		req.Header.Set("Range", "bytes=0-0")
+	})
 }
 
 // ProbeURLs checks the availability of a batch of URLs concurrently and returns
@@ -136,8 +251,6 @@ func ProbeCandidates(ctx context.Context, candidates []ProbeCandidate, concurren
 
 	start := time.Now()
 	var done, aliveCount atomic.Int64
-	// Прогресс логируется при пересечении каждого 10%-рубежа (10, 20, ... 100),
-	// вместе с накопленной статистикой: сколько из скольких ресурсов живы.
 	var progressMu sync.Mutex
 	var lastDecile int64
 
@@ -178,16 +291,13 @@ func ProbeCandidates(ctx context.Context, candidates []ProbeCandidate, concurren
 		select {
 		case queue <- cand:
 		case <-ctx.Done():
-		break sendLoop
+			break sendLoop
 		}
 	}
 	close(queue)
 	wg.Wait()
 
 	// Retry passes: re-probe dead candidates up to probeRetryPasses times.
-	// Transient failures (network hiccup, short-lived server restart) often
-	// resolve on a second or third try, so this catches channels that would
-	// otherwise be wrongly marked as dead.
 	for pass := 1; pass <= probeRetryPasses; pass++ {
 		if ctx.Err() != nil {
 			break
@@ -267,8 +377,7 @@ func ProbeCandidates(ctx context.Context, candidates []ProbeCandidate, concurren
 	return result
 }
 
-// probeProgressLine formats a milestone availability-probe status line: percent
-// (10% steps), probed/total, alive-of-probed and elapsed wall time.
+// probeProgressLine formats a milestone availability-probe status line.
 func probeProgressLine(percent, done, total, alive int, elapsed time.Duration) string {
 	return fmt.Sprintf("Probe progress: %d%% (%d/%d URLs, alive %d of %d), elapsed %s",
 		percent, done, total, alive, done, elapsed.Round(time.Second))
