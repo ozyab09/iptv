@@ -11,6 +11,100 @@ import (
 	"time"
 )
 
+// knownHTMLSignatures are byte sequences that indicate an HTML response
+// (captcha, auth page, error page) rather than a real stream or manifest.
+var knownHTMLSignatures = [][]byte{
+	[]byte("<!DOCTYPE html"),
+	[]byte("<!doctype html"),
+	[]byte("<html"),
+	[]byte("<body"),
+	[]byte("captcha"),
+	[]byte("CAPTCHA"),
+	[]byte("access denied"),
+	[]byte("Access Denied"),
+	[]byte("403 Forbidden"),
+	[]byte("authentication required"),
+	[]byte("Authorization Required"),
+	[]byte("unauthorized"),
+	[]byte("Unauthorised"),
+	[]byte("need cookie"),
+	[]byte("COOKIE"),
+}
+
+// contentTypeIsStream returns true if the Content-Type suggests video/audio/stream content,
+// an HLS manifest, or at least something plausibly media-related.
+func contentTypeIsStream(ct string) bool {
+	ct = strings.ToLower(ct)
+	// Direct video codecs
+	if strings.Contains(ct, "video/") || strings.Contains(ct, "audio/") {
+		return true
+	}
+	// HLS / MPEG-TS transport streams
+	if ct == "application/x-mpegurl" || ct == "application/vnd.apple.mpegurl" ||
+		ct == "application/mpegurl" || ct == "audio/mpegurl" {
+		return true
+	}
+	// WebM / other web media
+	if ct == "video/webm" || ct == "audio/webm" ||
+		strings.Contains(ct, "video/mp4") || strings.Contains(ct, "video/ogg") {
+		return true
+	}
+	return false
+}
+
+// contentTypeIsForbidden returns true if the Content-Type indicates static/HTML content
+// that is never a valid IPTV stream.
+func contentTypeIsForbidden(ct string) bool {
+	ct = strings.ToLower(ct)
+	// HTML is always suspicious for a stream probe
+	if strings.Contains(ct, "text/html") || strings.Contains(ct, "application/xhtml") {
+		return true
+	}
+	// JSON/XML API responses / plain text / CSS / JS — never video
+	for _, prefix := range []string{"application/json", "application/xml", "text/plain", "text/css", "text/javascript", "text/calendar", "image/", "application/javascript"} {
+		if strings.HasPrefix(ct, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// hasHTMLBody inspects the first ~512 bytes of data and returns true
+// when they look like HTML / captcha / auth / error pages.
+func hasHTMLBody(data []byte) bool {
+	for _, sig := range knownHTMLSignatures {
+		if bytesContains(data, sig) {
+			return true
+		}
+	}
+	return false
+}
+
+// bytesContains reports whether data contains sub as a substring; handles
+// the case where the io.LimitedReader may have consumed only part of data.
+func bytesContains(data, sub []byte) bool {
+	return len(data) >= len(sub) && findSubsequence(data, sub)
+}
+
+func findSubsequence(data, sub []byte) bool {
+	if len(sub) == 0 {
+		return true
+	}
+	for i := 0; i <= len(data)-len(sub); i++ {
+		match := true
+		for j := 0; j < len(sub); j++ {
+			if data[i+j] != sub[j] {
+				match = false
+				break
+			}
+		}
+		if match {
+			return true
+		}
+	}
+	return false
+}
+
 // probeUserAgent is sent when a candidate carries no explicit user-agent.
 // Many IPTV servers reject the default Go user-agent, so a generic browser UA
 // is used for best reachability.
@@ -33,6 +127,26 @@ type ProbeCandidate struct {
 
 // hlsManifestExtension matches .m3u8 files — HLS manifest playlists.
 const hlsManifestExtension = ".m3u8"
+
+// urlHasM3u8Path checks whether a URL path segment looks like an HLS manifest
+// (.m3u8 in the path or as a suffix). Unlike simple HasSuffix, this catches
+// URLs such as /m3u-stream/xxx/index.m3u8?
+func urlHasM3u8Path(u string) bool {
+	lower := strings.ToLower(u)
+	if strings.HasSuffix(lower, hlsManifestExtension) {
+		return true
+	}
+	// Also catch .../something.m3u8?... (query-param-ed m3u8 URLs)
+	if idx := strings.Index(lower, ".m3u8"); idx > 0 {
+		// Verify it's a path component, not inside query tokens
+		// A safe heuristic: make sure there's no 'http' before the match
+		remaining := lower[:idx]
+		if !strings.Contains(remaining, "http") || strings.LastIndex(remaining, ".m3u8") == idx {
+			return true
+		}
+	}
+	return false
+}
 
 // URLIsAlive reports whether url responds to an availability check:
 // a HEAD request is tried first; servers that reject HEAD are retried with a
@@ -57,6 +171,15 @@ func URLIsAliveCandidate(ctx context.Context, client *http.Client, cand ProbeCan
 		return hlsProbe(ctx, client, cand, timeout)
 	}
 
+	// If URL path looks like an HLS manifest even with query params, try HLS probe first.
+	if urlHasM3u8Path(cand.URL) {
+		if hlsProbe(ctx, client, cand, timeout) {
+			return true
+		}
+		// Fall through to regular probe — some servers serve m3u8 via a different
+		// path without .m3u8 suffix when probed differently.
+	}
+
 	// Standard probe for plain URLs: HEAD → GET+Range fallback.
 	if probeWithMethod(ctx, client, cand, http.MethodHead, timeout, nil) {
 		return true
@@ -67,7 +190,8 @@ func URLIsAliveCandidate(ctx context.Context, client *http.Client, cand ProbeCan
 }
 
 // probeWithMethod performs a single request and reports whether the final
-// status code indicates the resource is reachable.
+// response looks like a real stream resource (status 200 + plausible
+// Content-Type + body is not short HTML/captcha/error page).
 func probeWithMethod(ctx context.Context, client *http.Client, cand ProbeCandidate, method string, timeout time.Duration, headerFn func(*http.Request)) bool {
 	reqCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
@@ -94,10 +218,42 @@ func probeWithMethod(ctx context.Context, client *http.Client, cand ProbeCandida
 	}
 	defer resp.Body.Close()
 
-	// Drain a small amount so the connection can be reused.
-	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1024))
+	// --- Strict status gate ---
+	// Only 2xx is acceptable; 3xx means we followed redirects and should
+	// evaluate the final destination on its own merits below.
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return false
+	}
 
-	return resp.StatusCode >= 200 && resp.StatusCode < 400
+	// Read up to 1 KiB of body to inspect it (enough for HTML detection
+	// but does not hang on large video streams).
+	data, err := io.ReadAll(io.LimitReader(resp.Body, 1024))
+	if err != nil {
+		// Could not read body — treat as dead.
+		return false
+	}
+
+	// Gate 1: forbidden content types (HTML, JSON, plain text…)
+	if contentTypeIsForbidden(resp.Header.Get("Content-Type")) {
+		return false
+	}
+
+	// Gate 2: HTML/captcha/auth signatures in body
+	if hasHTMLBody(data) {
+		return false
+	}
+
+	// Gate 3: empty body — no stream would send zero bytes in response
+	if len(data) == 0 {
+		return false
+	}
+
+	// Gate 4: body too small to be anything useful (< 4 bytes is noise)
+	if len(data) < 4 {
+		return false
+	}
+
+	return true
 }
 
 // hlsProbe performs a two-step liveness check for HLS channels:
@@ -150,7 +306,10 @@ func downloadManifest(ctx context.Context, client *http.Client, cand ProbeCandid
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 400 {
+	// Strict 2xx gate — match probeWithMethod behavior.
+	// 3xx means an intermediate redirect; accept only final 200-OK responses.
+	// Body/content inspection below catches anything non-stream even at 200.
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return "", fmt.Errorf("manifest returned status %d", resp.StatusCode)
 	}
 
@@ -158,6 +317,22 @@ func downloadManifest(ctx context.Context, client *http.Client, cand ProbeCandid
 	if err != nil {
 		return "", fmt.Errorf("read manifest body: %w", err)
 	}
+
+	// Gate: reject forbidden content types (HTML error pages served at 200)
+	if contentTypeIsForbidden(resp.Header.Get("Content-Type")) {
+		return "", fmt.Errorf("manifest returned forbidden content-type %q", resp.Header.Get("Content-Type"))
+	}
+
+	// Gate: reject HTML/captcha/auth signatures in body
+	if hasHTMLBody(body) {
+		return "", fmt.Errorf("manifest body contains HTML/error signature")
+	}
+
+	// Gate: empty manifest is useless
+	if len(body) == 0 {
+		return "", fmt.Errorf("manifest is empty")
+	}
+
 	return string(body), nil
 }
 
